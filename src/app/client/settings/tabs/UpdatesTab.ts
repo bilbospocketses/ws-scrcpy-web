@@ -172,7 +172,14 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     let lastStatus: UpdatesStatusResponse | null = null;
     let applyInFlight = false;
 
-    async function runRefresh(): Promise<void> {
+    /**
+     * `keepError`: a failure line the caller has just shown. The rebuild below
+     * repaints the status line from the response, so without it the line the
+     * user needed to read is gone the moment the read answers; with it, the
+     * line is put back over the fresh status and stays until the next action
+     * on the tab repaints it.
+     */
+    async function runRefresh(keepError?: string): Promise<void> {
         let resp: UpdatesStatusResponse;
         try {
             const r = await fetch('/api/updates/status');
@@ -203,6 +210,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             githubOwner: resp.githubOwner,
         });
         renderSection(resp);
+        if (keepError !== undefined) setStatusError(keepError);
     }
 
     function renderError(msg: string): void {
@@ -535,13 +543,16 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
                     setStatusError(reasonToUserMessage('uac-declined', ''));
                     return;
                 }
-                setStatusError(`apply failed (${r.status})`);
+                const failed = `apply failed (${r.status})`;
+                setStatusError(failed);
                 // Re-poll to learn the current state (probably 409 because state
                 // wasn't 'ready' anymore by the time we got here). This rebuilds
                 // the body and re-baselines, so any staged edit is dropped — the
                 // same rebuild the pre-tabs code did, and the alternative (a
-                // stale body describing a state that has moved on) is worse.
-                void runRefresh();
+                // stale body describing a state that has moved on) is worse. The
+                // failure line rides through the rebuild, or the user never gets
+                // to read it.
+                void runRefresh(failed);
                 return;
             }
             const applyBody = (await r.json().catch(() => ({}))) as { mode?: string };
@@ -571,7 +582,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             btn.disabled = false;
             btn.textContent = prevText;
             applyInFlight = false;
-            void runRefresh();
+            void runRefresh("couldn't reach server");
         }
     }
 

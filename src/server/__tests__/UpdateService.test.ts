@@ -96,6 +96,41 @@ function fakeMgr(overrides: Partial<UpdateManagerLike> = {}): UpdateManagerLike 
     };
 }
 
+/**
+ * Watch the pre-apply cleanup: one open stream, `adb kill-server` and the
+ * own-adb reaper (hand `reapOwnAdbFn` to the service). Each step is pushed to
+ * `order` as it runs. Dispose with `using` -- the stream registry is
+ * module-level and the kill-server spy is on the prototype.
+ */
+function hygieneProbe(order: string[] = []) {
+    const stream = {
+        closeForShutdown: vi.fn(() => {
+            order.push('close stream');
+            liveStreams.remove(stream);
+        }),
+    };
+    liveStreams.add(stream);
+    const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockImplementation(async () => {
+        order.push('kill-server');
+    });
+    const reapOwnAdbFn = vi.fn(async (_adbPath: string) => {
+        order.push('reap');
+        return 0;
+    });
+    return {
+        reapOwnAdbFn,
+        untouched: () => ({
+            streamsClosed: stream.closeForShutdown.mock.calls.length,
+            killServer: killSpy.mock.calls.length,
+            reaped: reapOwnAdbFn.mock.calls.length,
+        }),
+        [Symbol.dispose](): void {
+            killSpy.mockRestore();
+            liveStreams.remove(stream);
+        },
+    };
+}
+
 describe('UpdateService', () => {
     const tmpDirs: string[] = [];
     const savedEnv = {
@@ -103,6 +138,7 @@ describe('UpdateService', () => {
         DEPS: process.env['DEPS_PATH'],
         FEED: process.env['VELOPACK_FEED_URL'],
         APPIMAGE: process.env['APPIMAGE'],
+        DATA_ROOT: process.env['DATA_ROOT'],
     };
 
     // Intercept fs.promises.readFile so pollOperationServerPort returns
@@ -123,6 +159,12 @@ describe('UpdateService', () => {
         fs.writeFileSync(configPath, JSON.stringify({}));
         process.env[EnvName.CONFIG_PATH] = configPath;
         process.env['DEPS_PATH'] = path.join(tmpRoot, 'deps');
+        // The hand-off markers, the staged download and the verify manifest live
+        // under the data root. Unpinned, that is the REAL one on Windows
+        // (%ProgramData%\WsScrcpyWeb): every apply test wrote markers there for an
+        // installed app to act on, and a "no marker left" assertion read whatever
+        // any other run of this suite on the machine had left.
+        process.env['DATA_ROOT'] = tmpRoot;
         delete process.env['VELOPACK_FEED_URL'];
         // On Linux, UpdateService checks APPIMAGE env instead of existsSync.
         // Set it so tests using existsSync: () => true trigger production mode.
@@ -141,6 +183,11 @@ describe('UpdateService', () => {
     });
 
     afterEach(() => {
+        // The stream registry is a module singleton: a failed apply test can leave
+        // a fake stream in it or the stop flag set, and that must not reach the
+        // next test.
+        liveStreams.closeAllForShutdown();
+        liveStreams.cancelStop();
         vi.unstubAllGlobals();
         readFileSpy?.mockRestore();
         Config._resetForTest();
@@ -152,6 +199,8 @@ describe('UpdateService', () => {
         else process.env['VELOPACK_FEED_URL'] = savedEnv.FEED;
         if (savedEnv.APPIMAGE === undefined) delete process.env['APPIMAGE'];
         else process.env['APPIMAGE'] = savedEnv.APPIMAGE;
+        if (savedEnv.DATA_ROOT === undefined) delete process.env['DATA_ROOT'];
+        else process.env['DATA_ROOT'] = savedEnv.DATA_ROOT;
         while (tmpDirs.length) {
             const d = tmpDirs.pop()!;
             try {
@@ -1132,9 +1181,166 @@ describe('UpdateService', () => {
         liveStreams.cancelStop();
     });
 
-    it('applyUpdate: an apply that fails after closing the streams accepts new streams again', async () => {
+    it('applyUpdate: an apply that fails after its point of no return accepts new streams again', async () => {
         // The process keeps running after a failed apply (UpdatesApi answers
         // 500), so it must not go on refusing every stream as if it were stopping.
+        // Windows service mode reaches its point of no return (the hygiene closes
+        // the streams as a stop) before Velopack's waitExitThenApplyUpdate, so a
+        // throw from that call is a failure AFTER it.
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user-service' });
+        let closed = 0;
+        const stream = {
+            closeForShutdown: () => {
+                closed++;
+                liveStreams.remove(stream);
+            },
+        };
+        liveStreams.add(stream);
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockResolvedValue(undefined);
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () =>
+                fakeMgr({
+                    checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0'),
+                    waitExitThenApplyUpdate: () => {
+                        throw new Error('velopack apply failed');
+                    },
+                }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(/velopack apply failed/);
+        } finally {
+            killSpy.mockRestore();
+        }
+
+        expect(closed).toBe(1);
+        expect(liveStreams.isStopping()).toBe(false);
+        // The hand-off did not happen, so its markers are gone too.
+        expect(fs.existsSync(Config.getInstance().applyUpdatePendingMarkerPath)).toBe(false);
+        expect(fs.existsSync(Config.getInstance().suppressBrowserOpenMarkerPath)).toBe(false);
+    });
+
+    it('applyUpdate: a failure before the point of no return leaves a stop it did not start alone', async () => {
+        // Only a stop this apply started is cancelled. A stop already under way
+        // (a stand-in for a real shutdown racing the apply) must stay in force.
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0') }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        // The verify manifest fails to write: a failure before the point of no return.
+        const manifestPath = Config.getInstance().applyUpdateVerifyManifestPath;
+        const realWriteFile = fs.promises.writeFile;
+        const writeSpy = vi
+            .spyOn(fs.promises, 'writeFile')
+            .mockImplementation((file, data, options) =>
+                file === manifestPath
+                    ? Promise.reject(new Error('EACCES: manifest not writable'))
+                    : realWriteFile(file, data, options),
+            );
+        liveStreams.closeAllForShutdown();
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(/manifest not writable/);
+        } finally {
+            writeSpy.mockRestore();
+        }
+
+        expect(liveStreams.isStopping()).toBe(true);
+    });
+
+    it('applyUpdate: a second apply while one is running is refused', async () => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user-service' });
+        const applyFn = vi.fn();
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockResolvedValue(undefined);
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () =>
+                fakeMgr({
+                    checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0'),
+                    waitExitThenApplyUpdate: applyFn,
+                }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            const first = svc.applyUpdate();
+            await expect(svc.applyUpdate()).rejects.toThrow(/already in progress/);
+            await first;
+        } finally {
+            killSpy.mockRestore();
+        }
+
+        expect(applyFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('applyUpdate (windows local): a verify manifest that cannot be written fails the apply and closes no stream', async () => {
+        // The manifest is written before the point of no return. Its failure used
+        // to be caught and answered like a hand-off, so UpdatesApi exited with the
+        // streams still open and no update applied.
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        let closed = 0;
+        const stream = {
+            closeForShutdown: () => {
+                closed++;
+                liveStreams.remove(stream);
+            },
+        };
+        liveStreams.add(stream);
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockResolvedValue(undefined);
+        const manifestPath = Config.getInstance().applyUpdateVerifyManifestPath;
+        const realWriteFile = fs.promises.writeFile;
+        const writeSpy = vi
+            .spyOn(fs.promises, 'writeFile')
+            .mockImplementation((file, data, options) =>
+                file === manifestPath
+                    ? Promise.reject(new Error('EACCES: manifest not writable'))
+                    : realWriteFile(file, data, options),
+            );
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0') }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(/manifest not writable/);
+            expect(closed).toBe(0);
+            expect(liveStreams.isStopping()).toBe(false);
+            expect(fs.existsSync(Config.getInstance().applyUpdatePendingMarkerPath)).toBe(false);
+        } finally {
+            writeSpy.mockRestore();
+            killSpy.mockRestore();
+            liveStreams.remove(stream);
+        }
+    });
+
+    it('applyUpdate: an apply that fails before its point of no return closes no stream', async () => {
+        // A bad checksum fails before the point of no return (since 2026-10-06),
+        // so the streams stay open and nothing was stopped.
         Config.getInstance().updateAppConfig({
             autoUpdate: false,
             installMode: 'user',
@@ -1173,8 +1379,9 @@ describe('UpdateService', () => {
             killSpy.mockRestore();
         }
 
-        expect(closed).toBe(1);
+        expect(closed).toBe(0);
         expect(liveStreams.isStopping()).toBe(false);
+        liveStreams.remove(stream);
     });
 
     it('applyUpdate: with the default reaper, no execFile call ever carries /IM', async () => {
@@ -1646,6 +1853,9 @@ describe('UpdateService', () => {
         ['declined', new PkexecDeclinedError('machine-wide-update')],
         ['failed', new Error('pkexec machine-wide-update failed: mv: cannot move')],
     ])('applyUpdate (linux machine-wide-no-service): a %s pkexec changes nothing', async (_label, thrown) => {
+        // Nor does it stop adb or close a stream: the pre-apply cleanup waits for
+        // the point of no return, which a cancelled prompt never reaches.
+        using probe = hygieneProbe();
         const { createHash } = await import('crypto');
         Config.getInstance().updateAppConfig({
             autoUpdate: false,
@@ -1674,6 +1884,7 @@ describe('UpdateService', () => {
             clearIntervalFn: () => undefined,
             fetchFn,
             runPkexecFn: pkexecMock,
+            reapOwnAdbFn: probe.reapOwnAdbFn,
         });
         process.env['APPIMAGE'] = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
         svc.init();
@@ -1691,7 +1902,131 @@ describe('UpdateService', () => {
         const staged = pkexecMock.mock.calls[0]![0].match(/install -o root -g root -m 0755 '([^']+)'/)?.[1];
         expect(staged).toMatch(/update-staging/);
         expect(fs.existsSync(staged!)).toBe(false);
+        expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
     });
+
+    // M3 + defect (b): a Linux apply whose download fails, or whose download does
+    // not match SHA256SUMS, updates nothing. Before the fix it had already closed
+    // every stream, stopped adb and written the launcher hand-off markers, and the
+    // server then kept running without them -- with markers telling the next
+    // launch an update was under way.
+    it.each([
+        ['the download fails', () => new Response('not found', { status: 404 }), /download failed: 404/],
+        ['the download does not match SHA256SUMS', () => new Response(Buffer.from('CORRUPT')), /mismatch/i],
+    ])(
+        'applyUpdate (linux): when %s, adb, the streams and the hand-off markers are untouched',
+        async (_label, appImageResponse, error) => {
+            using probe = hygieneProbe();
+            Config.getInstance().updateAppConfig({
+                autoUpdate: false,
+                installMode: 'user',
+                channel: 'beta',
+                githubOwner: 'bilbospocketses',
+            });
+            const sums = `${'0'.repeat(64)}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+            const fetchFn = vi.fn(async (url: string) =>
+                url.endsWith('.AppImage') ? appImageResponse() : new Response(sums),
+            ) as unknown as typeof fetch;
+            const spawnMock = vi.mocked(child_process.spawn);
+            spawnMock.mockClear();
+            const svc = new UpdateService({
+                platform: 'linux',
+                installRoot: path.join('/fake', 'mount', 'usr'),
+                existsSync: () => true,
+                updateManagerFactory: () =>
+                    fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.26') }),
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+                fetchFn,
+                reapOwnAdbFn: probe.reapOwnAdbFn,
+            });
+            process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage';
+            svc.init();
+            await svc.checkForUpdates();
+
+            await expect(svc.applyUpdate()).rejects.toThrow(error);
+
+            expect(spawnMock).not.toHaveBeenCalled();
+            expect(svc.getStatus().status).toBe('ready');
+            const cfg = Config.getInstance();
+            // Read from this test's own data root, never the machine's.
+            expect(path.relative(tmpDirs.at(-1)!, cfg.applyUpdatePendingMarkerPath).startsWith('..')).toBe(false);
+            expect(fs.existsSync(cfg.applyUpdatePendingMarkerPath)).toBe(false);
+            expect(fs.existsSync(cfg.suppressBrowserOpenMarkerPath)).toBe(false);
+            expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
+        },
+    );
+
+    // The point of no return, in order: download + SHA-256 check, then (machine-
+    // wide only) the elevated swap, then the stream close + adb stop and the
+    // hand-off markers, then the helper that takes over.
+    it.each([
+        ['local', '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage'],
+        ['machine-wide-no-service', '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage'],
+    ])(
+        'applyUpdate (linux %s): cleans up only after the download, the check and any elevation',
+        async (_label, appImage) => {
+            const order: string[] = [];
+            using probe = hygieneProbe(order);
+            const { createHash } = await import('crypto');
+            Config.getInstance().updateAppConfig({
+                autoUpdate: false,
+                installMode: 'user',
+                channel: 'beta',
+                githubOwner: 'bilbospocketses',
+            });
+            const cfg = Config.getInstance();
+            const markers = (): string =>
+                fs.existsSync(cfg.applyUpdatePendingMarkerPath) || fs.existsSync(cfg.suppressBrowserOpenMarkerPath)
+                    ? 'markers'
+                    : 'no markers';
+            const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
+            const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
+            const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+            const fetchFn = vi.fn(async (url: string) => {
+                order.push(url.endsWith('.AppImage') ? 'download' : 'SHA256SUMS');
+                return url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums);
+            }) as unknown as typeof fetch;
+            const pkexecMock = vi.fn(async () => {
+                order.push(`pkexec (${markers()})`);
+                return '';
+            });
+            const spawnMock = vi.mocked(child_process.spawn);
+            spawnMock.mockClear();
+            spawnMock.mockImplementationOnce(((...args: Parameters<typeof child_process.spawn>) => {
+                order.push(`spawn helper (${markers()})`);
+                return (spawnMock.getMockImplementation() as (...a: unknown[]) => child_process.ChildProcess)(...args);
+            }) as typeof child_process.spawn);
+            const svc = new UpdateService({
+                platform: 'linux',
+                installRoot: path.join('/fake', 'mount', 'usr'),
+                existsSync: () => true,
+                updateManagerFactory: () =>
+                    fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.31-beta.2') }),
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+                fetchFn,
+                runPkexecFn: pkexecMock,
+                reapOwnAdbFn: probe.reapOwnAdbFn,
+            });
+            process.env['APPIMAGE'] = appImage;
+            svc.init();
+            await svc.checkForUpdates();
+
+            await svc.applyUpdate();
+
+            const elevated = appImage.startsWith('/opt/') ? ['pkexec (no markers)'] : [];
+            expect(order).toEqual([
+                'download',
+                'SHA256SUMS',
+                ...elevated,
+                'close stream',
+                'kill-server',
+                'reap',
+                'spawn helper (markers)',
+            ]);
+        },
+    );
 
     // ── reconfigure ─────────────────────────────────────────────────────
 

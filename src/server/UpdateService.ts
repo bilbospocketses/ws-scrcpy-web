@@ -143,6 +143,19 @@ export class UpdateService {
     private readonly resolver: ReleaseFeedResolver;
     private state: UpdateServiceState;
     private timer: NodeJS.Timeout | null = null;
+    /**
+     * True once the current applyUpdate has reached its point of no return,
+     * whose hygiene closes the streams as a stop. A throw after that cancels
+     * the stop; a throw before it has nothing to cancel.
+     */
+    private streamsStoppedForApply = false;
+    /**
+     * True while an applyUpdate is running. A second apply is refused: two at
+     * once would race the swap and reset each other's streamsStoppedForApply.
+     * Cleared when an apply fails (it may be retried); a successful apply ends
+     * in process exit, so it stays set.
+     */
+    private applyInFlight = false;
     private readonly installRoot: string;
     private readonly platform: NodeJS.Platform;
     private readonly locator: VelopackLocatorConfig | undefined;
@@ -587,47 +600,63 @@ export class UpdateService {
      * prevented it." Diagnosed via Sysinternals handle.exe on the v0.1.23-beta.11
      * → beta.12 VM test (2026-04-29) — adb.exe held a persistent file handle
      * on `current\` across multiple apply attempts.
+     *
+     * Since 2026-10-06 that hygiene, and the hand-off markers, run at each path's
+     * point of no return ({@link enterPointOfNoReturn}), not at the top: an apply
+     * that stops before it (a declined pkexec, a failed download, a bad
+     * checksum) leaves adb, the open streams and the markers as they were.
      */
     public async applyUpdate(): Promise<{ redirectPort: number | null }> {
         if (!this.mgr || !this.state.pendingUpdate || this.state.status !== 'ready') {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
+        if (this.applyInFlight) {
+            throw new Error('apply already in progress');
+        }
+        this.applyInFlight = true;
         const mgr = this.mgr;
         const pendingUpdate = this.state.pendingUpdate;
-        await this.preApplyHygiene();
+        this.streamsStoppedForApply = false;
         try {
-            return await this.applyAfterHygiene(mgr, pendingUpdate);
+            return await this.applyByPath(mgr, pendingUpdate);
         } catch (err) {
-            // Hygiene closed the open streams as a stop, but a throw here means
-            // no exit follows (UpdatesApi answers 500 and the server keeps
-            // running), so new streams must be accepted again. See liveStreams.ts.
-            liveStreams.cancelStop();
+            this.applyInFlight = false;
+            // A throw means no exit follows (UpdatesApi answers 403 or 500 and the
+            // server keeps running). If the point of no return had already closed
+            // the streams as a stop, new streams must be accepted again. A throw
+            // before it (a declined pkexec, a failed download, a bad checksum)
+            // stopped nothing, so there is nothing to cancel. See liveStreams.ts.
+            if (this.streamsStoppedForApply) liveStreams.cancelStop();
             throw err;
         }
     }
 
-    /** Everything `applyUpdate` does once `preApplyHygiene` has run. */
-    private async applyAfterHygiene(
+    /**
+     * Everything `applyUpdate` does after its state check. Each path calls
+     * {@link enterPointOfNoReturn} at its own point of no return.
+     */
+    private async applyByPath(
         mgr: UpdateManagerLike,
         pendingUpdate: UpdateInfo,
     ): Promise<{ redirectPort: number | null }> {
         const installMode = Config.getInstance().getAppConfig().installMode;
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
 
-        await this.writeApplyUpdatePendingMarker();
-        // D4: every applyUpdate brings the app down and the user's EXISTING tab is
-        // carried through (reconnect / redirect / reload), so the relaunched server
-        // must not auto-open a new tab. This consume-once marker tells it to skip
-        // the open — needed on Windows local mode (no WS_SCRCPY_NO_BROWSER on the
-        // Velopack relaunch); harmless elsewhere (Linux/service already suppress).
-        await this.writeSuppressBrowserOpenMarker();
-
         // Windows service mode keeps Velopack's apply (the operation-server
         // handoff below). Linux service mode falls through to the download-based
         // apply (item 39) — branched by installMode in the Linux block.
         if (isServiceMode && this.platform === 'win32') {
-            mgr.waitExitThenApplyUpdate(pendingUpdate, true, false);
+            await this.enterPointOfNoReturn();
+            try {
+                mgr.waitExitThenApplyUpdate(pendingUpdate, true, false);
+            } catch (err) {
+                // The hand-off is not happening, so the markers written for it
+                // must not outlive this attempt (as on the local-mode and pkexec
+                // paths; see removeApplyHandoffMarkers).
+                await this.removeApplyHandoffMarkers();
+                throw err;
+            }
             return { redirectPort: null };
         }
 
@@ -735,9 +764,10 @@ export class UpdateService {
                     );
                 } catch (err) {
                     // Declined (PkexecDeclinedError → 403 uac-declined) or failed:
-                    // nothing was swapped, so undo what this attempt wrote and leave
-                    // the update `ready` for another try (smoke 14.10).
-                    await this.removeApplyHandoffMarkers();
+                    // nothing was swapped, so drop the download and leave the update
+                    // `ready` for another try (smoke 14.10). No hand-off marker has
+                    // been written and adb and the streams are untouched: both wait
+                    // for the point of no return below.
                     await fs.promises.rm(stagedPath, { force: true }).catch(() => undefined);
                     throw err;
                 }
@@ -769,6 +799,9 @@ export class UpdateService {
                 // system transient unit has none, and the helper panics without one.
                 dataRoot,
             });
+            // Downloaded, verified and (machine-wide) swapped: nothing left can fail
+            // and leave this server running, so the cleanup and the markers go now.
+            await this.enterPointOfNoReturn();
             if (plan.viaSystemd) {
                 // systemd-run registers the transient unit then exits promptly.
                 // AWAIT it so the unit is registered before THIS process exits —
@@ -801,6 +834,7 @@ export class UpdateService {
             // version + filename + SHA-256 so it can verify the nupkg (which
             // lives in the user-writable packages/ dir) before extracting it.
             await this.writeApplyVerifyManifest();
+            await this.enterPointOfNoReturn();
             const child = spawn(helperPath, ['--operation-server'], {
                 cwd: dataRoot,
                 detached: true,
@@ -814,6 +848,13 @@ export class UpdateService {
             log.info(`applyUpdate: spawned operation-server (pid ${child.pid})`);
         } catch (err) {
             log.error(`applyUpdate: failed to prepare or spawn operation-server: ${(err as Error).message}`);
+            if (!this.streamsStoppedForApply) {
+                // Failed before the point of no return (the verify manifest): no
+                // stream was closed, adb runs and no marker was written. Report it
+                // and keep running, as a failed Linux download does. Returning here
+                // instead would let UpdatesApi exit with the streams still open.
+                throw err;
+            }
             // The hand-off is not happening, so the markers written for it must
             // not outlive this attempt: a lingering apply-update-pending makes the
             // launcher's NEXT graceful exit skip the tray reap (qa-harness Arc 3,
@@ -831,6 +872,31 @@ export class UpdateService {
         }
 
         return { redirectPort: port };
+    }
+
+    /**
+     * The point of no return of every apply path: close the streams and stop adb
+     * (preApplyHygiene), then write the two launcher hand-off markers. Called
+     * immediately before the step that hands the swap over -- AFTER the Linux
+     * download, its SHA-256 check and the machine-wide pkexec swap. Before
+     * 2026-10-06 this ran at the top of applyUpdate, so a cancelled password
+     * prompt, a failed download or a bad checksum left the server running with
+     * adb stopped and every stream closed, and left markers telling the next
+     * start an update was under way.
+     */
+    private async enterPointOfNoReturn(): Promise<void> {
+        // Set before the hygiene: it closes the streams as a stop
+        // (liveStreams.closeAllForShutdown), and a throw part-way through must
+        // still have applyUpdate cancel that stop.
+        this.streamsStoppedForApply = true;
+        await this.preApplyHygiene();
+        await this.writeApplyUpdatePendingMarker();
+        // D4: every applyUpdate brings the app down and the user's EXISTING tab is
+        // carried through (reconnect / redirect / reload), so the relaunched server
+        // must not auto-open a new tab. This consume-once marker tells it to skip
+        // the open — needed on Windows local mode (no WS_SCRCPY_NO_BROWSER on the
+        // Velopack relaunch); harmless elsewhere (Linux/service already suppress).
+        await this.writeSuppressBrowserOpenMarker();
     }
 
     /**
@@ -954,7 +1020,8 @@ export class UpdateService {
     }
 
     /**
-     * Best-effort cleanup before Velopack's swap. All steps are
+     * Best-effort cleanup before the swap, run from {@link enterPointOfNoReturn}
+     * immediately before the apply hands the swap over. All steps are
      * failure-tolerant — apply must proceed even if hygiene partially fails;
      * worst case we're back to v0.1.23-beta.12 behavior (apply still attempted,
      * Velopack's own retry loop catches what it can).
