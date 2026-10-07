@@ -1,10 +1,15 @@
+import { DeviceState } from '../../common/DeviceState';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
+import { inContainer } from '../api/containerGuard';
 import { upsertObservedDevices } from '../api/deviceObserved';
+import { applyPendingLabels, forgetPendingLabels } from '../api/pendingLabels';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
+import { resolveMac } from '../network/MacResolver';
+import { hostOf } from '../network/scanIdentity';
 import { shArg } from '../security/deviceInput';
 import { classifyDeviceKind } from './deviceKind';
 import { Properties } from './Properties';
@@ -71,6 +76,9 @@ export class Device extends TypedEmitter<DeviceEvents> {
         } else {
             this.connected = false;
             this.descriptor.pid = -1;
+            // The transport is gone: a name still waiting on it must not land
+            // on whatever device answers at this address next.
+            if (state === DeviceState.DISCONNECTED) forgetPendingLabels(this.udid);
         }
         this.descriptor.state = state;
         this.emitUpdate();
@@ -318,6 +326,14 @@ export class Device extends TypedEmitter<DeviceEvents> {
                             lastSeenAt: Date.now(),
                         },
                     ]);
+                    // A name typed at connect before this serial could be read
+                    // is filed under it now, ahead of the update that makes the
+                    // card fetch labels (row 19.5 follow-up).
+                    const serial = this.descriptor['ro.serialno'];
+                    if (serial) {
+                        applyPendingLabels(Config.getInstance().db, this.udid, serial);
+                        this.backfillMac(serial);
+                    }
                 } catch {
                     /* best-effort */
                 }
@@ -350,6 +366,25 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
     };
 
+    /**
+     * A name filed under this device's MAC before schema v3 has no `devices.mac`
+     * link, so a clear or rename on the card would leave that copy until the
+     * next connect recorded the MAC. Record it when the tracker sees the device
+     * instead: off a container, for a TCP transport (its udid is the address),
+     * and only while no MAC is recorded. Best-effort, like the rest of the read.
+     */
+    private backfillMac(serial: string): void {
+        const db = Config.getInstance().db;
+        if (inContainer() || !/:\d+$/.test(this.udid) || db.devices.getMac(serial)) return;
+        resolveMac(hostOf(this.udid))
+            .then((mac) => {
+                if (mac && !db.devices.getMac(serial)) db.devices.recordMac(serial, mac);
+            })
+            .catch(() => {
+                /* best-effort */
+            });
+    }
+
     private emitUpdate(setUpdateTime = true): void {
         const THROTTLE = 300;
         const now = Date.now();
@@ -357,7 +392,9 @@ export class Device extends TypedEmitter<DeviceEvents> {
         if (setUpdateTime) {
             this.descriptor['last.update.timestamp'] = now;
         }
-        if (time > THROTTLE) {
+        // A negative gap is the wall clock stepping backwards. Waiting it out
+        // would hide this device's updates for the length of the step.
+        if (time > THROTTLE || time < 0) {
             this.lastEmit = now;
             this.emit('update', this);
             return;
