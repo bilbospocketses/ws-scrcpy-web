@@ -507,6 +507,64 @@ describe('UpdatesTab', () => {
             expect(actionStatusOf(el).textContent).toBe('apply failed (500)');
             expect(f.mock.calls.map((c) => String(c[0]))).toContain('/api/updates/status');
         });
+
+        it('the "apply failed (N)" line survives the follow-up refresh', async () => {
+            const { el } = await mountUpdatesTab(ready);
+            const f = stubApply(() =>
+                Promise.resolve({
+                    ok: false,
+                    status: 500,
+                    json: () => Promise.resolve({ ok: false, error: 'boom' }),
+                }),
+            );
+
+            applyBtnOf(el).click();
+            await flush();
+            await flush();
+
+            // The refresh ran and rebuilt the section...
+            expect(f.mock.calls.map((c) => String(c[0]))).toContain('/api/updates/status');
+            const btn = applyBtnOf(el);
+            expect(btn.disabled).toBe(false);
+            expect(btn.textContent).toBe('apply v0.2.0');
+            // ...but the reason the apply failed is still on screen.
+            const line = actionStatusOf(el);
+            expect(line.textContent).toBe('apply failed (500)');
+            expect(line.classList.contains('settings-status-error')).toBe(true);
+        });
+
+        it('an apply request that never reached the server keeps saying so after the refresh', async () => {
+            const { el } = await mountUpdatesTab(ready);
+            stubApply(() => Promise.reject(new TypeError('Failed to fetch')));
+
+            applyBtnOf(el).click();
+            await flush();
+            await flush();
+
+            expect(applyBtnOf(el).textContent).toBe('apply v0.2.0');
+            expect(actionStatusOf(el).textContent).toBe("couldn't reach server");
+        });
+
+        it('the next action on the tab replaces the kept failure line', async () => {
+            const { el } = await mountUpdatesTab(ready);
+            stubApply(() =>
+                Promise.resolve({
+                    ok: false,
+                    status: 500,
+                    json: () => Promise.resolve({ ok: false, error: 'boom' }),
+                }),
+            );
+            applyBtnOf(el).click();
+            await flush();
+            await flush();
+            expect(actionStatusOf(el).textContent).toBe('apply failed (500)');
+
+            const owner = ownerInputOf(el);
+            owner.value = 'someone-else';
+            owner.dispatchEvent(new Event('blur'));
+
+            expect(actionStatusOf(el).textContent).toBe('update: v0.2.0');
+        });
     });
 
     it('typing the original interval back clears the staged change', async () => {
