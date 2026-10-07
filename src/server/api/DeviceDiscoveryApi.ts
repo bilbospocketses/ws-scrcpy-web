@@ -7,7 +7,7 @@ import { parseScreenState, SCREEN_STATE_COMMAND } from '../deviceScreenState';
 import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
-import { isProbeAddressSerial, scanAddressFor } from '../network/scanIdentity';
+import { hostOf, isProbeAddressSerial, scanAddressFor } from '../network/scanIdentity';
 import { assertDeletablePaths, isConnectAddress, shArg } from '../security/deviceInput';
 import { inContainer } from './containerGuard';
 import { upsertObservedDevices } from './deviceObserved';
@@ -186,7 +186,7 @@ export class DeviceDiscoveryApi {
                             ).trim();
                             if (lookedUp) realSerial = lookedUp;
                         }
-                        const ip = address.split(':')[0]!;
+                        const ip = hostOf(address);
                         // No MAC in a container: `ip neigh` is not in the image, and
                         // through docker's NAT it could not see a LAN device anyway.
                         const mac = (label || realSerial) && !inContainer() ? await resolveMac(ip) : null;

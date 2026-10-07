@@ -168,6 +168,16 @@ describe('connect with a name from a subnet-scan hit (row 19.5, defect a)', () =
         expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, MAC)).toBe('Den');
     });
 
+    it('on a host, looks the MAC up for the IPv6 host of a bracketed address', async () => {
+        setup('host');
+        fakeGetprop();
+
+        await post('/api/devices/connect', { address: '[fe80::1]:5555', label: 'Den' });
+
+        expect(resolveMac).toHaveBeenCalledWith('fe80::1');
+        expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, MAC)).toBe('Den');
+    });
+
     it('when getprop fails, writes nothing under the probe address and still answers 200', async () => {
         setup('container');
         vi.spyOn(AdbClient.prototype, 'shell').mockRejectedValue(new Error('device unauthorized'));
