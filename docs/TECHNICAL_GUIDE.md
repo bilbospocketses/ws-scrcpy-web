@@ -814,7 +814,15 @@ failure path (§11.4) and the viewer saw `stream failed: scrcpy-server exited (.
 with 1001 (Going Away, a normal end to the browser) also releases the session, so the exit that `kill-server` causes
 finds it already released. The exit-75 restarts (`DependencyManager.requestRestart`, `scheduleRestartForPortChange`)
 and an update's pre-apply hygiene (`UpdateService.preApplyHygiene`) close the open streams the same way before they
-exit or run `kill-server`. Only the stream sockets get this close. The other sockets (device probe, network scan, and
+exit or run `kill-server`. From that close on, the registry reports the server as stopping (`liveStreams.isStopping()`),
+and a stream opened in the window before the WebSocket server is released is closed at once with the same 1001,
+without starting scrcpy-server (`ScrcpyConnection.processRequest`). The one stop that can turn out not to happen is an
+update apply that throws after its hygiene step: the server keeps running, so `applyUpdate` calls
+`liveStreams.cancelStop()` and new streams are accepted again. A session released while its start is still in flight
+(by this close, or by the browser leaving) stops at its next step: `start()` checks after each await
+(`abandonIfReleased`), tears down what it created since the release (the listener, the adb reverse or forward, sockets
+in hand), launches nothing more, and logs `Start abandoned` at info rather than `Failed to start session` at error.
+Only the stream sockets get this close. The other sockets (device probe, network scan, and
 the multiplexed device tracker, shell and file listing) still end with the WebSocket server's terminate: none of their
 clients behaves differently on 1001 than on 1006, except the file push, which reports an interrupted upload only on an
 unclean close and should keep doing so.

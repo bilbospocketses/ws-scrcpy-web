@@ -109,6 +109,14 @@ export class ScrcpyConnection extends Mw {
             ws.close(4003, '[ScrcpyConnection] Missing "udid" parameter');
             return;
         }
+        // The server is stopping on purpose: the open sessions have been closed
+        // but the WebSocket server is not released yet. A session started now
+        // would launch scrcpy-server for `adb kill-server` to kill, and its
+        // viewer would see "stream failed"; end it cleanly before it starts.
+        if (liveStreams.isStopping()) {
+            ws.close(SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON);
+            return;
+        }
         const connection = new ScrcpyConnection(ws, udid, url.searchParams);
         return connection;
     }
@@ -135,6 +143,14 @@ export class ScrcpyConnection extends Mw {
         // `adb kill-server` kills scrcpy-server under it; see liveStreams.ts.
         liveStreams.add(this);
         this.start().catch((err) => {
+            if (this.released) {
+                // Released while starting: the browser left or the server is
+                // stopping (abandonIfReleased), or scrcpy-server already failed
+                // and releaseAsFailure reported it. The session's end is decided
+                // and told to the browser already; this is not a failed start.
+                log.info(`Start abandoned for ${serial}: ${err.message}`);
+                return;
+            }
             log.error(`Failed to start session for ${serial}:`, err.message);
             try {
                 if (ws.readyState === ws.OPEN) {
@@ -170,6 +186,7 @@ export class ScrcpyConnection extends Mw {
             this.getSdkInt(),
             options.audio === false ? Promise.resolve<string[]>([]) : this.listAudioEncoders(),
         ]);
+        this.abandonIfReleased();
         const useTunnelForward = sdkInt > 0 && sdkInt < 28;
         // Audio-capture gates:
         //  * SDK<30: scrcpy can't capture audio at all.
@@ -230,6 +247,7 @@ export class ScrcpyConnection extends Mw {
         //    Android's dexopt cache warm and drops ~15s off cold-start on older
         //    devices.
         await ensureScrcpyServerPushed(this.adbClient, this.serial, serverFile());
+        this.abandonIfReleased();
 
         // 2. Set up tunnel + launch scrcpy-server + collect 3 sockets.
         const sockets = useTunnelForward
@@ -238,10 +256,12 @@ export class ScrcpyConnection extends Mw {
         this.videoSocket = sockets[0]!;
         this.audioSocket = sockets[1]!;
         this.controlSocket = sockets[2]!;
+        this.abandonIfReleased();
 
         // 3. Parse initial metadata
         log.info(`Parsing stream metadata for ${this.serial}`);
         const metadata = await this.parseMetadata();
+        this.abandonIfReleased();
         if (options.videoEncoder) {
             metadata.videoEncoder = options.videoEncoder;
         }
@@ -378,8 +398,10 @@ export class ScrcpyConnection extends Mw {
         // socket to that port. scrcpy-server connects out (3 sockets) — we accept.
         const { server, port } = await this.createTcpServer();
         this.tcpServer = server;
+        this.abandonIfReleased();
         this.reverseTunnel = `localabstract:scrcpy_${options.scid}`;
         await this.adbClient.reverse(this.serial, this.reverseTunnel, `tcp:${port}`);
+        this.abandonIfReleased();
 
         this.launchServer(options);
 
@@ -406,20 +428,24 @@ export class ScrcpyConnection extends Mw {
         // a short window, the connection is stale — close it and retry. This
         // matches what the upstream scrcpy client does.
         const localPort = await this.reserveLocalPort();
+        this.abandonIfReleased();
         this.forwardTunnel = `tcp:${localPort}`;
         const remote = `localabstract:scrcpy_${options.scid}`;
         await this.adbClient.forward(this.serial, this.forwardTunnel, remote);
+        this.abandonIfReleased();
 
         this.launchServer(options);
 
         log.info(`Waiting for scrcpy-server handshake on ${this.serial} (up to 120s)...`);
         const videoSocket = await this.connectAndAwaitDummy(localPort, 120000);
+        this.abandonIfReleased(videoSocket);
         log.info(`scrcpy-server is live on ${this.serial}; opening remaining sockets`);
 
         // scrcpy accepts in order: video → audio (if enabled) → control. Give it
         // a brief beat between connects so each accept/return cycle completes.
         const audioEnabled = options.audio !== false;
         await new Promise((r) => setTimeout(r, 100));
+        this.abandonIfReleased(videoSocket);
         let audioSocket: net.Socket;
         if (audioEnabled) {
             audioSocket = await this.connectLocal(localPort, 15000);
@@ -430,6 +456,9 @@ export class ScrcpyConnection extends Mw {
             // of the pipeline keeps the same shape without needing a special case.
             audioSocket = createAudioDisabledSocket();
         }
+        // start() checks for a release once these sockets are in its hands. (No
+        // check after the audio steps above: this path runs only below SDK 28,
+        // where start() has already turned audio off, so they never run.)
         const controlSocket = await this.connectLocal(localPort, 15000);
 
         return [videoSocket, audioSocket, controlSocket];
@@ -448,6 +477,10 @@ export class ScrcpyConnection extends Mw {
         const deadline = Date.now() + maxWaitMs;
         let lastErr: Error | null = null;
         while (Date.now() < deadline) {
+            // Released mid-handshake: stop retrying against a forward that
+            // release() has removed, rather than for the rest of the 120 s.
+            // Outside the try, whose catch would swallow it as a failed attempt.
+            this.abandonIfReleased();
             let sock: net.Socket | undefined;
             try {
                 sock = await this.connectLocal(port, 2000);
@@ -556,6 +589,8 @@ export class ScrcpyConnection extends Mw {
             const sockets: net.Socket[] = [];
             const timeout = setTimeout(() => {
                 server.removeAllListeners('connection');
+                // Nothing else holds the ones that did connect.
+                for (const socket of sockets) socket.destroy();
                 reject(new Error(`Timeout waiting for ${count} TCP connections (got ${sockets.length})`));
             }, timeoutMs);
 
@@ -864,6 +899,31 @@ export class ScrcpyConnection extends Mw {
         }
         log.info(`${this.serial}: ${this.diagnostics.summary()}`);
 
+        this.releaseResources();
+        super.release();
+    }
+
+    /**
+     * End a start() whose session was released while it awaited: the browser
+     * left, or the server is stopping. release() tore down what existed when it
+     * ran; whatever start() has created since -- the listener or tunnel the
+     * await was setting up, sockets still in hand (`pending`) -- is torn down
+     * here, and the throw stops start() before it launches or opens anything
+     * more. The constructor logs it as an abandoned start, not a failure.
+     */
+    private abandonIfReleased(...pending: net.Socket[]): void {
+        if (!this.released) return;
+        for (const socket of pending) socket.destroy();
+        this.releaseResources();
+        throw new Error('the session was released while it was starting');
+    }
+
+    /**
+     * Close the device sockets, kill scrcpy-server, remove the tunnels and close
+     * the listener. Safe to run a second time (abandonIfReleased does): every
+     * step is a no-op or a harmless repeat on what it already closed.
+     */
+    private releaseResources(): void {
         this.videoReader?.destroy();
         this.audioReader?.destroy();
         this.videoSocket?.destroy();
@@ -882,6 +942,5 @@ export class ScrcpyConnection extends Mw {
         }
 
         this.tcpServer?.close();
-        super.release();
     }
 }
