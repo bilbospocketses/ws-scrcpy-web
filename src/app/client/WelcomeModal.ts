@@ -319,6 +319,10 @@ export class WelcomeModal extends Modal {
             requestBody.scope = this.scopeSystemRadio?.checked ? 'system' : 'user';
         }
         const modal = new ServiceOperationModal({ operation: 'install' });
+        // The progress dialog cannot be dismissed by the user, so every exit
+        // that does not hand it to the poll below closes it in `finally` — a
+        // failed or unreachable install once left it up for good.
+        let handedOff = false;
         try {
             const r = await fetch('/api/service/install', {
                 method: 'POST',
@@ -369,9 +373,12 @@ export class WelcomeModal extends Modal {
                     this.setBusy(false);
                 },
             });
+            handedOff = true;
         } catch {
             this.setStatus("couldn't reach server. try again?", true);
             this.setBusy(false);
+        } finally {
+            if (!handedOff) modal.close();
         }
     }
 

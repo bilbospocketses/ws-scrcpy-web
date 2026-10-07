@@ -3,9 +3,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from '../tabs/DependenciesTab';
-import type { TabContext } from '../tabs/EmbeddingTab';
+import { askUnbound, type TabContext } from '../tabs/EmbeddingTab';
 
-const ctx = (): TabContext => ({ role: 'admin', authEnabled: false, reload: () => undefined });
+const ctx = (): TabContext => ({
+    role: 'admin',
+    authEnabled: false,
+    reload: () => undefined,
+    askChild: askUnbound,
+    openChild: (open) => open(),
+});
 
 beforeEach(() => {
     vi.useFakeTimers();

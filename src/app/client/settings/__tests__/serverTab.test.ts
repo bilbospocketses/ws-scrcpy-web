@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResetConfirmModal } from '../../ResetConfirmModal';
 import { settingsService } from '../../SettingsService';
 import { StagedSettingsStore } from '../StagedSettingsStore';
+import { askUnbound } from '../tabs/EmbeddingTab';
 import { applyServerContainerMode, applyServerServiceStatus, buildServerTab, refreshServer } from '../tabs/ServerTab';
 
 afterEach(() => {
@@ -11,7 +12,13 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-const ctx = { role: 'admin' as const, authEnabled: false, reload: () => undefined };
+const ctx = {
+    role: 'admin' as const,
+    authEnabled: false,
+    reload: () => undefined,
+    askChild: askUnbound,
+    openChild: <T>(open: () => T) => open(),
+};
 
 /**
  * The status line for the web port is the element immediately after its row —

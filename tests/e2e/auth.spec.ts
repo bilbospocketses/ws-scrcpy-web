@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { type BrowserContext, expect, type Page, request, test } from '@playwright/test';
 import {
     ADMIN,
@@ -80,6 +80,7 @@ import {
     waitForServer,
     withTimeout,
 } from './support/privateServer';
+import { removeTree } from './support/rootProcesses';
 
 /**
  * Smoke module 18 — the opt-in login subsystem (rows 18.1–18.12).
@@ -1499,7 +1500,8 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             }
             try {
                 if (existsSync(paths.restartMarkerPath)) unlinkSync(paths.restartMarkerPath);
-                rmSync(paths.programData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+                // removeTree, not rmSync's maxRetries: Node 24 does not retry EPERM.
+                removeTree(paths.programData);
             } catch (err) {
                 // EBUSY on the WAL sidecars is tolerated: the next run re-wipes.
                 console.warn(`18.12 cleanup: ${String(err)}`);

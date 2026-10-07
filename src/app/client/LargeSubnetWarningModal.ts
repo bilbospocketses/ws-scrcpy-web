@@ -53,8 +53,10 @@ export class LargeSubnetWarningModal extends Modal {
         const cont = document.createElement('button');
         cont.textContent = 'continue scan';
         cont.addEventListener('click', () => {
-            this.data.onContinue();
+            // Close first: onContinue closes the parent, which closes its open
+            // children, so closing after it would close this dialog twice.
             this.close();
+            this.data.onContinue();
         });
         footer.appendChild(cancel);
         footer.appendChild(cont);
