@@ -1,6 +1,86 @@
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import process from 'node:process';
+import { afterAll, afterEach, beforeEach } from 'vitest';
+import { resolveDataRoot } from './src/server/dataRoot';
+import { E2E_TEMP_ROOT } from './tests/e2e/support/paths';
+
+// Per-file setup: a throwaway data root, and a guard that fails the test if the
+// data root resolves to this machine's REAL one.
+//
+// Any test that reaches Config.getInstance() without pointing the data root
+// somewhere else of its own resolves the platform default -- C:\ProgramData\
+// WsScrcpyWeb on Windows, ~/.local/share/WsScrcpyWeb on Linux -- and on a
+// machine with the app installed that is a live install. Measured 2026-10-06:
+// full-suite runs opened the installed app's wsscrcpy.db (one migrated it to a
+// newer schema, later runs quarantined it as wsscrcpy.db.corrupt-<ts>, a test
+// added rows to `devices`), and left control\apply-update-pending,
+// control\suppress-browser-open, control\update-staging\, a .restart marker and
+// more behind in it.
+//
+// So every test file starts with PROGRAMDATA (Windows) and XDG_DATA_HOME
+// (Linux) pointed at a fresh directory of its own. Those two, not DATA_ROOT,
+// because DATA_ROOT outranks both in resolveDataRoot: a default DATA_ROOT
+// would quietly override the tests that isolate themselves through PROGRAMDATA
+// or XDG_DATA_HOME, where these defaults simply lose to them. An inherited
+// DATA_ROOT, DEPS_PATH or WS_SCRCPY_CONFIG names a real install by
+// construction (the launcher sets them), so those are cleared. The directory
+// sits under E2E_TEMP_ROOT, the folder antivirus is told to leave alone.
+//
+// The guard asks the server's own resolver, so it cannot drift from it.
+const REAL_DATA_ROOTS_ENV = 'WS_SCRCPY_TEST_REAL_DATA_ROOTS';
+if (process.env[REAL_DATA_ROOTS_ENV] === undefined) {
+    // The first file this worker runs still has the environment vitest
+    // inherited; later files see this setup's own overrides, so record the
+    // real roots once, for the worker's lifetime.
+    const realRoots = [resolveDataRoot(process.env), resolveDataRoot({ ...process.env, DATA_ROOT: undefined })];
+    process.env[REAL_DATA_ROOTS_ENV] = JSON.stringify([...new Set(realRoots.filter((r) => r !== null))]);
+}
+const realDataRoots: string[] = JSON.parse(process.env[REAL_DATA_ROOTS_ENV] ?? '[]');
+
+fs.mkdirSync(E2E_TEMP_ROOT, { recursive: true });
+const testDataBase = fs.mkdtempSync(path.join(E2E_TEMP_ROOT, 'wssw-unit-data-'));
+process.env['PROGRAMDATA'] = testDataBase;
+process.env['XDG_DATA_HOME'] = testDataBase;
+delete process.env['DATA_ROOT'];
+delete process.env['DEPS_PATH'];
+delete process.env['WS_SCRCPY_CONFIG'];
+
+function isInside(child: string, parent: string): boolean {
+    const rel = path.relative(parent, child);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+const isolatedRoot = resolveDataRoot(process.env);
+if (isolatedRoot === null || !isInside(isolatedRoot, testDataBase)) {
+    throw new Error(
+        `[vitest.setup] DATA ROOT GUARD: the throwaway data root did not take. resolveDataRoot gives ` +
+            `${isolatedRoot}, not a path under ${testDataBase}; this file would run against the real data root.`,
+    );
+}
+
+function assertNotRealDataRoot(when: string): void {
+    const resolved = resolveDataRoot(process.env);
+    const real = resolved === null ? undefined : realDataRoots.find((root) => isInside(resolved, root));
+    if (real !== undefined) {
+        throw new Error(
+            `[vitest.setup] DATA ROOT GUARD (${when}): the data root resolves to ${resolved}, inside this ` +
+                `machine's real data root ${real}. A test changed PROGRAMDATA / XDG_DATA_HOME / DATA_ROOT and ` +
+                `left it pointing at the real install; point it at a temp directory and restore it afterwards.`,
+        );
+    }
+}
+
+beforeEach(() => assertNotRealDataRoot('before test'));
+afterEach(() => assertNotRealDataRoot('after test'));
+afterAll(() => {
+    try {
+        fs.rmSync(testDataBase, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+        // Best effort: a store a test left open still holds its file on Windows.
+    }
+});
 
 // Per-worker setup: never let a test resolve this developer's REAL per-user
 // profile directory.

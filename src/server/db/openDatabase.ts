@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Logger } from '../Logger';
 import { copyFileAtomicSync } from '../util/atomicFile';
-import { runMigrations } from './migrations';
+import { DatabaseNewerThanBuildError, DatabaseUpgradeError, runMigrations } from './migrations';
 
 function configure(db: DatabaseSync): void {
     db.exec('PRAGMA journal_mode = WAL');
@@ -46,6 +46,21 @@ export function openDatabase(dbPath: string): DatabaseSync {
         runMigrations(db);
         return db;
     } catch (err) {
+        // A newer schema (a downgrade) or an upgrade that stopped (its snapshot
+        // failed, or a migration threw and rolled back) leaves an INTACT database.
+        // The recovery below would move it aside and restore an older `.bak` or a
+        // blank schema over it, losing every user, setting and name; stop instead.
+        // Logged here because the throw escapes Config's boot before index.ts
+        // installs its handlers, so otherwise only server.log would see it.
+        if (err instanceof DatabaseNewerThanBuildError || err instanceof DatabaseUpgradeError) {
+            Logger.for('Db').error(err.message);
+            try {
+                db.close();
+            } catch {
+                /* best effort */
+            }
+            throw err;
+        }
         // The file opened but its *content* is corrupt or unreadable. Recovery order:
         // (1) move the corrupt file + its WAL sidecars aside; (2) restore the last-good
         // `.bak` (VACUUM-INTO snapshot from graceful shutdown) if it opens clean — this

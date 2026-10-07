@@ -57,12 +57,15 @@ What GitHub receives from these requests is your IP address, the User-Agent stri
 
 The dependency manager checks each standalone runtime dependency for a newer version on every start, and downloads one when it is missing or you update it. Outbound destinations:
 
-- `https://nodejs.org/dist/` -- Node.js binaries and their version index. Setting the
-  `WS_SCRCPY_NODE_DIST_BASE` environment variable moves both to `<that base>/index.json` and
-  `<that base>/v<version>/...`, and that server receives them instead of nodejs.org (a test / mirror seam).
-- `https://dl.google.com/android/repository/` -- ADB platform-tools and their repository listing.
+- `https://nodejs.org/dist/` -- Node.js binaries, their version index, and each release's `SHASUMS256.txt`
+  checksum list. Setting the `WS_SCRCPY_NODE_DIST_BASE` environment variable moves all three to
+  `<that base>/index.json` and `<that base>/v<version>/...`, and that server receives them instead of
+  nodejs.org (a test / mirror seam).
+- `https://dl.google.com/android/repository/` -- ADB platform-tools and their repository listing, which
+  also supplies the size and checksum each download is checked against.
 - `https://api.github.com/repos/Genymobile/scrcpy/releases/latest` and
-  `https://github.com/Genymobile/scrcpy/releases/...` -- the scrcpy-server version lookup and binary.
+  `https://github.com/Genymobile/scrcpy/releases/...` -- the scrcpy-server version lookup, binary, and the
+  release's `SHA256SUMS.txt` checksum list.
 - `https://github.com/<owner>/ws-scrcpy-web/releases/...` -- our own node-pty prebuilts.
 - `https://api.github.com/repos/bilbospocketses/mkcert/releases/latest` -- the version lookup for our
   `mkcert` fork. Like the lookups above, it runs on every start of a host install, whether or not Local

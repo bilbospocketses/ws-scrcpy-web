@@ -7,10 +7,11 @@ import { parseScreenState, SCREEN_STATE_COMMAND } from '../deviceScreenState';
 import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
-import { isProbeAddressSerial, scanAddressFor } from '../network/scanIdentity';
+import { hostOf, isProbeAddressSerial, scanAddressFor } from '../network/scanIdentity';
 import { assertDeletablePaths, isConnectAddress, shArg } from '../security/deviceInput';
 import { inContainer } from './containerGuard';
 import { upsertObservedDevices } from './deviceObserved';
+import { applyPendingLabels, forgetPendingLabels, rememberPendingLabel, serialReadOn } from './pendingLabels';
 import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
 const log = Logger.for('DeviceDiscoveryApi');
@@ -168,24 +169,43 @@ export class DeviceDiscoveryApi {
                     // this is the join that lets it read the serial's CURRENT
                     // label, including a rename made later on the card (rows
                     // 19.4 and 19.5).
+                    //
+                    // The MAC is recorded against the serial too, so a rename or
+                    // clear on the card can keep the MAC copy in step.
+                    //
+                    // A device still unauthorized, or slow, fails or answers
+                    // empty to the serial lookup. A typed name is then held
+                    // against the transport (`pendingLabels`) and filed under the
+                    // serial once the device tracker or a later connect learns
+                    // it, rather than under the address, which would go stale.
                     try {
                         let realSerial = knownSerial;
                         if (!realSerial) {
-                            const lookedUp = (await this.adbClient.shell(address, 'getprop ro.serialno')).trim();
+                            const lookedUp = (
+                                await this.adbClient.shell(address, 'getprop ro.serialno').catch(() => '')
+                            ).trim();
                             if (lookedUp) realSerial = lookedUp;
                         }
+                        const ip = hostOf(address);
+                        // No MAC in a container: `ip neigh` is not in the image, and
+                        // through docker's NAT it could not see a LAN device anyway.
+                        const mac = (label || realSerial) && !inContainer() ? await resolveMac(ip) : null;
+                        const scanAddress = await scanAddressFor(address, lookupIpv4);
+                        // The device tracker may have read the serial while the
+                        // lookups above were awaited. Asked after the last await,
+                        // so its read cannot land between this check and the hold.
+                        realSerial ??= serialReadOn(address);
                         if (realSerial) {
+                            // A name held from an earlier connect first, so one typed now wins.
+                            applyPendingLabels(db, address, realSerial);
                             if (label) db.devices.setLabel(userId, realSerial, label);
-                            db.devices.claimAddress(realSerial, await scanAddressFor(address, lookupIpv4), Date.now());
+                            db.devices.claimAddress(realSerial, scanAddress, Date.now());
+                            if (mac) db.devices.recordMac(realSerial, mac);
+                        } else if (label) {
+                            rememberPendingLabel(address, userId, { label, mac, scanAddress });
                         }
-                        if (label) {
-                            const ip = address.split(':')[0]!;
-                            // No MAC in a container: `ip neigh` is not in the image, and
-                            // through docker's NAT it could not see a LAN device anyway.
-                            const mac = inContainer() ? null : await resolveMac(ip);
-                            if (mac) {
-                                db.devices.setLabel(userId, mac, label);
-                            }
+                        if (label && mac) {
+                            db.devices.setLabel(userId, mac, label);
                         }
                     } catch {
                         // Serial or MAC lookup failed — partial persist is OK;
@@ -215,6 +235,7 @@ export class DeviceDiscoveryApi {
                 }
                 const result = await this.adbClient.disconnect(address);
                 const outcome = classifyDisconnectResult(result);
+                if (outcome.success) forgetPendingLabels(address);
                 res.writeHead(outcome.status);
                 res.end(JSON.stringify({ success: outcome.success, message: outcome.message }));
                 return true;
@@ -271,10 +292,16 @@ export class DeviceDiscoveryApi {
                 }
                 const db = Config.getInstance().db;
                 const userId = resolveUserId(req);
-                if (label) {
-                    db.devices.setLabel(userId, serial, label);
-                } else {
-                    db.devices.deleteLabel(userId, serial);
+                // The copy a connect filed under the device's MAC follows the
+                // serial: left alone, a rescan that reaches the device by MAC
+                // would bring a cleared or old name back (row 19.5 follow-up).
+                const mac = db.devices.getMac(serial);
+                for (const key of mac ? [serial, mac] : [serial]) {
+                    if (label) {
+                        db.devices.setLabel(userId, key, label);
+                    } else {
+                        db.devices.deleteLabel(userId, key);
+                    }
                 }
                 res.writeHead(200);
                 res.end(JSON.stringify({ success: true }));

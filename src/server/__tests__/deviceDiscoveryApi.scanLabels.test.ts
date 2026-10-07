@@ -23,9 +23,11 @@ vi.mock('dns/promises', () => ({ lookup: dnsLookup }));
 
 import { AdbClient } from '../AdbClient';
 import { DeviceDiscoveryApi } from '../api/DeviceDiscoveryApi';
+import { _resetPendingLabelsForTest } from '../api/pendingLabels';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
+import { Device } from '../goog-device/Device';
 import { resolveHitIdentity } from '../network/scanIdentity';
 import { makeReqRes } from './helpers/httpMock';
 
@@ -59,6 +61,7 @@ afterEach(() => {
     vi.restoreAllMocks();
     resolveMac.mockReset();
     dnsLookup.mockReset();
+    _resetPendingLabelsForTest();
     Config._resetForTest();
     for (const [k, v] of [
         [EnvName.CONFIG_PATH, saved.CONFIG],
@@ -77,6 +80,32 @@ function fakeGetprop() {
         if (cmd === 'getprop ro.serialno') return SERIAL;
         throw new Error(`unexpected shell: ${cmd}`);
     });
+}
+
+/** getprop fails until `answer` is set; the tracker's interface probe answers. */
+function flakyGetprop(failure: 'throws' | 'empty' = 'throws') {
+    const state = { answer: '' };
+    vi.spyOn(AdbClient.prototype, 'shell').mockImplementation(async (_s: string, cmd: string) => {
+        if (cmd === 'getprop ro.serialno') {
+            if (state.answer) return state.answer;
+            if (failure === 'empty') return '\n';
+            throw new Error('adb: device unauthorized.');
+        }
+        if (cmd.startsWith('ip -4')) return '34: wlan0    inet 10.0.0.5/24 brd 10.0.0.255 scope global wlan0\n';
+        throw new Error(`unexpected shell: ${cmd}`);
+    });
+    return state;
+}
+
+/** The device tracker sees the transport at `udid` and reads its properties. */
+async function sight(udid: string, serial: string): Promise<Device> {
+    const props = vi
+        .spyOn(AdbClient.prototype, 'getProperties')
+        .mockResolvedValue({ 'ro.serialno': serial, 'ro.product.model': 'Pixel 7' });
+    const device = new Device(udid, 'device');
+    await vi.waitFor(() => expect(props).toHaveBeenCalledWith(udid));
+    await new Promise((r) => setImmediate(r));
+    return device;
 }
 
 async function post(url: string, body: unknown): Promise<number> {
@@ -165,6 +194,16 @@ describe('connect with a name from a subnet-scan hit (row 19.5, defect a)', () =
         expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, MAC)).toBe('Den');
     });
 
+    it('on a host, looks the MAC up for the IPv6 host of a bracketed address', async () => {
+        setup('host');
+        fakeGetprop();
+
+        await post('/api/devices/connect', { address: '[fe80::1]:5555', label: 'Den' });
+
+        expect(resolveMac).toHaveBeenCalledWith('fe80::1');
+        expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, MAC)).toBe('Den');
+    });
+
     it('when getprop fails, writes nothing under the probe address and still answers 200', async () => {
         setup('container');
         vi.spyOn(AdbClient.prototype, 'shell').mockRejectedValue(new Error('device unauthorized'));
@@ -228,6 +267,202 @@ describe('rename on the card, then rescan (one source of truth)', () => {
         await rename(SERIAL, 'Den');
 
         expect(rescanLabel(tcpHit(null))).toBe('Den');
+    });
+});
+
+describe('clear or rename on the card keeps the MAC copy in step', () => {
+    // On a host, connect files the name under the MAC as well. The card's PUT
+    // used to touch only the serial, so a rescan that reached the device by its
+    // MAC alone (DHCP moved it, and the address join no longer matches)
+    // brought the cleared or old name back.
+    const MOVED = '10.0.0.77:5555';
+
+    for (const where of ['host', 'container'] as const) {
+        const mac = where === 'host' ? MAC : null;
+
+        it(`a cleared name stays cleared on the card and on rescan (${where})`, async () => {
+            setup(where);
+            fakeGetprop();
+            await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Old Name' });
+
+            await rename(SERIAL, '');
+
+            expect((await cardLabels())[SERIAL]).toBeUndefined();
+            expect(rescanLabel(tcpHit(mac))).toBe('');
+            expect(rescanLabel({ address: MOVED, serial: MOVED, mac })).toBe('');
+        });
+
+        it(`a renamed device carries the new name on rescan, even at a new address (${where})`, async () => {
+            setup(where);
+            fakeGetprop();
+            await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Old Name' });
+
+            await rename(SERIAL, 'New Name');
+
+            expect(rescanLabel(tcpHit(mac))).toBe('New Name');
+            if (mac) expect(rescanLabel({ address: MOVED, serial: MOVED, mac })).toBe('New Name');
+        });
+    }
+
+    describe('a MAC copy saved before schema v3, with no MAC recorded for the serial', () => {
+        function seedPreV3(): void {
+            const db = Config.getInstance().db;
+            db.devices.setLabel(IMPLICIT_ADMIN_ID, SERIAL, 'Old Name');
+            db.devices.setLabel(IMPLICIT_ADMIN_ID, MAC, 'Old Name');
+        }
+
+        it('is cleared with the serial once the tracker has seen the device, with no reconnect (host)', async () => {
+            setup('host');
+            flakyGetprop();
+            seedPreV3();
+            await sight(HIT, SERIAL);
+
+            await rename(SERIAL, '');
+
+            expect(rescanLabel({ address: MOVED, serial: MOVED, mac: MAC })).toBe('');
+            expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, MAC)).toBeUndefined();
+        });
+
+        it('is renamed with the serial once the tracker has seen the device (host)', async () => {
+            setup('host');
+            flakyGetprop();
+            seedPreV3();
+            await sight(HIT, SERIAL);
+
+            await rename(SERIAL, 'New Name');
+
+            expect(rescanLabel({ address: MOVED, serial: MOVED, mac: MAC })).toBe('New Name');
+        });
+
+        it('a USB device, or one in a container, is never looked up', async () => {
+            setup('host');
+            flakyGetprop();
+            await sight(SERIAL, SERIAL);
+            expect(Config.getInstance().db.devices.getMac(SERIAL)).toBeUndefined();
+
+            setup('container');
+            await sight(HIT, SERIAL);
+            expect(Config.getInstance().db.devices.getMac(SERIAL)).toBeUndefined();
+
+            expect(resolveMac).not.toHaveBeenCalled();
+        });
+    });
+});
+
+describe('a name typed at connect when the serial lookup fails (getprop)', () => {
+    // Right after `adb connect` a device can still be unauthorized, or slow, so
+    // `getprop ro.serialno` fails or answers empty. The name used to be filed
+    // only under the MAC on a host and nowhere in a container.
+    const OTHER = 'OTHER0SERIAL';
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    for (const where of ['host', 'container'] as const) {
+        const mac = where === 'host' ? MAC : null;
+
+        it(`reaches the card once the tracker sees the serial (${where})`, async () => {
+            setup(where);
+            flakyGetprop();
+
+            expect(await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' })).toBe(200);
+            expect((await cardLabels())[SERIAL]).toBeUndefined();
+
+            await sight(HIT, SERIAL);
+
+            expect((await cardLabels())[SERIAL]).toBe('Living Room');
+            expect(rescanLabel(tcpHit(mac))).toBe('Living Room');
+        });
+
+        it(`reaches the card on the next connect that finds the serial (${where})`, async () => {
+            setup(where);
+            const getprop = flakyGetprop('empty');
+            await post('/api/devices/connect', { address: HIT, label: 'Kitchen' });
+
+            getprop.answer = SERIAL;
+            await post('/api/devices/connect', { address: HIT });
+
+            expect((await cardLabels())[SERIAL]).toBe('Kitchen');
+            expect(rescanLabel(tcpHit(mac))).toBe('Kitchen');
+        });
+
+        it(`reaches the card when the tracker read the serial before the name was held (${where})`, async () => {
+            // The tracker polls on its own clock, so it can read the device's
+            // properties while the route is still waiting on getprop, the MAC
+            // and DNS. The hold then lands after the only read that would
+            // have applied it.
+            setup(where);
+            flakyGetprop();
+            await sight(HIT, SERIAL);
+
+            expect(await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' })).toBe(200);
+
+            expect((await cardLabels())[SERIAL]).toBe('Living Room');
+            expect(rescanLabel(tcpHit(mac))).toBe('Living Room');
+        });
+    }
+
+    it('a serial read on a transport the tracker has since lost is not used by the next connect', async () => {
+        setup('container');
+        flakyGetprop();
+        (await sight(HIT, OTHER)).setState('disconnected');
+
+        await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' });
+
+        expect(await cardLabels()).toEqual({});
+    });
+
+    it('a serial read on a transport since disconnected is not used by the next connect', async () => {
+        setup('container');
+        flakyGetprop();
+        vi.spyOn(AdbClient.prototype, 'disconnect').mockResolvedValue(`disconnected ${HIT}`);
+        await sight(HIT, OTHER);
+        expect(await post('/api/devices/disconnect', { address: HIT })).toBe(200);
+
+        await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' });
+
+        expect(await cardLabels()).toEqual({});
+    });
+
+    it('once expired, never names a different device that answers at the address', async () => {
+        setup('container');
+        flakyGetprop();
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(1_000_000);
+        await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' });
+
+        vi.setSystemTime(1_000_000 + 60 * 60 * 1000);
+        await sight(HIT, OTHER);
+
+        expect(await cardLabels()).toEqual({});
+        expect(rescanLabel(tcpHit(null))).toBe('');
+    });
+
+    it('a disconnect drops it, so the next device at the address is not named', async () => {
+        setup('container');
+        flakyGetprop();
+        vi.spyOn(AdbClient.prototype, 'disconnect').mockResolvedValue(`disconnected ${HIT}`);
+        await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' });
+
+        expect(await post('/api/devices/disconnect', { address: HIT })).toBe(200);
+        await sight(HIT, OTHER);
+
+        expect(await cardLabels()).toEqual({});
+    });
+
+    it('the tracker losing the transport drops it', async () => {
+        setup('container');
+        flakyGetprop();
+        await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' });
+
+        // The transport went away (ControlCenter.handleConnected) without a
+        // property read, and a different device later answers at the address.
+        vi.spyOn(AdbClient.prototype, 'getProperties').mockRejectedValue(new Error('device offline'));
+        const gone = new Device(HIT, 'unauthorized');
+        gone.setState('disconnected');
+        await sight(HIT, OTHER);
+
+        expect(await cardLabels()).toEqual({});
     });
 });
 

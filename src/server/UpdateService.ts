@@ -143,6 +143,12 @@ export class UpdateService {
     private readonly resolver: ReleaseFeedResolver;
     private state: UpdateServiceState;
     private timer: NodeJS.Timeout | null = null;
+    /**
+     * True once the current applyUpdate has reached its point of no return,
+     * whose hygiene closes the streams as a stop. A throw after that cancels
+     * the stop; a throw before it has nothing to cancel.
+     */
+    private streamsStoppedForApply = false;
     private readonly installRoot: string;
     private readonly platform: NodeJS.Platform;
     private readonly locator: VelopackLocatorConfig | undefined;
@@ -598,7 +604,30 @@ export class UpdateService {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
+        const mgr = this.mgr;
+        const pendingUpdate = this.state.pendingUpdate;
+        this.streamsStoppedForApply = false;
+        try {
+            return await this.applyByPath(mgr, pendingUpdate);
+        } catch (err) {
+            // A throw means no exit follows (UpdatesApi answers 403 or 500 and the
+            // server keeps running). If the point of no return had already closed
+            // the streams as a stop, new streams must be accepted again. A throw
+            // before it (a declined pkexec, a failed download, a bad checksum)
+            // stopped nothing, so there is nothing to cancel. See liveStreams.ts.
+            if (this.streamsStoppedForApply) liveStreams.cancelStop();
+            throw err;
+        }
+    }
 
+    /**
+     * Everything `applyUpdate` does after its state check. Each path calls
+     * {@link enterPointOfNoReturn} at its own point of no return.
+     */
+    private async applyByPath(
+        mgr: UpdateManagerLike,
+        pendingUpdate: UpdateInfo,
+    ): Promise<{ redirectPort: number | null }> {
         const installMode = Config.getInstance().getAppConfig().installMode;
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
 
@@ -607,7 +636,7 @@ export class UpdateService {
         // apply (item 39) — branched by installMode in the Linux block.
         if (isServiceMode && this.platform === 'win32') {
             await this.enterPointOfNoReturn();
-            this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, false);
+            mgr.waitExitThenApplyUpdate(pendingUpdate, true, false);
             return { redirectPort: null };
         }
 
@@ -829,6 +858,10 @@ export class UpdateService {
      * start an update was under way.
      */
     private async enterPointOfNoReturn(): Promise<void> {
+        // Set before the hygiene: it closes the streams as a stop
+        // (liveStreams.closeAllForShutdown), and a throw part-way through must
+        // still have applyUpdate cancel that stop.
+        this.streamsStoppedForApply = true;
         await this.preApplyHygiene();
         await this.writeApplyUpdatePendingMarker();
         // D4: every applyUpdate brings the app down and the user's EXISTING tab is

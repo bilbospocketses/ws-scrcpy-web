@@ -37,6 +37,18 @@ describe('DeviceStore observed devices', () => {
         expect(store.getDevice('S1')).toMatchObject({ address: null, model: 'Pixel 7' });
         expect(store.getDevice('S2')).toMatchObject({ address: '10.0.0.5:5555', lastSeenAt: 200 });
     });
+
+    it('recordMac gives a MAC to one device at a time and keeps the rest of the row', () => {
+        store.upsertDevice({ serial: 'S1', model: 'Pixel 7', address: '10.0.0.5:5555', lastSeenAt: 100 });
+        store.recordMac('S1', 'aa:bb:cc:dd:ee:ff');
+        expect(store.getMac('S1')).toBe('aa:bb:cc:dd:ee:ff');
+        expect(store.getDevice('S1')).toMatchObject({ model: 'Pixel 7', address: '10.0.0.5:5555', lastSeenAt: 100 });
+
+        store.recordMac('S2', 'aa:bb:cc:dd:ee:ff');
+        expect(store.getMac('S1')).toBeUndefined();
+        expect(store.getMac('S2')).toBe('aa:bb:cc:dd:ee:ff');
+        expect(store.getMac('unknown')).toBeUndefined();
+    });
 });
 
 describe('DeviceStore per-user labels', () => {

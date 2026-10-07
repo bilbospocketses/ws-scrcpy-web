@@ -1,4 +1,5 @@
 import Util from '../../app/Util';
+import { closeReason } from '../../common/closeReason';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import { ErrorEventClass } from './ErrorEventClass';
 import { Message } from './Message';
@@ -268,7 +269,10 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
             if (reason !== undefined) closeInit.reason = reason;
             this.emit('close', new CloseEvent('close', closeInit));
         } else {
-            this.ws.close(code, reason);
+            // A real socket throws for a reason over 123 bytes and never closes.
+            // The channel branch above needs no cut: its reason travels inside a
+            // length-prefixed CloseChannel frame, never to WebSocket.close.
+            this.ws.close(code, reason === undefined ? undefined : closeReason(reason));
         }
     }
 

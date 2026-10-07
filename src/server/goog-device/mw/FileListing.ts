@@ -3,6 +3,7 @@ import { ChannelCode } from '../../../common/ChannelCode';
 import type { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { Logger } from '../../Logger';
 import { Mw } from '../../mw/Mw';
+import { closeReason } from '../../util/closeReason';
 import { AdbUtils } from '../AdbUtils';
 import { FilePushReader } from '../filePush/FilePushReader';
 
@@ -76,7 +77,7 @@ export class FileListing extends Mw {
                 break;
             default:
                 FileListing.log.error(`Invalid message. Wrong command (${cmd})`);
-                channel.close(4001, `Invalid message. Wrong command (${cmd})`);
+                channel.close(4001, closeReason(`Invalid message. Wrong command (${cmd})`));
                 break;
         }
     }

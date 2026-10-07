@@ -1171,6 +1171,98 @@ describe('UpdateService', () => {
 
         expect(order).toEqual(['close stream', 'kill-server']);
         expect(liveStreams.size()).toBe(0);
+        // The process exits next, so a stream opened now is refused (1001).
+        expect(liveStreams.isStopping()).toBe(true);
+        liveStreams.cancelStop();
+    });
+
+    it('applyUpdate: an apply that fails after its point of no return accepts new streams again', async () => {
+        // The process keeps running after a failed apply (UpdatesApi answers
+        // 500), so it must not go on refusing every stream as if it were stopping.
+        // Windows service mode reaches its point of no return (the hygiene closes
+        // the streams as a stop) before Velopack's waitExitThenApplyUpdate, so a
+        // throw from that call is a failure AFTER it.
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user-service' });
+        let closed = 0;
+        const stream = {
+            closeForShutdown: () => {
+                closed++;
+                liveStreams.remove(stream);
+            },
+        };
+        liveStreams.add(stream);
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockResolvedValue(undefined);
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () =>
+                fakeMgr({
+                    checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0'),
+                    waitExitThenApplyUpdate: () => {
+                        throw new Error('velopack apply failed');
+                    },
+                }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(/velopack apply failed/);
+        } finally {
+            killSpy.mockRestore();
+        }
+
+        expect(closed).toBe(1);
+        expect(liveStreams.isStopping()).toBe(false);
+    });
+
+    it('applyUpdate: an apply that fails before its point of no return closes no stream', async () => {
+        // A bad checksum fails before the point of no return (since 2026-10-06),
+        // so the streams stay open and nothing was stopped.
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'beta',
+            githubOwner: 'bilbospocketses',
+        });
+        let closed = 0;
+        const stream = {
+            closeForShutdown: () => {
+                closed++;
+                liveStreams.remove(stream);
+            },
+        };
+        liveStreams.add(stream);
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockResolvedValue(undefined);
+        const sums = `${'0'.repeat(64)}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+        const fetchFn = vi.fn(async (url: string) =>
+            url.endsWith('.AppImage') ? new Response(Buffer.from('CORRUPT')) : new Response(sums),
+        ) as unknown as typeof fetch;
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.26') }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            fetchFn,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage';
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(/mismatch/i);
+        } finally {
+            killSpy.mockRestore();
+        }
+
+        expect(closed).toBe(0);
+        expect(liveStreams.isStopping()).toBe(false);
+        liveStreams.remove(stream);
     });
 
     it('applyUpdate: with the default reaper, no execFile call ever carries /IM', async () => {

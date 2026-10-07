@@ -134,7 +134,7 @@ export class AdbUtils {
                     // Skip entries that fail
                 }
             }
-            stream.close(0);
+            stream.close(1000);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'readdir failed';
             this.sendError(message, stream);

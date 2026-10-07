@@ -9,6 +9,7 @@ import type { Db } from '../db/Db';
 import { Logger } from '../Logger';
 import type { MwFactory } from '../mw/Mw';
 import { evaluateWsConnection } from '../security/requestGate';
+import { closeReason } from '../util/closeReason';
 import { HttpServer, type ServerAndPort } from './HttpServer';
 import type { Service } from './Service';
 
@@ -117,7 +118,7 @@ export class WebSocketServer implements Service {
         });
         wss.on('connection', async (ws: WS, request) => {
             if (!request.url) {
-                ws.close(4001, `[${TAG}] Invalid url`);
+                ws.close(4001, closeReason(`[${TAG}] Invalid url`));
                 return;
             }
             const url = new URL(request.url, 'https://example.org/');
@@ -153,7 +154,7 @@ export class WebSocketServer implements Service {
                 }
             }
             if (!processed) {
-                ws.close(4002, `[${TAG}] Unsupported request`);
+                ws.close(4002, closeReason(`[${TAG}] Unsupported request`));
             }
             return;
         });
@@ -198,13 +199,18 @@ export class WebSocketServer implements Service {
             // handshake forever; a browser tab still open pins the server
             // alive indefinitely (no built-in timeout in the `ws` library).
             server.close();
-            // Force-terminate every open client. Triggers the per-client
-            // 'close' event (code 1006, abnormal closure), which cascades
-            // into RemoteShell's `term.kill()` and ScrcpyConnection's
-            // `serverProcess.kill()` so their spawned children get cleaned
-            // up too. Without terminate, the 4-minute hang observed in dev
-            // (Ctrl+C → "Stopping..." → wait for browser to disconnect)
-            // becomes the steady-state behavior whenever a client is open.
+            // Force-terminate every open client. Without it, the 4-minute
+            // hang observed in dev (Ctrl+C → "Stopping..." → wait for browser
+            // to disconnect) becomes the steady-state behavior whenever a
+            // client is open.
+            //
+            // Stream sessions are NOT ended here. By the time this runs, the
+            // shutdown has already closed each one with 1001 and released it
+            // (liveStreams.closeAllForShutdown, before `adb kill-server`), and
+            // has stopped new ones from starting; a stream socket still
+            // CLOSING is just cut short. What terminate still ends is every
+            // other socket: its 'close' (code 1006) releases that socket's
+            // Mw, which is how RemoteShell's `term.kill()` runs.
             for (const client of server.clients) {
                 try {
                     client.terminate();

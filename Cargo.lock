@@ -1192,9 +1192,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.39"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2c118cb077cca2822033836dfb1b975355dfb784b5e8da48f7b6c5db74e60e"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
@@ -1216,9 +1216,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -2243,7 +2243,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "ws-scrcpy-web-common"
-version = "0.1.30-beta.191"
+version = "0.1.30-beta.196"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "ws-scrcpy-web-launcher"
-version = "0.1.30-beta.191"
+version = "0.1.30-beta.196"
 dependencies = [
  "anyhow",
  "ctrlc",
@@ -2274,7 +2274,7 @@ dependencies = [
 
 [[package]]
 name = "ws-scrcpy-web-tray"
-version = "0.1.30-beta.191"
+version = "0.1.30-beta.196"
 dependencies = [
  "anyhow",
  "ureq 2.12.1",

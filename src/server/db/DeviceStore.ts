@@ -44,6 +44,28 @@ export class DeviceStore {
         this.upsertDevice({ serial, address, lastSeenAt: at });
     }
 
+    /**
+     * Record `mac` as the MAC `serial` was last seen with, so the label copy a
+     * connect files under that MAC can follow a rename or clear made by serial
+     * on the card (row 19.5 follow-up). A MAC belongs to one device at a time,
+     * as an address does in `claimAddress`.
+     */
+    recordMac(serial: string, mac: string): void {
+        this.db.prepare('UPDATE devices SET mac = NULL WHERE mac = ? AND serial <> ?').run(mac, serial);
+        this.db
+            .prepare(
+                'INSERT INTO devices (serial, mac) VALUES (?, ?) ON CONFLICT(serial) DO UPDATE SET mac = excluded.mac',
+            )
+            .run(serial, mac);
+    }
+
+    getMac(serial: string): string | undefined {
+        const r = this.db.prepare('SELECT mac FROM devices WHERE serial = ?').get(serial) as
+            | { mac: string | null }
+            | undefined;
+        return r?.mac ?? undefined;
+    }
+
     getDevice(serial: string): DeviceRecord | undefined {
         const r = this.db
             .prepare('SELECT serial, manufacturer, model, address, last_seen_at FROM devices WHERE serial = ?')

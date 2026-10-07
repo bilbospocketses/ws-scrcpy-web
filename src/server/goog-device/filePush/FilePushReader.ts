@@ -7,6 +7,7 @@ import { AdbClient } from '../../AdbClient';
 import { Config } from '../../Config';
 import { Logger } from '../../Logger';
 import { assertSafeRemotePath } from '../../security/deviceInput';
+import { closeReason } from '../../util/closeReason';
 
 enum State {
     INITIAL = 0,
@@ -75,7 +76,7 @@ export class FilePushReader {
     private closeWithError(code: number, message?: string): void {
         this.channel.removeEventListener('message', this.onMessage);
         this.channel.removeEventListener('close', this.onClose);
-        this.channel.close(4000 - code, message);
+        this.channel.close(4000 - code, message === undefined ? undefined : closeReason(message));
         this.release();
     }
 
