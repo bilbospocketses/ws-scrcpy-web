@@ -828,6 +828,13 @@ export class UpdateService {
             log.info(`applyUpdate: spawned operation-server (pid ${child.pid})`);
         } catch (err) {
             log.error(`applyUpdate: failed to prepare or spawn operation-server: ${(err as Error).message}`);
+            if (!this.streamsStoppedForApply) {
+                // Failed before the point of no return (the verify manifest): no
+                // stream was closed, adb runs and no marker was written. Report it
+                // and keep running, as a failed Linux download does. Returning here
+                // instead would let UpdatesApi exit with the streams still open.
+                throw err;
+            }
             // The hand-off is not happening, so the markers written for it must
             // not outlive this attempt: a lingering apply-update-pending makes the
             // launcher's NEXT graceful exit skip the tray reap (qa-harness Arc 3,

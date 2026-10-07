@@ -1219,6 +1219,52 @@ describe('UpdateService', () => {
         expect(liveStreams.isStopping()).toBe(false);
     });
 
+    it('applyUpdate (windows local): a verify manifest that cannot be written fails the apply and closes no stream', async () => {
+        // The manifest is written before the point of no return. Its failure used
+        // to be caught and answered like a hand-off, so UpdatesApi exited with the
+        // streams still open and no update applied.
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        let closed = 0;
+        const stream = {
+            closeForShutdown: () => {
+                closed++;
+                liveStreams.remove(stream);
+            },
+        };
+        liveStreams.add(stream);
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockResolvedValue(undefined);
+        const manifestPath = Config.getInstance().applyUpdateVerifyManifestPath;
+        const realWriteFile = fs.promises.writeFile;
+        const writeSpy = vi
+            .spyOn(fs.promises, 'writeFile')
+            .mockImplementation((file, data, options) =>
+                file === manifestPath
+                    ? Promise.reject(new Error('EACCES: manifest not writable'))
+                    : realWriteFile(file, data, options),
+            );
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0') }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(/manifest not writable/);
+            expect(closed).toBe(0);
+            expect(liveStreams.isStopping()).toBe(false);
+            expect(fs.existsSync(Config.getInstance().applyUpdatePendingMarkerPath)).toBe(false);
+        } finally {
+            writeSpy.mockRestore();
+            killSpy.mockRestore();
+            liveStreams.remove(stream);
+        }
+    });
+
     it('applyUpdate: an apply that fails before its point of no return closes no stream', async () => {
         // A bad checksum fails before the point of no return (since 2026-10-06),
         // so the streams stay open and nothing was stopped.
