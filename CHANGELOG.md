@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A failed first-run service install no longer leaves the "installing service" spinner stuck on screen.** When the welcome modal's "yes, install service" failed (an error from the server, a declined admin prompt, or a server that could not be reached), the spinner stayed over the welcome modal's error message and could not be dismissed, since Escape, the backdrop and × deliberately do nothing on it. The spinner now closes on every outcome except a successful install, where it stays up until the service takes over, the same way Settings → Service already behaved (`src/app/client/WelcomeModal.ts`).
+
 ### Changed
 - **docs: smoke row 7.12 says a closed scan hit stays gone for that scan (qa-harness, 2026-10-06).** It said "for the session", but both the client (`scanSessionHits`) and the server (`emittedAddresses`) reset at every scan start, so the next scan offers the hit again. The register notes that the "may need pairing" hint is set only on mDNS hits advertising `tls-connect`.
 
