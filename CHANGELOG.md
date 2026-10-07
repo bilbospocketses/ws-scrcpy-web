@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.197] - 2026-10-07
+
 ### Fixed
 - **Settings → Dependencies no longer offers a scrcpy-server the app has not been tested with.** scrcpy v5.0 came out on 2026-10-05 and was offered as an update, although this build's stream handling is written and tested for scrcpy-server 4.1, and the app runs whichever server is installed. The panel now offers scrcpy-server only up to the version the app ships with; a newer scrcpy arrives through an app update once it has been tested. If you already installed v5.0, the panel offers 4.1 back as an update.
 - **A stream opened just as the server is stopping now ends cleanly, and a stream closed while it was still starting no longer leaves scrcpy-server running or logs a false error.** In the moment between the server closing its open streams and actually going down, a newly opened stream still started, and the viewer saw "stream failed" when adb was stopped under it; it is now closed at once as a normal end, before anything starts. A stream closed while still starting (the viewer left, or the server is stopping) used to carry on launching scrcpy-server and opening connections that nothing closed until the app exited, and on a stop it logged "Failed to start session" as an error although nothing had failed. It now stops at its next step, closes what it had opened, and notes the abandoned start in the log as information (`src/server/liveStreams.ts`, `src/server/ScrcpyConnection.ts`).
