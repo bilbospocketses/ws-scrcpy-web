@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **tests: the unit suite runs against a throwaway data root and fails if anything reaches the machine's real one.** It used to read and write the installed app's `wsscrcpy.db` and control markers. `vitest.setup.ts` points `PROGRAMDATA` and `XDG_DATA_HOME` at a fresh temp directory for every test file and asks the server's own `resolveDataRoot` (moved into `src/server/dataRoot.ts` so the setup can load it alone) whether the data root landed there, and again around every test whether it now points at the real one. Harness only; the app is unchanged.
 
+### Security
+- **Node.js, adb and scrcpy-server downloads are now checked against their publishers' checksums before install, and a mismatch is refused.** Until now only mkcert was checked; the other three were installed as downloaded. Node.js is checked against the release's `SHASUMS256.txt` from nodejs.org (or from `WS_SCRCPY_NODE_DIST_BASE` when set, beside the archive). scrcpy-server is checked against the release's `SHA256SUMS.txt`, and for a version this repo pins in `SERVER_JAR_SHA256` the list must also agree with the pin. adb now downloads the versioned `platform-tools_r<version>-<os>.zip` instead of the floating `platform-tools-latest-<os>.zip`, and is checked against the size and SHA-1 Google lists for that archive in `repository2-3.xml`; a bad archive is refused before the running adb server is stopped. A checksum list that cannot be fetched, does not name the file, or does not match ends the update in Error with a message saying which, and nothing is installed. There is no setting that skips a check.
+
 ## [0.1.30-beta.192] - 2026-10-07
 
 ### Fixed
@@ -79,9 +82,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **tests: smoke row 9.12 (Dependencies: Restart Now) moves to the fast tier.** The new `tests/e2e/dependencies-restart.spec.ts` points `WS_SCRCPY_NODE_DIST_BASE` at a fixture on loopback that offers the runner's own Node major with its patch raised. It drives Settings → Dependencies through check for updates, the Node update, the **Restart Now** prompt (the panel's only restart control) and `Restarting...`, asserts exit 75 and the `.restart` marker, boots the same root again in the launcher's place, and waits for the page to reload onto that process. The fake `node` binaries are shell scripts, so it runs on Linux and skips on Windows. It found the stale-token reload bug above. The coverage register counts 145 of 251 rows automated.
-
-### Security
-- **Node.js, adb and scrcpy-server downloads are now checked against their publishers' checksums before install, and a mismatch is refused.** Until now only mkcert was checked; the other three were installed as downloaded. Node.js is checked against the release's `SHASUMS256.txt` from nodejs.org (or from `WS_SCRCPY_NODE_DIST_BASE` when set, beside the archive). scrcpy-server is checked against the release's `SHA256SUMS.txt`, and for a version this repo pins in `SERVER_JAR_SHA256` the list must also agree with the pin. adb now downloads the versioned `platform-tools_r<version>-<os>.zip` instead of the floating `platform-tools-latest-<os>.zip`, and is checked against the size and SHA-1 Google lists for that archive in `repository2-3.xml`; a bad archive is refused before the running adb server is stopped. A checksum list that cannot be fetched, does not name the file, or does not match ends the update in Error with a message saying which, and nothing is installed. There is no setting that skips a check.
 ## [0.1.30-beta.183] - 2026-10-06
 
 ### Fixed
