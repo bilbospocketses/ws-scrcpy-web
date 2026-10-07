@@ -195,3 +195,118 @@ describe('ScanNetworkModal — row editing', () => {
         modal.close();
     });
 });
+
+describe('ScanNetworkModal — its child dialogs follow it', () => {
+    const LARGE_SUBNET = { cidr: '10.0.0.0/20', hostCount: 4094 };
+
+    beforeEach(() => {
+        HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+            this.setAttribute('open', '');
+        });
+        HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+            this.removeAttribute('open');
+        });
+    });
+
+    /** Let the base Modal's 250 ms removal fallback run (jsdom fires no transitionend). */
+    async function waitForRemoval(): Promise<void> {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    function button(dialog: Element | null, label: string): HTMLButtonElement {
+        const btn = [...(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+            (b) => b.textContent === label,
+        );
+        expect(btn, `button "${label}"`).toBeTruthy();
+        return btn as HTMLButtonElement;
+    }
+
+    it('"Add Subnet" is dismissed, and adds nothing, when the scan modal closes another way', async () => {
+        const modal = new ScanNetworkModal({ gatewaySubnet: null, onStartScan: vi.fn() });
+        await flush();
+        const closeSpy = vi.spyOn(modal, 'close');
+        button(modal['dialog'], 'add subnet').click();
+        await flush();
+        expect(document.querySelector('dialog.add-subnet-modal')?.hasAttribute('open')).toBe(true);
+
+        modal.close();
+        await waitForRemoval();
+
+        expect(document.querySelector('dialog.add-subnet-modal'), 'the child must not outlive its parent').toBeNull();
+        expect(modal['rows']).toHaveLength(0);
+        expect(patchGlobalCalls).toHaveLength(0);
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('"Large Scan" is dismissed, and starts no scan, when the scan modal closes another way', async () => {
+        const onStartScan = vi.fn();
+        const modal = new ScanNetworkModal({ gatewaySubnet: LARGE_SUBNET, onStartScan });
+        await flush();
+        const closeSpy = vi.spyOn(modal, 'close');
+        button(modal['dialog'], 'start scan').click();
+        expect(document.querySelector('dialog.large-subnet-warning-modal')?.hasAttribute('open')).toBe(true);
+
+        modal.close();
+        await waitForRemoval();
+
+        expect(
+            document.querySelector('dialog.large-subnet-warning-modal'),
+            'the warning must not outlive it',
+        ).toBeNull();
+        expect(onStartScan).not.toHaveBeenCalled();
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('"add" in "Add Subnet" adds the row and keeps the scan modal open', async () => {
+        const modal = new ScanNetworkModal({ gatewaySubnet: null, onStartScan: vi.fn() });
+        await flush();
+        button(modal['dialog'], 'add subnet').click();
+        await flush();
+        const child = document.querySelector('dialog.add-subnet-modal');
+        const input = child?.querySelector('input') as HTMLInputElement;
+        input.value = '192.168.5.0/24';
+        input.dispatchEvent(new Event('input'));
+        button(child, 'add').click();
+        await flush();
+        await waitForRemoval();
+
+        expect(modal['rows'].map((r: { raw: string }) => r.raw)).toEqual(['192.168.5.0/24']);
+        expect(document.querySelector('dialog.add-subnet-modal')).toBeNull();
+        expect(modal['dialog'].hasAttribute('open')).toBe(true);
+        modal.close();
+    });
+
+    it('"continue scan" starts the scan once and closes each dialog once', async () => {
+        const onStartScan = vi.fn();
+        const modal = new ScanNetworkModal({ gatewaySubnet: LARGE_SUBNET, onStartScan });
+        await flush();
+        const closeSpy = vi.spyOn(modal, 'close');
+        const { LargeSubnetWarningModal } = await import('../LargeSubnetWarningModal');
+        const childClose = vi.spyOn(LargeSubnetWarningModal.prototype, 'close');
+        button(modal['dialog'], 'start scan').click();
+
+        button(document.querySelector('dialog.large-subnet-warning-modal'), 'continue scan').click();
+        await waitForRemoval();
+
+        expect(onStartScan).toHaveBeenCalledTimes(1);
+        expect(onStartScan).toHaveBeenCalledWith(['10.0.0.0/20']);
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expect(childClose).toHaveBeenCalledTimes(1);
+        expect(document.querySelector('dialog.large-subnet-warning-modal')).toBeNull();
+    });
+
+    it('"cancel" in "Large Scan" keeps the scan modal open and starts nothing', async () => {
+        const onStartScan = vi.fn();
+        const modal = new ScanNetworkModal({ gatewaySubnet: LARGE_SUBNET, onStartScan });
+        await flush();
+        button(modal['dialog'], 'start scan').click();
+
+        button(document.querySelector('dialog.large-subnet-warning-modal'), 'cancel').click();
+        await waitForRemoval();
+
+        expect(onStartScan).not.toHaveBeenCalled();
+        expect(document.querySelector('dialog.large-subnet-warning-modal')).toBeNull();
+        expect(modal['dialog'].hasAttribute('open')).toBe(true);
+        modal.close();
+    });
+});

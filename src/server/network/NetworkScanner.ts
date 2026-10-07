@@ -374,12 +374,13 @@ export class NetworkScanner {
             const { _hitMeta, label: explicitLabel, ...hitBase } = msg;
             for (const [ws, userId] of this.spectators) {
                 if (ws.readyState !== ws.OPEN) continue;
-                // Label precedence: explicit > MAC alias > the hit's own serial >
-                // the real serial of the device observed at this address. That
-                // last step is what makes a label survive the round trip a user
-                // is most likely to take — name a device, disconnect it, scan
-                // again — because the device row keys labels on ro.serialno
-                // while a TCP hit's serial is the probe address (finding 19.4).
+                // Label precedence: explicit > the device's real serial (an mDNS
+                // hit's own, then the one observed at this address) > MAC alias >
+                // a name filed under the probe address. The observed step is what
+                // makes a label survive the round trip a user is most likely to
+                // take — name a device, disconnect it, scan again — because the
+                // device row keys labels on ro.serialno while a TCP hit's serial
+                // is the probe address (findings 19.4 and 19.5).
                 const labelFor = this.deps.labelFor;
                 const { label, model } = resolveHitIdentity({
                     address: msg.address,

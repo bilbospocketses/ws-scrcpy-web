@@ -58,6 +58,28 @@ export function mkcertChecksumsUrl(version: string): string {
 }
 
 /**
+ * A test / mirror seam for every URL Node's update path reads from nodejs.org,
+ * the sibling of WS_SCRCPY_MKCERT_URL_BASE (item 167). Set, it replaces
+ * `https://nodejs.org/dist` and nodejs.org's own layout stays under it:
+ *
+ *   <base>/index.json                                        the release index
+ *   <base>/v<version>/node-v<version>-<platform>-<arch>.<ext> the archive
+ *
+ * That is all the path reads there: the install checks no hash today, so there
+ * is no SHASUMS256.txt to move. The node-pty prebuilt manifest the lookup also
+ * reads is this repo's own release asset, not Node's, and stays where it is.
+ * Smoke row 9.12 points it at a fixture so a fast-tier server is offered a
+ * Node update, the one update that needs a restart.
+ */
+export const NODE_DIST_BASE_ENV = 'WS_SCRCPY_NODE_DIST_BASE';
+
+/** Read at call time, not at import, so a test can set the variable per case. */
+export function nodeDistBase(override: string | undefined = process.env[NODE_DIST_BASE_ENV]): string {
+    const trimmed = override?.trim().replace(/\/+$/, '');
+    return trimmed || 'https://nodejs.org/dist';
+}
+
+/**
  * Node major version → ABI number (`process.versions.modules`).
  * ABI is stable within a major; it changes only across majors.
  * Keys are Node major numbers; values are string-form ABI numbers
@@ -180,7 +202,7 @@ export function getDependencyDefinitions(
                 return runVersionCommand(exe, ['--version'], /v([\d.]+)/);
             },
             checkLatest: async () => {
-                const res = await fetchOkWithRetry('https://nodejs.org/dist/index.json', {
+                const res = await fetchOkWithRetry(`${nodeDistBase()}/index.json`, {
                     ...VERSION_CHECK_POLICY,
                     onRetry: (n) => log.warn(`node latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
                 });
@@ -214,9 +236,9 @@ export function getDependencyDefinitions(
             },
             getDownloadUrl: (version) => {
                 if (platform === 'win32') {
-                    return `https://nodejs.org/dist/v${version}/node-v${version}-win-${arch}.zip`;
+                    return `${nodeDistBase()}/v${version}/node-v${version}-win-${arch}.zip`;
                 }
-                return `https://nodejs.org/dist/v${version}/node-v${version}-linux-${arch}.tar.gz`;
+                return `${nodeDistBase()}/v${version}/node-v${version}-linux-${arch}.tar.gz`;
             },
         },
         {

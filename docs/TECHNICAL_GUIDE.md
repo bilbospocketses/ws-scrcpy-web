@@ -602,11 +602,13 @@ export interface StreamHandle {
 
 Calling `startStream()` a second time on the same container without first calling `stop()` throws `Error('container already has an active stream; call stop() first')`.
 
+Calling it with a missing or non-string `deviceId` throws `Error('startStream: deviceId is required')` synchronously and returns no handle; `onError` does not fire for it.
+
 ### 6.5 Lifecycle Callbacks
 
 - **`onConnect(info)`** fires once, as soon as session metadata is received. `info` contains the actual resolved `codec`, `encoder`, and `resolution` strings. Note: this fires at metadata receipt, not first decoded frame — the codebase has no first-frame signal today. This is a deliberate simplification. A future `onFirstFrame` callback would be a non-breaking addition.
-- **`onDisconnect(reason?)`** fires once when the stream ends for any reason: the device disconnects, the WebSocket closes, or the caller invokes `handle.stop()`. `reason` is a short human-readable string when available.
-- **`onError(err)`** fires on startup failures (missing `deviceId`, device probe failure, WebSocket refused) and on abnormal WebSocket close codes. A startup error does NOT also fire `onDisconnect` — it's an error that prevented connection, not a disconnect. `handle.isConnected` stays `false`.
+- **`onDisconnect(reason?)`** fires once when the stream ends normally: the caller invokes `handle.stop()`, or the WebSocket closes with 1000, 1001 or 1005 (no code — the server's own release on a normal end). `reason` is a short human-readable string when available.
+- **`onError(err)`** fires on startup failures (missing `deviceId`, device probe failure, WebSocket refused) and when the stream ends abnormally: any other close code, including the server's `4005` for a failed session (a failed start, scrcpy-server exiting, the device's video ending) and `1006` for a dropped connection. `err.message` is the close reason, or `WebSocket closed with code <N>` when there is none. An end reports to exactly ONE of `onError` and `onDisconnect`, never both — `StreamClientScrcpy.onDisconnected` decides which before it runs either, because the disconnect callback can stop the stream, and a stop is never a failure. `handle.isConnected` is `false` afterwards either way.
 
 ### 6.6 `embed.html` URL Parameters
 
@@ -803,10 +805,21 @@ In production (MSI/AppImage), the Rust launcher (`ws-scrcpy-web-launcher.exe`) s
    - `RemoteShell` -- terminal access via node-pty (messages: `start`, `resize`, `stop`)
    - `FileListing` -- file manager operations
 
-**Graceful shutdown** (`gracefulShutdown()` in `index.ts`: "stop server & exit", the tray's exit, SIGINT/SIGTERM; not
-the exit-75 restart) stops the adb daemon with `adb kill-server`, then on Windows reaps whatever is left of **the app's
-own adb only** (`reapStrayAdbOnWindows(config.adbPath)` in `src/server/shutdownHelpers.ts`, implemented in
+**Graceful shutdown** (`gracefulShutdown()` in `index.ts`, its steps in `runGracefulShutdown()` in
+`src/server/shutdownHelpers.ts`: "stop server & exit", the tray's exit, SIGINT/SIGTERM; not the exit-75 restart) first
+closes every open stream with **1001 "server shutting down"** (`liveStreams.closeAllForShutdown()`,
+`src/server/liveStreams.ts`), then stops the adb daemon with `adb kill-server`, then on Windows reaps whatever is left of
+**the app's own adb only** (`reapStrayAdbOnWindows(config.adbPath)` in `src/server/shutdownHelpers.ts`, implemented in
 `src/server/util/reapOwnAdb.ts`), then releases the services and snapshots and closes the SQLite store.
+The streams go first because `kill-server` kills each session's scrcpy-server, and a session still open then took its
+failure path (§11.4) and the viewer saw `stream failed: scrcpy-server exited (...)` over a stop they asked for. Closing
+with 1001 (Going Away, a normal end to the browser) also releases the session, so the exit that `kill-server` causes
+finds it already released. The exit-75 restarts (`DependencyManager.requestRestart`, `scheduleRestartForPortChange`)
+and an update's pre-apply hygiene (`UpdateService.preApplyHygiene`) close the open streams the same way before they
+exit or run `kill-server`. Only the stream sockets get this close. The other sockets (device probe, network scan, and
+the multiplexed device tracker, shell and file listing) still end with the WebSocket server's terminate: none of their
+clients behaves differently on 1001 than on 1006, except the file push, which reports an interrupted upload only on an
+unclean close and should keep doing so.
 The reap is needed because `kill-server` can leave the daemon behind (spawned detached and outside the job object,
 stuck transports, in-flight forwards). It matches **by executable path**: Windows PowerShell 5.1 (literal
 `C:\Windows\System32\...` path, `PSModulePath` stripped, a fixed script with nothing spliced in) lists `adb`
@@ -857,6 +870,7 @@ Browser WS connect (action=stream, udid=xxx, videoCodec=h265, ...)
 | `VELOPACK_FEED_URL` | unset | Hands Velopack this feed URL as-is and skips the app's own release lookup (the update-flow sandbox and qa-harness's pinned feed use it). It does NOT move the Linux apply's two downloads; see the next row. |
 | `WS_SCRCPY_RELEASE_URL_BASE` | unset | A test / mirror seam for the **Linux** in-app update's two downloads, the AppImage and `SHA256SUMS`. Unset, they come from `https://github.com/<githubOwner>/ws-scrcpy-web/releases/download/v<version>/<asset>`. Set, the base replaces that prefix and the layout under it stays the same: `<base>/v<version>/<asset>` (trailing slashes on the base are dropped). The SHA-256 check runs exactly as without it, against whatever `SHA256SUMS` the base serves, so a harness can drive the apply's two aborts: no entry for the asset, and a digest mismatch. The apply logs `release assets from WS_SCRCPY_RELEASE_URL_BASE=<base>` when it is set. Item 169, asked for by qa-harness for smoke row 6.2's clause G69 (`src/server/linuxUpdateAssets.ts`). |
 | `WS_SCRCPY_MKCERT_URL_BASE` | unset | A test / mirror seam for every URL the mkcert path reads. Unset, the latest-release and attestation lookups go to `https://api.github.com/repos/bilbospocketses/mkcert` and the manifest and binary come from `https://github.com/bilbospocketses/mkcert/releases/download`. Set, one base replaces both prefixes and GitHub's layout stays under it: `<base>/releases/latest`, `<base>/releases/download/<tag>/<asset>`, `<base>/attestations/sha256:<digest>` (trailing slashes dropped, read on each request). It moves where the files come from, never what vouches for them: the manifest's attestation must still verify against the Sigstore public-good root and name the fork's release workflow on github.com at that exact tag, and the binary must still match the manifest, so a base can serve a genuine release or be refused. There is deliberately no seam for the trust root. The server logs `mkcert release lookups and downloads from WS_SCRCPY_MKCERT_URL_BASE=<base>` at start when it is set (host installs only; a container never manages mkcert). Item 167, which let smoke row 21.12's refusals run in the fast tier (`src/server/mkcertProvenance.ts`, `tests/e2e/mkcert-provenance.spec.ts`). |
+| `WS_SCRCPY_NODE_DIST_BASE` | unset | A test / mirror seam for every URL Node.js's update path reads from nodejs.org. Unset, the release index is `https://nodejs.org/dist/index.json` and the archive `https://nodejs.org/dist/v<version>/node-v<version>-<win\|linux>-<arch>.<zip\|tar.gz>`. Set, the base replaces `https://nodejs.org/dist` and nodejs.org's layout stays under it: `<base>/index.json`, `<base>/v<version>/<archive>` (trimmed, trailing slashes dropped, read on each request). That is everything the path reads there: the Node install checks no hash, so there is no `SHASUMS256.txt` to move. The node-pty prebuilt manifest the lookup also reads (§13.3.2) is this repo's own release asset and does not move. The server logs `Node.js release index and downloads from WS_SCRCPY_NODE_DIST_BASE=<base>` at start when it is set (host installs only; a container never manages Node). It lets smoke row 9.12 offer a Node update, the one update that needs a restart, from a fixture in the fast tier (`src/server/DependencyDefinitions.ts`, `tests/e2e/dependencies-restart.spec.ts`). |
 | `WS_SCRCPY_SKIP_BOOT_LATEST` | unset | A test seam. Exactly `1` makes the **boot** dependency pass (`checkAll({ boot: true })` in `index.ts`) skip the latest-version lookup for every dependency that is already installed; such a dependency reads status `unknown` with a null `latestVersion` until something looks it up. It never skips a dependency that is NOT installed (its install needs the answer), and it never touches "check for updates" (`POST /api/dependencies/check`), retry-install or an update's own lookup. When it skips, the boot logs `boot latest-version lookups skipped for installed dependencies (WS_SCRCPY_SKIP_BOOT_LATEST=1)` at info. Read on each boot pass; any other value is today's behaviour. The fast e2e tier sets it on every server it starts (`playwright.config.ts`, `spawnServer`), because each boot otherwise spent 2-3 of api.github.com's 60 unauthenticated calls an hour on answers nothing read; the docker and device tiers do not (`src/server/DependencyManager.ts`, `SKIP_BOOT_LATEST_ENV`). |
 | `DEPS_PATH` | see below | Absolute path to the dep-manager's writable folder. Resolution priority: env → `config.json` `dependenciesPath` → `<dataRoot>/dependencies/` on Windows (where `<dataRoot>` defaults to `%PROGRAMDATA%\WsScrcpyWeb\`) or `<entryDir>/../dependencies/` on Linux. Production deployments (Velopack, Docker) must set it explicitly. Dev mode on Windows resolves automatically via `<dataRoot>`; on Linux, place the repo such that `<entry>/../dependencies` is writable. Hard-fail with instructive startup error if unset and the platform fallback is unavailable. |
 
@@ -959,14 +973,16 @@ public refreshStream(): void {
 ```typescript
 try {
     if (ws.readyState === ws.OPEN) {
-        ws.close(4005, err.message.slice(0, 123));
+        ws.close(SESSION_FAILED_CLOSE_CODE, closeReason(err.message));
     }
 } catch (closeErr) {
-    console.error(TAG, `Failed to close WebSocket:`, closeErr);
+    log.error(`Failed to close WebSocket for ${serial}:`, closeErr);
 }
 ```
 
-Applied in both `ScrcpyConnection.ts` and `DeviceProbe.ts`.
+`ScrcpyConnection.ts` uses `closeReason()`, which cuts to 123 bytes of UTF-8 on a character boundary; `String.slice(0, 123)` counts UTF-16 units, so a multi-byte message could still exceed the limit. `DeviceProbe.ts` still uses `err.message.slice(0, 123)` inside the same try/catch.
+
+**Mid-stream failures use the same code (smoke row 8.27).** `SESSION_FAILED_CLOSE_CODE` (4005) also closes a session that fails after it started: scrcpy-server exiting while the session is live (`scrcpy-server exited (code N)` / `(signal S)`), and the device's video socket ending or erroring (`the device stopped sending video`). Both go through `releaseAsFailure()`, which sends the failure close and then releases; the plain close in `Mw.release()` then finds the socket CLOSING and sends nothing. A normal end — the browser closing the socket, or the server calling `release()` — keeps the bare `ws.close()`, which the browser receives as 1005. `release()` detaches the video reader and only then kills scrcpy-server, so neither of those two callbacks can fire as a failure after a normal end. Before this, every mid-stream failure ran the bare close and the browser saw 1005, a clean end, so the stream modal vanished with no reason. A deliberate server stop is not a failure: it closes each open session with 1001 "server shutting down" (`closeForShutdown()`) and releases it before `adb kill-server` runs, so the scrcpy-server exit that follows finds the session released and sends no 4005 (§9.1).
 
 ### 11.5 Firefox H.264 isConfigSupported False Rejection
 
@@ -1115,7 +1131,7 @@ In practice, Node ships via Velopack seed (never null), scrcpy-server seed-promo
 `nodejs.checkLatest()` filters candidate Node LTS releases by whether our node-pty prebuilt manifest (published by SP1/SP1b at GH Releases, cached at `dependencies/node-pty/manifest.json`) has coverage for the major's ABI. Mechanics:
 
 - `NODE_LTS_ABI: Record<number, string>` maps Node major → `process.versions.modules` ABI string. Hardcoded table in `DependencyDefinitions.ts` (20 → 115, 22 → 127, 24 → 137). Add new majors as the prebuilt matrix ships them.
-- For each LTS release from `nodejs.org/dist/index.json`, look up its major's ABI. If that ABI is in `Manifest.coveredAbis`, keep it. Else drop it.
+- For each LTS release from `nodejs.org/dist/index.json` (`<base>/index.json` under `WS_SCRCPY_NODE_DIST_BASE`, §9.4), look up its major's ABI. If that ABI is in `Manifest.coveredAbis`, keep it. Else drop it.
 - Return the newest surviving candidate.
 - If `loadManifest()` returns null (first-run corner case), fall back to unfiltered newest LTS with a WARN.
 
@@ -1258,7 +1274,7 @@ A **manually add** button sits next to **scan network** and opens an inline form
 |--------|------|---------|
 | POST | `/api/devices/scan` | **Legacy.** Kept as a REST compatibility shim returning mDNS-only results with the pre-rewrite behavior. External consumers that pre-date `/ws-scan` still work. |
 | GET | `/api/devices/scan/subnet` | Returns the auto-detected gateway subnet as `{ cidr, hostCount }`, or `null` if detection failed. Called by `ScanNetworkModal` on open. **In a container it returns `{ container: true }`** without detecting anything: a bridge container's only interface is docker's own (`172.17.0.0/16`, 65,534 hosts, measured), which is never the subnet the devices are on. |
-| POST | `/api/devices/connect` | JSON body `{ address, serial?, label? }`. `address` is validated by `isConnectAddress` (HOST / HOST:PORT / bracketed IPv6 — the shapes `adb connect` documents) and a malformed one is a 400 that does not echo the input. On success, label is persisted keyed by both `ro.serialno` AND MAC (see 14.2.3). |
+| POST | `/api/devices/connect` | JSON body `{ address, serial?, label? }`. `address` is validated by `isConnectAddress` (HOST / HOST:PORT / bracketed IPv6 — the shapes `adb connect` documents) and a malformed one is a 400 that does not echo the input. On success, label is persisted keyed by both `ro.serialno` AND MAC (see 14.2.3), and every successful connect, named or not, records the address the device answered at against its `ro.serialno` (`DeviceStore.claimAddress`). A `serial` that is really an address (a TCP hit posts `serial = address`) is ignored and `ro.serialno` is looked up instead. |
 | POST | `/api/devices/disconnect` | JSON body `{ address }`, validated by the same `isConnectAddress`. |
 | GET | `/api/devices/labels` | All labels as `{ key: label }` where key is serial or MAC. |
 | PUT | `/api/devices/labels` | `{ serial, label }`. Empty label deletes. |
@@ -1299,7 +1315,7 @@ Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancell
 | `src/server/network/AdbHandshakeProbe.ts` | Single-socket CNXN handshake probe: TCP connect -> write CNXN -> read reply header -> close. Replaced an earlier two-socket path (`adb connect` for liveness then `adb disconnect`) that older embedded adbd stacks (notably the SM-T550) silently dropped on the second connection. CNXN packet matches AOSP byte-for-byte: version `0x01000001`, `max_data` `0x00100000`, full `host::features=shell_v2,cmd,stat_v2,...` banner, byte-sum `data_check` (the field is misnamed `data_crc32` in the AOSP struct — historical). Successful replies (`CNXN` or `AUTH`) are logged as hits. **Close behavior:** confirmed-ADB hits are shut down with `socket.end()` (FIN) plus a 250 ms safety-net `destroy()`, so adbd sees a clean teardown; closed-port and timeout paths call `destroy()` immediately to stay fast. The RST-on-probe behavior it replaced caused intermittent `adb connect` failures right after a scan — embedded adbd treated the abort as an in-progress session and refused new connections for its cleanup window. |
 | `src/server/network/SubnetDetector.ts` | Gateway subnet auto-detection with a three-level fallback: (1) parse `route print` (Windows) / `ip route` (Linux) for the default route, filtering Windows' synthetic `On-link` and `0.0.0.0` rows; (2) enumerate RFC1918 interfaces and pick the first usable; (3) return null. Exposed via `GET /api/devices/scan/subnet`. |
 | `src/server/network/MacResolver.ts` | ARP-cache lookup after probe traffic primes the table: `arp -a <ip>` on Windows, `ip neigh show to <ip>` on Linux (2s command timeout). Returns a lowercase colon-normalized MAC or `null`. Stateless — each `resolveMac()` call spawns the OS command fresh. **Skipped in a container** (`DeviceDiscoveryApi.connect()` and the scanner's `resolveMac` wiring): `ip neigh` is not in the image, and through docker's NAT it could not see a LAN device anyway, so a label there is keyed by serial alone. |
-| `src/server/db/DeviceStore.ts` | Per-user label persistence (the `device_labels` table in `wsscrcpy.db`, keyed `(user, serial)`), reached via `Config.getInstance().db.devices`. The store is a per-user keyed map — the **dual-key storage** is a call-site pattern in `DeviceDiscoveryApi.connect()`: on a successful network connect, the label is written under *both* the device's real serial (`getprop ro.serialno`) and its MAC (resolved via `MacResolver`). Scanner hit lookup then does `labelFor(mac) ?? labelFor(serial)` — MAC-first catches TCP hits (where serial isn't known until after a follow-up connect), serial-fallback catches mDNS hits. Also owns the shared `devices` observed-metadata table. |
+| `src/server/db/DeviceStore.ts` | Per-user label persistence (the `device_labels` table in `wsscrcpy.db`, keyed `(user, serial)`), reached via `Config.getInstance().db.devices`. The store is a per-user keyed map — the **dual-key storage** is a call-site pattern in `DeviceDiscoveryApi.connect()`: on a successful network connect, the label is written under *both* the device's real serial (`getprop ro.serialno`) and its MAC (resolved via `MacResolver`), and the connect address is recorded against the real serial with `claimAddress`. Scanner hit lookup is `resolveHitIdentity` in `src/server/network/scanIdentity.ts` (order in §16.1). Also owns the shared `devices` observed-metadata table. |
 | `src/server/api/DeviceDiscoveryApi.ts` | HTTP endpoint handler (scan, scan/subnet, connect, disconnect, labels, screen-state, sleep-wake). |
 | `src/server/AdbClient.ts` | `mdnsServices()`, `connect()`, `disconnect()`, plus `parseMdnsOutput()` and `parseSerialFromMdnsName()` parsers. mDNS display name normalizes to `adb-{parsedSerial}` format across `_adb._tcp` and `_adb-tls-connect._tcp` service types. |
 | `src/common/SubnetParser.ts` | Input parser used in both client (live validation) and server (re-parse on `scan.start`). Accepts CIDR (`192.168.1.0/24`, prefix `/16` to `/32`), bare IP (treated as `/32`), long-form range (`192.168.1.10-192.168.1.50`), and shorthand range (`192.168.1.10-50`). Range cap: 65,536 literal addresses. When a range aligns to a subnet boundary (first IP ends in `.0` and/or last IP ends in `.255`), the host generator skips those network/broadcast addresses, matching CIDR expansion exactly — so `10.0.0.0-10.0.255.255` yields 65,534 scannable hosts, identical to `10.0.0.0/16`. |
@@ -1487,11 +1503,19 @@ Labels are stored **per-user** in the `device_labels` table of the app's SQLite 
 | 1 | `47121FDAQ000WC` | Jamie's Pixel 9 |
 | 1 | `aa:bb:cc:dd:ee:ff` | Living Room TV |
 
-The scanner's hit-lookup order is `labelFor(mac) ?? labelFor(serial) ?? ''` — MAC-first catches TCP hits (where the serial isn't known until after a follow-up `adb connect`), serial-fallback catches mDNS hits (where the serial is authoritatively in the service name). See 14.2.3 for the dual-key write site in `DeviceDiscoveryApi.connect()`. In today's open mode every request resolves to the implicit admin (`user_id = 1`) via `resolveUserId(req)`; once auth lands, each user gets their own labels.
+The real serial is the one source of truth for a device's name: the device card reads `labels[ro.serialno]`, and a rename on the card (PUT `/api/devices/labels`) rewrites only that key, so the MAC copy written at connect time can go stale. The scanner's hit lookup (`resolveHitIdentity` in `src/server/network/scanIdentity.ts`) therefore reads the real serial first:
+
+1. an explicit label;
+2. the hit's own serial, when it is a real one (an mDNS hit: the serial is authoritatively in the service name);
+3. the serial of the device last recorded at the hit's address (`DeviceStore.findByAddress`). This is how a TCP hit, whose serial is only its probe address, reaches the device's current name;
+4. the MAC alias (off a container only);
+5. a label filed under the probe address itself. Only the connect route before row 19.5 wrote one, so this step only reads old rows.
+
+Step 3 depends on the address join: every successful `POST /api/devices/connect`, named or not, runs `getprop ro.serialno` (unless an mDNS hit supplied the serial) and calls `claimAddress(serial, address)` with the address in the form a scan hit carries (`scanAddressFor`: a bare host gets `:5555`, a hostname is resolved to its IPv4). `claimAddress` clears the address from any other device's row, since one address belongs to one device at a time. In a container, where there is no MAC, step 3 is the only way a rescan finds a name. See 14.2.3 for the write site in `DeviceDiscoveryApi.connect()`. In today's open mode every request resolves to the implicit admin (`user_id = 1`) via `resolveUserId(req)`; once auth lands, each user gets their own labels.
 
 **`DeviceStore`** (`src/server/db/DeviceStore.ts`), reached via `Config.getInstance().db.devices`:
 - `getLabel(userId, serial)` / `setLabel(userId, serial, label)` / `deleteLabel(userId, serial)` / `getAllLabels(userId)` — per-user upserts into `device_labels`; the dual-key serial/MAC semantics live in the caller.
-- Also owns the shared `devices` observed-metadata table (manufacturer/model/address/last-seen, upserted from scans + connected-device props).
+- Also owns the shared `devices` observed-metadata table (manufacturer/model/address/last-seen, upserted from scans + connected-device props). `claimAddress(serial, address, at)` records where a device answered on connect, and `findByAddress(address)` reads it back for the scanner.
 - The old single-file `DeviceLabelStore` was removed in favor of the per-user `device_labels` table. (The one-time `device-labels.json` → `device_labels` import that bridged pre-store installs was dropped in beta.69 — pre-1.0, there are no production installs to migrate.)
 
 ### 16.2 Device Identification
@@ -1504,7 +1528,7 @@ The scanner's hit-lookup order is `labelFor(mac) ?? labelFor(serial) ?? ''` — 
 - `adb-49241HFAG07SUG` (plain `_adb._tcp`) -> `49241HFAG07SUG`
 - `adb-47121FDAQ000WC-7vmR8a` (`_adb-tls-connect._tcp`) -> `47121FDAQ000WC` (TLS instance suffix stripped)
 
-**Scan results (TCP port-5555 sweep):** The single-socket CNXN probe in `AdbHandshakeProbe` identifies liveness but does not expose the real serial. On a TCP hit the scanner emits `scan.hit` with `serial = address` (the ip:port used as a placeholder identifier) — MAC is resolved via `MacResolver` from the system ARP cache and threaded through the label lookup as the primary key. Real `ro.serialno` is only fetched later when the user clicks **Connect** on the card: `DeviceDiscoveryApi.connect()` runs `adb connect <address>` then `adb -s <address> shell getprop ro.serialno`, and at that point the label is (re)written under both the real serial and the MAC per the dual-key scheme in 14.2.3. For render-time label display, TCP hits therefore rely on the MAC-keyed lookup path.
+**Scan results (TCP port-5555 sweep):** The single-socket CNXN probe in `AdbHandshakeProbe` identifies liveness but does not expose the real serial. On a TCP hit the scanner emits `scan.hit` with `serial = address` (the ip:port used as a placeholder identifier), and MAC is resolved via `MacResolver` from the system ARP cache. Real `ro.serialno` is only fetched when the user clicks **Connect** on the card: `DeviceDiscoveryApi.connect()` treats the posted address-form serial as unknown, runs `adb connect <address>` then `adb -s <address> shell getprop ro.serialno`, writes the label under the real serial and the MAC per the dual-key scheme in 14.2.3, and records the address against the real serial. Before row 19.5 the address-form serial skipped that lookup, so the name was filed under `<ip>:5555` and the card showed "Unnamed Device". For render-time label display a later TCP hit is resolved through that recorded address to the real serial (§16.1, step 3), with the MAC as the fallback.
 
 ### 16.3 Connected Device Cards
 

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { mkcertAssetName, mkcertExeName } from '../DependencyDefinitions';
 import { DependencyManager, getDependencyManager, makeUpdateTmpDir } from '../DependencyManager';
+import { liveStreams } from '../liveStreams';
 
 describe('DependencyManager', () => {
     it('initializes with all dependencies in unknown state', async () => {
@@ -131,6 +132,28 @@ describe('DependencyManager.requestRestart', () => {
     it('exits with code 75', () => {
         const mgr = new DependencyManager(tmpDir);
         expect(() => mgr.requestRestart()).toThrow('exit:75');
+    });
+
+    it('closes the open streams as a deliberate stop before it exits', () => {
+        // The exit ends every stream; without this a viewer saw "stream failed".
+        const order: string[] = [];
+        const stream = {
+            closeForShutdown: () => {
+                order.push('close stream');
+                liveStreams.remove(stream);
+            },
+        };
+        liveStreams.add(stream);
+        exitSpy.mockImplementation(((code?: number) => {
+            order.push(`exit ${code}`);
+            throw new Error(`exit:${code}`);
+        }) as never);
+        const mgr = new DependencyManager(tmpDir);
+
+        expect(() => mgr.requestRestart()).toThrow('exit:75');
+
+        expect(order).toEqual(['close stream', 'exit 75']);
+        expect(liveStreams.size()).toBe(0);
     });
 
     it('marker body contains a timestamp marker', () => {

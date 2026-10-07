@@ -15,6 +15,7 @@ import {
     RELEASE_URL_BASE_ENV,
     releaseAssetUrl,
 } from './linuxUpdateAssets';
+import { liveStreams } from './liveStreams';
 import { buildMachineWideUpdateScript, runPkexec, STAGED_SYSTEM_DIR } from './service/SystemdClient';
 import { stageSystemHelper } from './service/systemHelper';
 import { buildDetachedSpawn } from './service/systemTools';
@@ -941,6 +942,8 @@ export class UpdateService {
      * worst case we're back to v0.1.23-beta.12 behavior (apply still attempted,
      * Velopack's own retry loop catches what it can).
      *
+     *  0. Close the open streams with 1001 (`liveStreams`), before step 1
+     *     can end them as failures.
      *  1. `adb kill-server` via the bundled adb client. Clean shutdown of
      *     the daemon process; releases its CWD handle on the install dir.
      *  2. Windows-only belt-and-braces reap of the app's OWN adb binary
@@ -957,6 +960,10 @@ export class UpdateService {
      */
     private async preApplyHygiene(): Promise<void> {
         const adbPath = Config.getInstance().adbPath;
+        // Before kill-server, which kills each open stream's scrcpy-server: an
+        // update is a deliberate stop, so its viewers get 1001, not "stream
+        // failed". See liveStreams.ts.
+        liveStreams.closeAllForShutdown();
         try {
             const adb = new AdbClient(adbPath);
             await adb.killServer();

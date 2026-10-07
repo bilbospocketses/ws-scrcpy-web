@@ -240,7 +240,7 @@ const refreshers = new WeakMap<HTMLElement, (callbacks: ServiceTabCallbacks) => 
  * container-mode and role/reachability gating in `SettingsModal` (which decide
  * WHEN to call it) keep working unchanged.
  */
-export function buildServiceTab(_ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
+export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
     const { section, body } = buildSection('Service');
     const placeholder = document.createElement('p');
     placeholder.className = 'settings-status';
@@ -433,7 +433,7 @@ export function buildServiceTab(_ctx: TabContext, _store: StagedSettingsStore): 
         } else {
             const opts: AdminConfirmOptions = { action: 'install service' };
             if (servicePlatform) opts.platform = servicePlatform;
-            const confirmed = await AdminConfirmModal.confirm(opts);
+            const confirmed = await ctx.askChild(() => AdminConfirmModal.confirm(opts), false);
             if (!confirmed) return;
         }
 
@@ -445,6 +445,8 @@ export function buildServiceTab(_ctx: TabContext, _store: StagedSettingsStore): 
         if (serviceScopeSystemRadio) {
             requestBody.scope = serviceScopeSystemRadio.checked ? 'system' : 'user';
         }
+        // Deliberately NOT a child of Settings: it is progress for an operation
+        // already running, not a question, and it blocks Settings until it closes.
         const modal = new ServiceOperationModal({ operation: 'install' });
         try {
             const r = await fetch('/api/service/install', {
@@ -513,7 +515,7 @@ export function buildServiceTab(_ctx: TabContext, _store: StagedSettingsStore): 
         } else {
             const opts: AdminConfirmOptions = { action: 'uninstall service' };
             if (servicePlatform) opts.platform = servicePlatform;
-            const confirmed = await AdminConfirmModal.confirm(opts);
+            const confirmed = await ctx.askChild(() => AdminConfirmModal.confirm(opts), false);
             if (!confirmed) return;
         }
 
