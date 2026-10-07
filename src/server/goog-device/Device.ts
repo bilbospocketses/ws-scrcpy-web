@@ -367,7 +367,9 @@ export class Device extends TypedEmitter<DeviceEvents> {
         if (setUpdateTime) {
             this.descriptor['last.update.timestamp'] = now;
         }
-        if (time > THROTTLE) {
+        // A negative gap is the wall clock stepping backwards. Waiting it out
+        // would hide this device's updates for the length of the step.
+        if (time > THROTTLE || time < 0) {
             this.lastEmit = now;
             this.emit('update', this);
             return;
