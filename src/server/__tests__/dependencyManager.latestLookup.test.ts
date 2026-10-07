@@ -1,7 +1,10 @@
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SERVER_JAR_SHA256, SERVER_VERSION } from '../../common/Constants';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyManager, SKIP_BOOT_LATEST_ENV } from '../DependencyManager';
 import { Logger } from '../Logger';
@@ -32,6 +35,14 @@ function stubFetch(answer: (url: string) => Response | Promise<Response>) {
 function isGitHubApi(url: string): boolean {
     return new URL(url).hostname === 'api.github.com';
 }
+
+/** A scrcpy release's SHA256SUMS.txt, which the install now checks the jar against. */
+function isChecksumList(url: string): boolean {
+    return new URL(url).pathname.endsWith('/SHA256SUMS.txt');
+}
+
+const sha256 = (data: string) => createHash('sha256').update(data).digest('hex');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 describe('DependencyManager records each latest-version lookup', () => {
     let fetchSpy: ReturnType<typeof vi.spyOn> | undefined;
@@ -142,6 +153,9 @@ describe('DependencyManager records each latest-version lookup', () => {
                     ? new Response('{}', { status: 403 })
                     : new Response(JSON.stringify({ tag_name: 'v4.0' }), { status: 200 });
             }
+            if (isChecksumList(url)) {
+                return new Response(`${sha256('fake-v4.0-jar-bytes')}  scrcpy-server-v4.0\n`, { status: 200 });
+            }
             return new Response('fake-v4.0-jar-bytes', { status: 200 });
         });
         const mgr = new DependencyManager(tmpDir);
@@ -159,9 +173,16 @@ describe('DependencyManager records each latest-version lookup', () => {
     });
 
     it('records a refused lookup inside update() that then falls back to the bundled version', async () => {
-        fetchSpy = stubFetch((url) =>
-            isGitHubApi(url) ? new Response('{}', { status: 403 }) : new Response('fake-jar-bytes', { status: 200 }),
-        );
+        // The bundled version is the one SERVER_JAR_SHA256 pins, so the download
+        // must be the vendored jar itself, listed under its real hash.
+        const jar = new Uint8Array(fs.readFileSync(path.join(REPO_ROOT, 'assets', 'scrcpy-server')));
+        fetchSpy = stubFetch((url) => {
+            if (isGitHubApi(url)) return new Response('{}', { status: 403 });
+            if (isChecksumList(url)) {
+                return new Response(`${SERVER_JAR_SHA256[SERVER_VERSION]}  scrcpy-server-v${SERVER_VERSION}\n`);
+            }
+            return new Response(jar, { status: 200 });
+        });
         const mgr = new DependencyManager(tmpDir);
 
         const result = await mgr.update('scrcpy-server');

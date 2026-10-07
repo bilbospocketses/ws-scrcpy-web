@@ -25,6 +25,7 @@ import {
     buildMachineWideInstallScript,
     buildServiceUnitEnv,
     DECLINE_MARKER_NAME,
+    PkexecDeclinedError,
     pkexecDeclined,
     runPkexec,
     STAGED_SYSTEM_APPIMAGE,
@@ -1075,7 +1076,7 @@ export class ServiceApi {
             }
         } catch (err) {
             const msg = (err as Error).message;
-            const declined = /dismissed/i.test(msg);
+            const declined = err instanceof PkexecDeclinedError;
             res.writeHead(declined ? 403 : 500);
             res.end(JSON.stringify({ ok: false, error: msg, reason: declined ? 'uac-declined' : 'unknown' }));
         } finally {

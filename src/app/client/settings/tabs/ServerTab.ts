@@ -5,9 +5,10 @@ import { canSeeSection } from '../../adminGate';
 import { ConfirmModal } from '../../ConfirmModal';
 import { ResetConfirmModal } from '../../ResetConfirmModal';
 import { settingsService } from '../../SettingsService';
+import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMessage';
 import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import type { TabContext } from './EmbeddingTab';
+import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
 // Type-only, so it is erased at build time and adds no runtime dependency on the
 // sibling tab. `ScopeRadioInputs` is the three-field subset of
 // /api/service/status that BOTH tabs derive state from (Service: the scope
@@ -292,6 +293,8 @@ export interface LocalHttpsPanelDeps {
      * type-checks; nothing reads it any more.
      */
     caTrusted?: boolean;
+    /** The Settings dialog's `askChild`, for the revoke confirm; unbound when built on its own. */
+    askChild?: AskChild;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -1112,14 +1115,18 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // asked to trust -- rather than a generic "are you sure?".
     revokeBtn.addEventListener('click', () => {
         void (async () => {
-            const confirmed = await ConfirmModal.confirm({
-                title: 'revoke the local https certificate?',
-                message:
-                    'this deletes the certificate AND the ca. every device that installed the ca to trust ' +
-                    'this server will see a warning again, and streaming from other machines stops until you ' +
-                    'generate a new certificate and they install the new ca. the running server keeps ' +
-                    'answering https with the old material from memory until it restarts. continue?',
-            });
+            const confirmed = await (deps.askChild ?? askUnbound)(
+                () =>
+                    ConfirmModal.confirm({
+                        title: 'revoke the local https certificate?',
+                        message:
+                            'this deletes the certificate AND the ca. every device that installed the ca to trust ' +
+                            'this server will see a warning again, and streaming from other machines stops until you ' +
+                            'generate a new certificate and they install the new ca. the running server keeps ' +
+                            'answering https with the old material from memory until it restarts. continue?',
+                    }),
+                false,
+            );
             if (!confirmed) return;
             revokeBtn.disabled = true;
             try {
@@ -1419,9 +1426,15 @@ export function buildLocalHttpsContainerNote(): HTMLElement {
  * there is no first-run to go back to (the image is the install, and the server
  * refuses the field), so the per-user reset is sent alone.
  */
-export function buildResetControl(opts: { reload: () => void; sendFirstRunReset?: () => boolean }): {
+export function buildResetControl(opts: {
+    reload: () => void;
+    sendFirstRunReset?: () => boolean;
+    /** The Settings dialog's `askChild`; unbound when the row is built on its own. */
+    askChild?: AskChild;
+}): {
     button: HTMLButtonElement;
 } {
+    const askChild = opts.askChild ?? askUnbound;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'settings-btn settings-btn-primary';
@@ -1429,7 +1442,7 @@ export function buildResetControl(opts: { reload: () => void; sendFirstRunReset?
 
     button.addEventListener('click', () => {
         void (async () => {
-            const confirmed = await ResetConfirmModal.confirm();
+            const confirmed = await askChild(() => ResetConfirmModal.confirm(), false);
             if (!confirmed) return;
             // Full user-settings reset: all user_settings + device_labels +
             // device_settings via settingsService.reset(); and firstRunComplete
@@ -1493,7 +1506,10 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
                     opts.reload();
                     return;
                 }
-                note.textContent = 'install failed — see the server logs and try again.';
+                // A cancelled polkit prompt is a decline, not a failure (smoke 14.10).
+                note.textContent = (await isElevationDeclined(res))
+                    ? reasonToUserMessage('uac-declined', '')
+                    : 'install failed — see the server logs and try again.';
             } catch {
                 note.textContent = 'install failed — could not reach the server.';
             }
@@ -1523,9 +1539,12 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
 export function buildUninstallControl(opts: {
     onUninstalled: () => void;
     platform?: () => NodeJS.Platform | undefined;
+    /** The Settings dialog's `askChild`; unbound when the row is built on its own. */
+    askChild?: AskChild;
 }): {
     button: HTMLButtonElement;
 } {
+    const askChild = opts.askChild ?? askUnbound;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'settings-btn settings-btn-danger';
@@ -1533,7 +1552,10 @@ export function buildUninstallControl(opts: {
 
     button.addEventListener('click', () => {
         void (async () => {
-            const r = await UninstallConfirmModal.confirm({ platform: opts.platform?.() });
+            const r = await askChild(() => UninstallConfirmModal.confirm({ platform: opts.platform?.() }), {
+                confirmed: false,
+                keep: true,
+            });
             if (!r.confirmed) return;
             button.disabled = true;
             button.textContent = 'uninstalling…';
@@ -1578,13 +1600,17 @@ function showUninstalledOverlay(): void {
  * then try to self-close the tab. Falls back to a full-page "app stopped"
  * notice when the browser blocks window.close() (tabs not opened by script).
  */
-async function onStopServerExit(btn: HTMLButtonElement): Promise<void> {
-    const confirmed = await ConfirmModal.confirm({
-        title: 'stop server & exit',
-        message:
-            'the app will shut down and this browser tab will try to close. ' +
-            'any active device connections will end. continue?',
-    });
+async function onStopServerExit(btn: HTMLButtonElement, askChild: AskChild): Promise<void> {
+    const confirmed = await askChild(
+        () =>
+            ConfirmModal.confirm({
+                title: 'stop server & exit',
+                message:
+                    'the app will shut down and this browser tab will try to close. ' +
+                    'any active device connections will end. continue?',
+            }),
+        false,
+    );
     if (!confirmed) return;
 
     btn.disabled = true;
@@ -1667,7 +1693,11 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     //    names, per-device stream/audio prefs, icon size, scan subnets,
     //    dismissed prompts) and reloads so first-run re-triggers and all
     //    prefs are read fresh. In a container only the per-user half is sent.
-    const reset = buildResetControl({ reload: () => ctx.reload(), sendFirstRunReset: () => !containerMode });
+    const reset = buildResetControl({
+        reload: () => ctx.reload(),
+        sendFirstRunReset: () => !containerMode,
+        askChild: ctx.askChild,
+    });
     body.appendChild(buildRow('reset all my settings', reset.button));
 
     // 1b. change password — user-level, only shown when auth is enabled
@@ -1899,7 +1929,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         stopBtn.type = 'button';
         stopBtn.className = 'settings-btn settings-btn-primary';
         stopBtn.textContent = 'stop server & exit';
-        stopBtn.addEventListener('click', () => void onStopServerExit(stopBtn));
+        stopBtn.addEventListener('click', () => void onStopServerExit(stopBtn, ctx.askChild));
         stopServerButton = stopBtn;
         body.appendChild(buildRow('stop the server and close the app', stopBtn));
 
@@ -1917,6 +1947,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         const uninstall = buildUninstallControl({
             onUninstalled: () => showUninstalledOverlay(),
             platform: () => servicePlatform,
+            askChild: ctx.askChild,
         });
         uninstallButton = uninstall.button;
         const row = buildRow('uninstall ws-scrcpy-web', uninstall.button);
@@ -2081,6 +2112,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
                 // buildLocalHttpsPanel prefers over this fallback.
                 candidateIps: [],
                 platform,
+                askChild: ctx.askChild,
             }).then((panel) => {
                 localHttpsContainer?.replaceChildren(panel);
             });

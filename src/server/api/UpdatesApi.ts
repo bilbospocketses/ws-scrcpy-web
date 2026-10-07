@@ -11,6 +11,7 @@ import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { isValidToken, parseTokenFromCookie } from '../security/instanceToken';
+import { PkexecDeclinedError } from '../service/SystemdClient';
 import type { UpdateService } from '../UpdateService';
 import { applyUpdaterConfigChange } from '../updaterConfigSync';
 import { refuseInContainer } from './containerGuard';
@@ -34,7 +35,7 @@ const APPLY_EXIT_DELAY_MS = 100;
  *
  *   GET    /api/updates/status -> UpdatesStatusResponse (always 200)
  *   POST   /api/updates/check  -> UpdatesStatusResponse (200) or 503 in dev mode
- *   POST   /api/updates/apply  -> { ok: true } (200) or 409/503; server exits ~100ms later
+ *   POST   /api/updates/apply  -> { ok: true } (200) or 403 uac-declined/409/500/503; server exits ~100ms later
  *   PATCH  /api/updates/config -> UpdatesStatusResponse (200) or 400 on bad input
  *
  * All velopack interaction is delegated to {@link UpdateService}. The API
@@ -174,6 +175,15 @@ export class UpdatesApi {
             const result = await this.svc.applyUpdate();
             redirectPort = result.redirectPort;
         } catch (err) {
+            // A declined pkexec prompt (machine-wide update) answers like a declined
+            // install-system-wide: 403 uac-declined. Nothing was swapped and the
+            // update is still `ready`, so the user can simply try again.
+            if (err instanceof PkexecDeclinedError) {
+                const body: UpdatesErrorResponse = { ok: false, error: err.message, reason: 'uac-declined' };
+                res.writeHead(403);
+                res.end(JSON.stringify(body));
+                return true;
+            }
             const body: UpdatesErrorResponse = { ok: false, error: (err as Error).message };
             res.writeHead(500);
             res.end(JSON.stringify(body));
