@@ -224,14 +224,15 @@ describe('DependencyManager.update("adb") — size and SHA-1 from repository2-3.
 
     /**
      * The XML answers `xml`; anything else is the zip. Extraction is faked to
-     * lay out platform-tools/. The fake adb.exe is not Authenticode-signed, so
-     * the Windows signer check (dependencyManager.adbAuthenticode.test.ts) is
-     * answered as a valid Google LLC signature here.
+     * lay out platform-tools/. The fake binaries are not Authenticode-signed,
+     * so the Windows signer check (dependencyManager.adbAuthenticode.test.ts)
+     * answers every one as a valid Google LLC signature here.
      */
     function setup(xml: () => Response) {
         const fetched = stubFetch((u) => (u.pathname.endsWith('/repository2-3.xml') ? xml() : new Response(ZIP)));
         const mgr = new DependencyManager(tmpDepsDir, {
-            checkAuthenticode: async () => ({ status: 'Valid', subject: 'CN=Google LLC, O=Google LLC, C=US' }),
+            checkAuthenticode: async (files) =>
+                files.map(() => ({ status: 'Valid', subject: 'CN=Google LLC, O=Google LLC, C=US' })),
         });
         mgr.getByName('adb')!.latestVersion = version;
         vi.spyOn(mgr as any, 'extractZip').mockImplementation(async (...args: unknown[]) => {

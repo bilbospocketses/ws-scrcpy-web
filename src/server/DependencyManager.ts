@@ -9,7 +9,11 @@ import { promisify } from 'util';
 import { SERVER_JAR_SHA256 } from '../common/Constants';
 import type { DependencyInfo, LatestLookup, UpdateResult } from '../common/DependencyTypes';
 import { compareVersions, DependencyStatus } from '../common/DependencyTypes';
-import { type AuthenticodeChecker, defaultAuthenticodeChecker, verifyAdbAuthenticode } from './adbAuthenticode';
+import {
+    type AuthenticodeChecker,
+    defaultAuthenticodeChecker,
+    verifyPlatformToolsAuthenticode,
+} from './adbAuthenticode';
 import type { DependencyDefinition } from './DependencyDefinitions';
 import {
     ADB_REPOSITORY_XML_URL,
@@ -138,7 +142,7 @@ export class DependencyManager {
     private readonly verifyMkcertManifest: (manifest: string, tag: string) => Promise<void>;
     /** Who must have signed Node's and scrcpy's hash lists -- see `PINNED_RELEASE_KEYS`. */
     private readonly releaseKeys: DependencyReleaseKeys;
-    /** Windows only: the Authenticode check on a downloaded `adb.exe` -- see `adbAuthenticode.ts`. */
+    /** Windows only: the Authenticode check on every downloaded platform-tools binary -- see `adbAuthenticode.ts`. */
     private readonly checkAuthenticode: AuthenticodeChecker;
 
     constructor(
@@ -706,8 +710,9 @@ export class DependencyManager {
      *                  by scrcpy's pinned key, and cross-checked against the
      *                  repo's own SERVER_JAR_SHA256 when it pins this version
      *   adb            size + SHA-1 from repository2-3.xml, which nothing signs;
-     *                  on Windows the extracted adb.exe's Authenticode signature
-     *                  is checked too, in installAdb before anything is stopped
+     *                  on Windows every extracted .exe and .dll's Authenticode
+     *                  signature is checked too, in installAdb before anything
+     *                  is stopped
      *
      * There is deliberately no way to skip or weaken any of these: a URL seam
      * (WS_SCRCPY_NODE_DIST_BASE) moves where the list is read from, never
@@ -1067,12 +1072,14 @@ export class DependencyManager {
             throw new Error('Could not find platform-tools directory in extracted archive');
         }
 
-        // M5: on Windows the binary itself carries Google's Authenticode
-        // signature, the one publisher signature platform-tools has (the
-        // index it was checked against is unsigned). Linux has no
+        // M5: on Windows every binary in the folder carries Google's
+        // Authenticode signature, the one publisher signature platform-tools
+        // has (the index it was checked against is unsigned). All of them are
+        // checked, not just adb.exe: the whole folder is installed, and adb.exe
+        // loads AdbWinApi.dll from beside itself first. Linux has no
         // equivalent, so there the size + SHA-1 check is all of it.
         if (platform === 'win32') {
-            await verifyAdbAuthenticode(path.join(platformToolsDir, 'adb.exe'), this.checkAuthenticode);
+            await verifyPlatformToolsAuthenticode(platformToolsDir, this.checkAuthenticode);
         }
 
         // Stop ADB server before replacing files

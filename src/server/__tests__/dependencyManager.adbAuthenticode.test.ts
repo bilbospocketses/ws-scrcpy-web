@@ -62,30 +62,38 @@ describe.each(['win32', 'linux'] as const)('DependencyManager.update("adb") Auth
         <size>${Buffer.byteLength(ZIP)}</size><checksum type="sha1">${sha1(ZIP)}</checksum><url>${asset}</url>
         </complete></archive></archives></remotePackage></sdk:sdk-repository>`;
 
-    function setup(answer: AuthenticodeResult) {
+    /**
+     * `answer` is what the checker says about adb.exe; `dllAnswer` what it says
+     * about the AdbWinApi.dll beside it (default: valid Google). `withAdb`
+     * false stages an archive with no adb binary at all.
+     */
+    function setup(answer: AuthenticodeResult, opts: { dllAnswer?: AuthenticodeResult; withAdb?: boolean } = {}) {
         vi.spyOn(global, 'fetch').mockImplementation(async (input: string | URL | Request) => {
             const url = new URL(String(input instanceof Request ? input.url : input));
             return url.pathname.endsWith('/repository2-3.xml') ? new Response(xml) : new Response(ZIP);
         });
-        const checked: string[] = [];
+        const checked: string[][] = [];
         const mgr = new DependencyManager(tmpDepsDir, {
-            checkAuthenticode: async (file) => {
-                checked.push(file);
-                return answer;
+            checkAuthenticode: async (files) => {
+                checked.push([...files]);
+                return files.map((f) =>
+                    path.basename(f) === 'adb.exe' ? answer : (opts.dllAnswer ?? { status: 'Valid', subject: GOOGLE }),
+                );
             },
         });
         mgr.getByName('adb')!.latestVersion = version;
         vi.spyOn(mgr as any, 'extractZip').mockImplementation(async (...args: unknown[]) => {
             const dest = path.join(args[1] as string, 'platform-tools');
             fs.mkdirSync(dest, { recursive: true });
-            fs.writeFileSync(path.join(dest, exe), 'NEW-ADB');
+            if (opts.withAdb !== false) fs.writeFileSync(path.join(dest, exe), 'NEW-ADB');
+            fs.writeFileSync(path.join(dest, platform === 'win32' ? 'AdbWinApi.dll' : 'libfoo.so'), 'NEW-LIB');
         });
         return { mgr, checked };
     }
 
     const killServerCalls = () => execFileCalls.filter((c) => c.args.includes('kill-server'));
 
-    it(`installs a ${platform === 'win32' ? 'valid Google LLC signature' : 'size + SHA-1 match with no Authenticode call'}`, async () => {
+    it(`installs a ${platform === 'win32' ? 'valid Google LLC signature on every binary' : 'size + SHA-1 match with no Authenticode call'}`, async () => {
         const { mgr, checked } = setup({ status: 'Valid', subject: GOOGLE });
 
         const result = await mgr.update('adb');
@@ -94,13 +102,45 @@ describe.each(['win32', 'linux'] as const)('DependencyManager.update("adb") Auth
         expect(fs.readFileSync(installedAdb, 'utf8')).toBe('NEW-ADB');
         expect(killServerCalls()).toHaveLength(1);
         if (platform === 'win32') {
+            // One call, covering adb.exe AND the DLL it loads from beside itself.
             expect(checked).toHaveLength(1);
-            expect(path.basename(checked[0]!)).toBe('adb.exe');
-            expect(path.basename(path.dirname(checked[0]!))).toBe('platform-tools');
+            expect(checked[0]!.map((f) => path.basename(f)).sort()).toEqual(['AdbWinApi.dll', 'adb.exe']);
+            for (const f of checked[0]!) expect(path.basename(path.dirname(f))).toBe('platform-tools');
         } else {
             expect(checked).toEqual([]);
         }
     });
+
+    if (platform === 'win32') {
+        it('refuses a genuine adb.exe beside an unsigned AdbWinApi.dll, before kill-server, and installs nothing', async () => {
+            const { mgr } = setup(
+                { status: 'Valid', subject: GOOGLE },
+                { dllAnswer: { status: 'NotSigned', subject: null } },
+            );
+
+            const result = await mgr.update('adb');
+
+            expect(result.success).toBe(false);
+            expect(result.errorMessage).toBe(
+                'AdbWinApi.dll Authenticode signature is not valid (NotSigned) -- refusing to install',
+            );
+            expect(killServerCalls()).toEqual([]);
+            expect(fs.readFileSync(installedAdb, 'utf8')).toBe('OLD-ADB');
+            expect(fs.existsSync(path.join(tmpDepsDir, 'adb', 'AdbWinApi.dll'))).toBe(false);
+        });
+
+        it('refuses an archive with no adb.exe, saying so, before kill-server', async () => {
+            const { mgr, checked } = setup({ status: 'Valid', subject: GOOGLE }, { withAdb: false });
+
+            const result = await mgr.update('adb');
+
+            expect(result.success).toBe(false);
+            expect(result.errorMessage).toBe('adb.exe missing from the platform-tools archive -- refusing to install');
+            expect(checked).toEqual([]);
+            expect(killServerCalls()).toEqual([]);
+            expect(fs.readFileSync(installedAdb, 'utf8')).toBe('OLD-ADB');
+        });
+    }
 
     const refusals: [string, AuthenticodeResult, string][] = [
         [
