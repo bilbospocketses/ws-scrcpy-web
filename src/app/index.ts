@@ -16,6 +16,7 @@ import { FirstRunBanner } from './client/FirstRunBanner';
 import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
 import { createSettingsHeader } from './client/SettingsHeader';
+import { isElevationDeclined, reasonToUserMessage } from './client/serviceFailureMessage';
 import { applyStoredTheme, createThemeToggle, initTheme } from './client/ThemeToggle';
 import type { Tool } from './client/Tool';
 import { createUpdateButton } from './client/UpdateButton';
@@ -149,10 +150,17 @@ function maybeShowFirstRunModal(): void {
                 // System-wide update offer (P3c-2): a newer home AppImage is running
                 // over an older /opt copy → offer to update the system-wide install.
                 if (offersSystemWideUpdate(status)) {
-                    showStatusBanner('update the system-wide install?', 'update', () => {
+                    const banner = showStatusBanner('update the system-wide install?', 'update', () => {
                         void fetch('/api/service/install-system-wide', { method: 'POST' })
-                            .then((r) => {
-                                if (r.ok) window.location.reload();
+                            .then(async (r) => {
+                                if (r.ok) {
+                                    window.location.reload();
+                                } else if (await isElevationDeclined(r)) {
+                                    // A cancelled polkit prompt (smoke 14.10): say so; the
+                                    // banner's button stays for another try.
+                                    const msg = banner.querySelector('span');
+                                    if (msg) msg.textContent = reasonToUserMessage('uac-declined', '');
+                                }
                             })
                             .catch(() => {});
                     });

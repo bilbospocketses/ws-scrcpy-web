@@ -13,7 +13,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// Pure resolver for the writable-state root on Windows. Mirrors
-/// `resolveDataRoot` in `src/server/Config.ts` (Phase 1 of the Program
+/// `resolveDataRoot` in `src/server/dataRoot.ts` (Phase 1 of the Program
 /// Files migration). Returns `<programdata>\WsScrcpyWeb`. The TS side
 /// returns null on non-Windows; callers needing the cross-platform
 /// "data root or install root fallback" semantic should compose this
@@ -26,7 +26,7 @@ pub fn data_root_for_windows(programdata: Option<&str>) -> PathBuf {
 }
 
 /// Pure resolver for the writable-state root on Linux. Precedence mirrors
-/// `resolveDataRoot` in `src/server/Config.ts`: an explicit `DATA_ROOT`
+/// `resolveDataRoot` in `src/server/dataRoot.ts`: an explicit `DATA_ROOT`
 /// override (used verbatim — it is already the full path, NOT joined with
 /// `WsScrcpyWeb`), then `$XDG_DATA_HOME/WsScrcpyWeb`, then
 /// `~/.local/share/WsScrcpyWeb`. Honoring `DATA_ROOT` here keeps the Rust side

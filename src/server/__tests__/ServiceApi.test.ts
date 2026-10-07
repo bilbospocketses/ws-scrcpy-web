@@ -10,6 +10,7 @@ import { EnvName } from '../EnvName';
 import type { ServiceClient, ServiceClientFactoryResult } from '../service/ServiceClient';
 import {
     DECLINE_MARKER_NAME,
+    PkexecDeclinedError,
     STAGED_SYSTEM_APPIMAGE,
     STAGED_SYSTEM_DIR,
     SYSTEM_STATE_DIR,
@@ -1926,6 +1927,33 @@ describe('ServiceApi', () => {
             });
             // Never the system manager: the relaunch must come back as the user.
             expect(plan.args).not.toContain('--system');
+        });
+
+        // Smoke 14.10: a cancelled polkit prompt is a decline, not a failure. The
+        // handler keys on the typed error runPkexec throws, not on its wording.
+        it.each([
+            ['a declined prompt', new PkexecDeclinedError('install-system-wide'), 403, 'uac-declined'],
+            ['any other pkexec failure', new Error('pkexec install-system-wide failed: boom'), 500, 'unknown'],
+            ['a plain error that merely says "dismissed"', new Error('dismissed by something else'), 500, 'unknown'],
+        ])('POST /api/service/install-system-wide: %s', async (_label, thrown, status, reason) => {
+            const savedAppImage = process.env['APPIMAGE'];
+            process.env['APPIMAGE'] = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
+            try {
+                const fakePkexec = vi.fn(async (_cmd: string, _label: string): Promise<string> => {
+                    throw thrown;
+                });
+                const scheduleExit = vi.fn();
+                const api = new ServiceApi(undefined, undefined, undefined, undefined, scheduleExit, fakePkexec);
+                const { req, res } = makeReqRes('/api/service/install-system-wide', 'POST');
+                await api.handle(req, res);
+
+                expect((res as any).getStatus()).toBe(status);
+                expect(JSON.parse((res as any).getBody())).toEqual({ ok: false, error: thrown.message, reason });
+                expect(scheduleExit).not.toHaveBeenCalled();
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
         });
 
         it('POST /api/service/install-system-wide with $APPIMAGE unset returns 400, pkexec NOT called', async () => {

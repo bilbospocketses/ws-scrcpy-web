@@ -12,7 +12,7 @@ ENTRY="$SCRIPT_DIR/dist/index.js"
 # left the shipped container with no server log at all.
 export DEPS_PATH="${DEPS_PATH:-$SCRIPT_DIR/dependencies}"
 
-# Mirror src/server/Config.ts resolveDataRoot() for Linux, so the marker below
+# Mirror src/server/dataRoot.ts resolveDataRoot() for Linux, so the marker below
 # is the same file Node writes. Node keys it on the data root; this script used
 # to key it on $DEPS_PATH, so the two never named the same path. Restart still
 # worked because it also keys on exit code 75 -- this was dead plumbing, and it

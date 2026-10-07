@@ -13,6 +13,7 @@ import { ensureScrcpyServerPushed } from './ensureScrcpyServerPushed';
 import { FrameReader } from './FrameReader';
 import { ControlCenter } from './goog-device/services/ControlCenter';
 import { Logger } from './Logger';
+import { liveStreams, SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON } from './liveStreams';
 import { Mw, type RequestParameters } from './mw/Mw';
 import { describeEffectiveOptions, type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
 import { type CongestionEvent, StreamCongestion } from './StreamCongestion';
@@ -24,6 +25,7 @@ import {
     createAudioDisabledSocket,
     expectedTunnelSocketCount,
 } from './scrcpyTunnelSockets';
+import { closeReason } from './util/closeReason';
 import { watchForStuckClosing } from './util/closingWatchdog';
 
 const log = Logger.for('ScrcpyConnection');
@@ -46,26 +48,10 @@ function installedVersion(): string {
  * device refused, a timeout) or mid-stream (scrcpy-server exited, the device
  * stopped sending video). The reason travels in the close frame and the browser
  * shows it as `stream failed: <reason>`. A normal end closes with no code,
- * which the browser receives as 1005 and treats as clean (smoke row 8.27).
+ * which the browser receives as 1005 and treats as clean (smoke row 8.27); a
+ * deliberate server stop closes with 1001 (`closeForShutdown`).
  */
 export const SESSION_FAILED_CLOSE_CODE = 4005;
-
-/** RFC 6455 caps a close reason at 123 bytes, and `ws` throws past that. */
-const MAX_CLOSE_REASON_BYTES = 123;
-
-/**
- * Cut `text` to a valid close reason: at most 123 bytes of UTF-8, never splitting
- * a character. `String.slice(0, 123)` counts UTF-16 units, so a multi-byte
- * message could still exceed the limit.
- */
-export function closeReason(text: string): string {
-    const bytes = Buffer.from(text, 'utf-8');
-    if (bytes.length <= MAX_CLOSE_REASON_BYTES) return text;
-    let end = MAX_CLOSE_REASON_BYTES;
-    // Back off any continuation bytes (10xxxxxx) so the cut lands on a character start.
-    while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
-    return bytes.subarray(0, end).toString('utf-8');
-}
 
 interface SessionMetadata {
     deviceName: string;
@@ -129,6 +115,9 @@ export class ScrcpyConnection extends Mw {
                         'terminating it so the session and the device are released',
                 ),
         });
+        // Tracked so a deliberate server stop can close it with 1001 before
+        // `adb kill-server` kills scrcpy-server under it; see liveStreams.ts.
+        liveStreams.add(this);
         this.start().catch((err) => {
             log.error(`Failed to start session for ${serial}:`, err.message);
             try {
@@ -822,9 +811,28 @@ export class ScrcpyConnection extends Mw {
         this.release();
     }
 
+    /**
+     * End the session because the server is stopping on purpose: 1001 "server
+     * shutting down", which the browser treats as a normal end, then release.
+     * Releasing here, before `adb kill-server`, is what keeps the scrcpy-server
+     * exit that kill-server causes from reaching `releaseAsFailure` as a 4005.
+     */
+    public closeForShutdown(): void {
+        if (this.released) return;
+        try {
+            if (this.ws.readyState === this.ws.OPEN) {
+                this.ws.close(SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON);
+            }
+        } catch (closeErr) {
+            log.error(`Failed to close WebSocket for ${this.serial}:`, closeErr);
+        }
+        this.release();
+    }
+
     public override release(): void {
         if (this.released) return;
         this.released = true;
+        liveStreams.remove(this);
         this.stopClosingWatch?.();
         log.info(`Releasing session for ${this.serial}`);
         // #703: written on EVERY session, not only broken ones. A healthy

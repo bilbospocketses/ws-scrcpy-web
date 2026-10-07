@@ -52,7 +52,9 @@ vi.mock('../Logger', () => {
     return { Logger: { for: () => quiet } };
 });
 
-import { closeReason, ScrcpyConnection, SESSION_FAILED_CLOSE_CODE } from '../ScrcpyConnection';
+import { liveStreams, SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON } from '../liveStreams';
+import { ScrcpyConnection, SESSION_FAILED_CLOSE_CODE } from '../ScrcpyConnection';
+import { runGracefulShutdown } from '../shutdownHelpers';
 
 class FakeWs extends EventEmitter {
     public readonly CONNECTING = 0;
@@ -202,16 +204,80 @@ describe('ScrcpyConnection — normal paths keep the plain close', () => {
     });
 });
 
-describe('closeReason', () => {
-    it('leaves a short reason alone', () => {
-        expect(closeReason('scrcpy-server exited (code 1)')).toBe('scrcpy-server exited (code 1)');
+/**
+ * Stopping the server on purpose is not a stream failure. `adb kill-server`
+ * takes scrcpy-server down with it, so a session still open when it ran took
+ * its crash path and the viewer saw `stream failed: scrcpy-server exited` for
+ * a stop they asked for. The stop now closes every open session with 1001
+ * first, which the browser treats as a normal end.
+ */
+describe('ScrcpyConnection — a deliberate server stop is a clean end', () => {
+    it('the graceful shutdown closes a live session with 1001 before kill-server, and the exit that follows stays quiet', async () => {
+        const { child } = live();
+        const order: string[] = [];
+        ws.close.mockImplementation((code?: number, reason?: string) => {
+            order.push(`close ${code} ${reason}`);
+            ws.readyState = ws.CLOSING;
+        });
+
+        await runGracefulShutdown({
+            log: { info() {}, warn() {} },
+            adbPath: 'adb',
+            killAdbServer: async () => {
+                order.push('kill-server');
+                // What kill-server does to a session's scrcpy-server.
+                child.emit('exit', null, 'SIGKILL');
+            },
+            reapStrayAdb: async () => 0,
+            services: [
+                {
+                    getName: () => 'WebSocket Server Service',
+                    release: () => order.push('release WebSocket Server Service'),
+                },
+            ],
+            backupStore: () => order.push('backup store'),
+            platform: 'linux',
+        });
+
+        expect(order).toEqual([
+            `close ${SHUTDOWN_CLOSE_CODE} ${SHUTDOWN_CLOSE_REASON}`,
+            'kill-server',
+            'release WebSocket Server Service',
+            'backup store',
+        ]);
+        expect(ws.close).not.toHaveBeenCalledWith(SESSION_FAILED_CLOSE_CODE, expect.anything());
     });
 
-    it('cuts a long reason to 123 bytes of UTF-8 without splitting a character', () => {
-        const reason = closeReason(`${'a'.repeat(121)}é€`);
-        // 121 + 2 bytes (é) = 123; the 3-byte € would cross the limit.
-        expect(reason).toBe(`${'a'.repeat(121)}é`);
-        expect(Buffer.byteLength(closeReason('€'.repeat(100)), 'utf-8')).toBeLessThanOrEqual(123);
-        expect(closeReason('€'.repeat(100))).toBe('€'.repeat(41));
+    it('closeForShutdown closes with 1001 "server shutting down" and releases the session', () => {
+        const { child, video } = live();
+
+        connection.closeForShutdown();
+        child.emit('exit', null, 'SIGTERM');
+        video.emit('end');
+
+        expect(SHUTDOWN_CLOSE_CODE).toBe(1001);
+        expect(ws.close).toHaveBeenCalledTimes(1);
+        expect(ws.close).toHaveBeenCalledWith(1001, 'server shutting down');
+        expect((child as unknown as { killed: boolean }).killed).toBe(true);
+        expect(liveStreams.size()).toBe(0);
+    });
+
+    it('a live session is tracked until it is released', () => {
+        live();
+        expect(liveStreams.size()).toBe(1);
+
+        connection.release();
+
+        expect(liveStreams.size()).toBe(0);
+    });
+
+    it('a crash while the server keeps running still closes with 4005, and a later stop finds nothing to close', () => {
+        const { child } = live();
+
+        child.emit('exit', 1, null);
+
+        expect(ws.close).toHaveBeenCalledWith(SESSION_FAILED_CLOSE_CODE, 'scrcpy-server exited (code 1)');
+        expect(liveStreams.closeAllForShutdown()).toBe(0);
+        expect(ws.close).toHaveBeenCalledTimes(1);
     });
 });

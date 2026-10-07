@@ -1,8 +1,8 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { E2E_TEMP_ROOT } from '../e2e/support/paths';
 import { privateServerPaths, removePrivateRoot, seedPrivateDataRoot } from '../e2e/support/privateServer';
 import { isProcessAlive, removeTree, stopProcessesUnder } from '../e2e/support/rootProcesses';
 
@@ -165,7 +165,7 @@ describe('a process running from a spec data root (item 170)', () => {
         'stopProcessesUnder stops only what runs from INSIDE the root',
         { timeout: 60_000 },
         async () => {
-            const root = path.join(tmpdir(), uniqueName());
+            const root = path.join(E2E_TEMP_ROOT, uniqueName());
             // Shares the root's name as a string prefix: only the separator tells them apart.
             const sibling = `${root}-sibling`;
             const inside = await startFakeDaemon(root);
@@ -185,6 +185,6 @@ describe('a process running from a spec data root (item 170)', () => {
     );
 
     it('returns nothing for a root that does not exist', () => {
-        expect(stopProcessesUnder(path.join(tmpdir(), uniqueName()))).toEqual([]);
+        expect(stopProcessesUnder(path.join(E2E_TEMP_ROOT, uniqueName()))).toEqual([]);
     });
 });

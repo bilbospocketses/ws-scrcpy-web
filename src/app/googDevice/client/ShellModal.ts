@@ -89,7 +89,9 @@ export class ShellModal extends Modal {
             this.close();
             return;
         }
-        ShellCloseConfirmModal.confirm().then((confirmed) => {
+        // A child of this modal: if the shell modal closes some other way first,
+        // the confirm closes with it and the answer reads false.
+        this.askChild(() => ShellCloseConfirmModal.confirm(), false).then((confirmed) => {
             if (confirmed) this.close();
         });
     }
@@ -140,7 +142,7 @@ export class ShellModal extends Modal {
         this.bodyEl.innerHTML = '';
         this.bodyEl.appendChild(errorEl);
         // Close after 4s (long enough to read, short enough not to feel stuck).
-        setTimeout(() => this.close(), 4000);
+        this.closeAfter(4000);
     }
 
     private connect(terminalContainer: HTMLElement): void {
