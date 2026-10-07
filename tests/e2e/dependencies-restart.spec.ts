@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -24,10 +23,17 @@ import { logOffset, logSince, readServerLog } from './support/serverLog';
  *
  * Node.js is the one dependency whose update needs a restart, and nodejs.org
  * never offers a deterministic one, so `WS_SCRCPY_NODE_DIST_BASE` points Node's
- * release index, archive and SHASUMS256.txt at a fixture this file serves on
- * loopback. The install still checks the archive against that list. The
- * fixture offers the runner's own Node with its patch raised by one, over an
- * installed `<major>.0.0`.
+ * release index, archive, SHASUMS256.txt and SHASUMS256.txt.sig at a fixture
+ * this file serves on loopback. The fixture's index offers the RUNNER's own
+ * Node version (`process.versions.node`) over an installed `<major>.0.0`.
+ *
+ * The files it serves for that version are nodejs.org's GENUINE ones, fetched
+ * at setup: the release's SHASUMS256.txt, its .sig and the
+ * `node-v<ver>-linux-<arch>.tar.gz` it lists (tens of MB). Since M5 the install
+ * refuses a list not signed by one of Node's real pinned release keys, and the
+ * spawned server is the production build, which has no test-key seam; so a
+ * mirror, this fixture included, can only serve Node's own signed files. The
+ * install still checks the archive against that list.
  *
  * It must stay on the RUNNER's major. The lookup keeps only releases whose
  * major's ABI the node-pty prebuilt manifest covers, and it reads the real
@@ -37,9 +43,12 @@ import { logOffset, logSince, readServerLog } from './support/serverLog';
  * 137 and 127. Any other major could be offered one way and refused the other.
  * (A runner on a major missing from NODE_LTS_ABI is offered nothing either way.)
  *
- * The installed version is read by RUNNING `<deps>/node/bin/node --version`, so
- * both the installed fake and the one in the archive are shell scripts: Linux
- * only (CI). Windows would need a real PE `node.exe` printing a chosen version.
+ * The installed version is read by RUNNING `<deps>/node/bin/node --version`.
+ * The installed `<major>.0.0` is a shell-script fake, and the update installs
+ * the real Linux binary, which then reports the real version: Linux only (CI).
+ * Windows would need a real PE `node.exe` printing a chosen version, and on
+ * macOS the updater fetches the Linux archive too (getPlatform() maps every
+ * non-Windows host to linux), whose binary does not run there.
  *
  * The harness has no launcher: Restart Now ends the process with exit 75 and a
  * `.restart` marker, and this spec plays the launcher's part, booting the same
@@ -53,16 +62,20 @@ const SERVER_PORT = 8145;
 const FIXTURE_PORT = 8146;
 const FIXTURE_BASE = `http://127.0.0.1:${FIXTURE_PORT}`;
 const NODE_DIST_BASE_ENV = 'WS_SCRCPY_NODE_DIST_BASE';
-// The runner's own major, so its ABI is covered whichever manifest the lookup reads.
-const [MAJOR, MINOR, PATCH] = process.versions.node.split('.').map(Number) as [number, number, number];
+// The runner's own release, so its ABI is covered whichever manifest the
+// lookup reads, and nodejs.org has its genuine signed files.
+const [MAJOR] = process.versions.node.split('.').map(Number) as [number];
 const INSTALLED = `${MAJOR}.0.0`;
-const OFFERED = `${MAJOR}.${MINOR}.${PATCH + 1}`;
+const OFFERED = process.versions.node;
 const ARCH = process.arch === 'arm64' ? 'arm64' : 'x64';
-const ARCHIVE_DIR = `node-v${OFFERED}-linux-${ARCH}`;
-const ARCHIVE_PATH = `/v${OFFERED}/${ARCHIVE_DIR}.tar.gz`;
-// The install refuses an archive its SHASUMS256.txt does not vouch for, and
-// reads that list from the same base as the archive.
+const ARCHIVE_NAME = `node-v${OFFERED}-linux-${ARCH}.tar.gz`;
+const ARCHIVE_PATH = `/v${OFFERED}/${ARCHIVE_NAME}`;
+// The install refuses an archive its SHASUMS256.txt does not vouch for, and a
+// list that one of Node's pinned release keys did not sign; it reads both from
+// the same base as the archive.
 const SHASUMS_PATH = `/v${OFFERED}/SHASUMS256.txt`;
+const SIGNATURE_PATH = `${SHASUMS_PATH}.sig`;
+const NODEJS_ORG = 'https://nodejs.org/dist';
 
 interface DependencyInfo {
     name: string;
@@ -77,18 +90,38 @@ function fakeNode(file: string, version: string): void {
     fs.writeFileSync(file, `#!/bin/sh\necho v${version}\n`, { mode: 0o755 });
 }
 
+/** One file of the genuine release from nodejs.org, retried: a CI runner's network blips. */
+async function fetchFromNodejsOrg(file: string): Promise<Buffer> {
+    const url = `${NODEJS_ORG}/v${OFFERED}/${file}`;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+            if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
+            return Buffer.from(await res.arrayBuffer());
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    throw new Error(`9.12 setup could not fetch ${url}: ${String(lastError)}`);
+}
+
+interface GenuineRelease {
+    shasums: Buffer;
+    signature: Buffer;
+    archive: Buffer;
+}
+
 /**
- * nodejs.org's layout under one base: the release index, one archive and its
- * SHASUMS256.txt. `hits` records every path asked for.
+ * nodejs.org's layout under one base: a release index offering OFFERED, and
+ * that release's genuine archive, SHASUMS256.txt and signature. `hits` records
+ * every path asked for.
  */
 class FixtureNodeDist {
     readonly hits: string[] = [];
     private server?: Server;
-    private readonly shasums: string;
 
-    constructor(private readonly archive: Buffer) {
-        this.shasums = `${createHash('sha256').update(archive).digest('hex')}  ${ARCHIVE_DIR}.tar.gz\n`;
-    }
+    constructor(private readonly release: GenuineRelease) {}
 
     async start(): Promise<void> {
         this.server = createServer((req, res) => {
@@ -101,12 +134,17 @@ class FixtureNodeDist {
             }
             if (url === ARCHIVE_PATH) {
                 res.writeHead(200, { 'content-type': 'application/gzip' });
-                res.end(this.archive);
+                res.end(this.release.archive);
                 return;
             }
             if (url === SHASUMS_PATH) {
                 res.writeHead(200, { 'content-type': 'text/plain' });
-                res.end(this.shasums);
+                res.end(this.release.shasums);
+                return;
+            }
+            if (url === SIGNATURE_PATH) {
+                res.writeHead(200, { 'content-type': 'application/pgp-signature' });
+                res.end(this.release.signature);
                 return;
             }
             res.writeHead(404, { 'content-type': 'application/json' });
@@ -129,7 +167,11 @@ class FixtureNodeDist {
 test('9.12 Settings → Dependencies: a Node update offers Restart Now, which shows "Restarting..." and the page reloads onto the restarted server', async ({
     browser,
 }) => {
-    test.skip(process.platform === 'win32', 'needs an executable fake node; a shell script runs on Linux only');
+    test.skip(
+        process.platform !== 'linux',
+        'Linux only: the installed fake node is a shell script, and the update installs the Linux binary',
+    );
+    test.skip(OFFERED === INSTALLED, `the runner's Node is ${OFFERED}, the same as the installed fake`);
     test.setTimeout(300_000);
 
     const paths = privateServerPaths('ws-scrcpy-web-e2e-deps-restart', SERVER_PORT);
@@ -145,14 +187,21 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
         JSON.stringify({ upstreamVersion: '1.1.0', coveredAbis: [process.versions.modules] }),
     );
 
-    // The archive nodejs.org would serve, cut down to the one file the install
-    // and its version check read. Built under the private root, so the
-    // root's own removal takes it.
-    const stage = path.join(paths.programData, 'fixture');
-    fakeNode(path.join(stage, ARCHIVE_DIR, 'bin', 'node'), OFFERED);
-    const tarball = path.join(paths.programData, 'fixture.tar.gz');
-    execFileSync('tar', ['-czf', tarball, '-C', stage, ARCHIVE_DIR]);
-    const fixture = new FixtureNodeDist(fs.readFileSync(tarball));
+    // The release nodejs.org serves, byte for byte: only its own signed list
+    // gets past the install's signature check. The list must name the archive,
+    // or the install would refuse it for a reason this row is not about.
+    const release: GenuineRelease = {
+        shasums: await fetchFromNodejsOrg('SHASUMS256.txt'),
+        signature: await fetchFromNodejsOrg('SHASUMS256.txt.sig'),
+        archive: await fetchFromNodejsOrg(ARCHIVE_NAME),
+    };
+    const listed = release.shasums
+        .toString('utf8')
+        .match(new RegExp(`^([0-9a-f]{64})  ${ARCHIVE_NAME.replace(/\./g, '\\.')}$`, 'm'));
+    expect(listed?.[1], `SHASUMS256.txt lists ${ARCHIVE_NAME}`).toBe(
+        createHash('sha256').update(release.archive).digest('hex'),
+    );
+    const fixture = new FixtureNodeDist(release);
     await fixture.start();
 
     const env = { [NODE_DIST_BASE_ENV]: FIXTURE_BASE };
@@ -198,7 +247,11 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
             expect(await update.json()).toEqual({ success: true, newVersion: OFFERED, requiresRestart: true });
             expect(fixture.hits, 'the archive came from the fixture').toContain(ARCHIVE_PATH);
             expect(fixture.hits, 'and was checked against the fixture SHASUMS256.txt').toContain(SHASUMS_PATH);
-            // The update really landed: the version check ran the new binary.
+            expect(fixture.hits, "whose signature by Node's pinned key was read from the fixture too").toContain(
+                SIGNATURE_PATH,
+            );
+            // The update really landed: the version check ran the new binary,
+            // Node's own, which reports the runner's real version.
             await expect(nodeRow.locator('td.dep-version').first()).toHaveText(OFFERED);
 
             const prompt = panel.locator('.dep-restart-prompt');
