@@ -331,7 +331,44 @@ describe('a name typed at connect when the serial lookup fails (getprop)', () =>
             expect((await cardLabels())[SERIAL]).toBe('Kitchen');
             expect(rescanLabel(tcpHit(mac))).toBe('Kitchen');
         });
+
+        it(`reaches the card when the tracker read the serial before the name was held (${where})`, async () => {
+            // The tracker polls on its own clock, so it can read the device's
+            // properties while the route is still waiting on getprop, the MAC
+            // and DNS. The hold then lands after the only read that would
+            // have applied it.
+            setup(where);
+            flakyGetprop();
+            await sight(HIT, SERIAL);
+
+            expect(await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' })).toBe(200);
+
+            expect((await cardLabels())[SERIAL]).toBe('Living Room');
+            expect(rescanLabel(tcpHit(mac))).toBe('Living Room');
+        });
     }
+
+    it('a serial read on a transport the tracker has since lost is not used by the next connect', async () => {
+        setup('container');
+        flakyGetprop();
+        (await sight(HIT, OTHER)).setState('disconnected');
+
+        await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' });
+
+        expect(await cardLabels()).toEqual({});
+    });
+
+    it('a serial read on a transport since disconnected is not used by the next connect', async () => {
+        setup('container');
+        flakyGetprop();
+        vi.spyOn(AdbClient.prototype, 'disconnect').mockResolvedValue(`disconnected ${HIT}`);
+        await sight(HIT, OTHER);
+        expect(await post('/api/devices/disconnect', { address: HIT })).toBe(200);
+
+        await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Living Room' });
+
+        expect(await cardLabels()).toEqual({});
+    });
 
     it('once expired, never names a different device that answers at the address', async () => {
         setup('container');
