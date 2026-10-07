@@ -1,4 +1,26 @@
-import * as openpgp from 'openpgp';
+import type * as OpenPgp from 'openpgp';
+
+type OpenPgpModule = typeof OpenPgp;
+
+/**
+ * `openpgp` is loaded on first use, the way `mkcertProvenance.ts` loads
+ * Sigstore, not imported at the top: a missing or broken package must fail the
+ * dependency update that needs it (closed, like every other check here), not
+ * the server's boot. A failed load is not cached, so a repaired install works
+ * without a restart.
+ */
+let openpgpModule: Promise<OpenPgpModule> | undefined;
+
+function loadOpenPgp(): Promise<OpenPgpModule> {
+    if (!openpgpModule) {
+        const loading = import('openpgp');
+        openpgpModule = loading;
+        loading.catch(() => {
+            if (openpgpModule === loading) openpgpModule = undefined;
+        });
+    }
+    return openpgpModule;
+}
 
 /**
  * M5: a publisher's OpenPGP key, pinned in this repo. The pinned sets live in
@@ -52,7 +74,7 @@ const REFUSE = '-- refusing to install';
 
 interface ParsedKey {
     pinned: PinnedKey;
-    key: openpgp.PublicKey;
+    key: OpenPgp.PublicKey;
 }
 
 /**
@@ -62,7 +84,7 @@ interface ParsedKey {
  */
 const parsedSets = new WeakMap<ReleaseKeySet, Promise<ParsedKey[]>>();
 
-function parseKeySet(set: ReleaseKeySet): Promise<ParsedKey[]> {
+function parseKeySet(openpgp: OpenPgpModule, set: ReleaseKeySet): Promise<ParsedKey[]> {
     let parsed = parsedSets.get(set);
     if (!parsed) {
         parsed = Promise.all(
@@ -77,7 +99,7 @@ function parseKeySet(set: ReleaseKeySet): Promise<ParsedKey[]> {
                         `pinned ${set.label} key ${pinned.fingerprint} parses as ${actual} -- the pinned set is corrupt`,
                     );
                 }
-                return { pinned, key: key as openpgp.PublicKey };
+                return { pinned, key: key as OpenPgp.PublicKey };
             }),
         );
         // A failed parse is not cached: the next call reports it again rather
@@ -90,7 +112,7 @@ function parseKeySet(set: ReleaseKeySet): Promise<ParsedKey[]> {
 
 const ARMOR_HEADER = '-----BEGIN PGP SIGNATURE-----';
 
-async function readDetachedSignature(bytes: Uint8Array): Promise<openpgp.Signature> {
+async function readDetachedSignature(openpgp: OpenPgpModule, bytes: Uint8Array): Promise<OpenPgp.Signature> {
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     if (text.trimStart().startsWith(ARMOR_HEADER)) {
         return openpgp.readSignature({ armoredSignature: text });
@@ -102,11 +124,35 @@ function hex(bytes: Uint8Array): string {
     return Buffer.from(bytes).toString('hex').toUpperCase();
 }
 
-/** The issuer as specifically as the packet names it: the full fingerprint when present, else the key ID. */
-function issuerOf(packet: openpgp.SignaturePacket): string {
+/**
+ * The issuer the packet CLAIMS, as specifically as it names it: the full
+ * fingerprint when present, else the key ID. Only a verified signature
+ * authenticates its issuer, and these are read before anything is verified,
+ * so messages call this the "claimed issuer".
+ */
+function claimedIssuerOf(packet: OpenPgp.SignaturePacket): string {
     const fpr = packet.issuerFingerprint;
     if (fpr instanceof Uint8Array && fpr.length > 0) return hex(fpr);
     return `key ID ${packet.issuerKeyID.toHex().toUpperCase()}`;
+}
+
+/**
+ * The all-zero wildcard key ID, or none at all: either way the packet names no
+ * key. (openpgp has `isWildcard()`, but its typings omit it.)
+ */
+function isWildcard(keyID: OpenPgp.KeyID): boolean {
+    return /^0*$/.test(keyID.toHex());
+}
+
+/**
+ * The pinned key holding the key (primary or subkey) whose ID the packet names,
+ * compared EXACTLY. openpgp's own `getKeys(keyID)` treats the all-zero wildcard
+ * ID as matching every key, so it would hand an anonymous signature to the
+ * first pinned key and report the stranger's signature as merely bad.
+ */
+function pinnedSignerOf(keys: readonly ParsedKey[], packet: OpenPgp.SignaturePacket): ParsedKey | undefined {
+    if (isWildcard(packet.issuerKeyID)) return undefined;
+    return keys.find((k) => k.key.getKeyIDs().some((id) => id.equals(packet.issuerKeyID)));
 }
 
 /**
@@ -116,8 +162,10 @@ function issuerOf(packet: openpgp.SignaturePacket): string {
  * Returns the signer. Throws `ReleaseSignatureError` for:
  *   - bad-signature  the signature does not parse, holds no signature packet,
  *                    or does not verify over these bytes;
- *   - unknown-key    a signature packet names a key outside the pinned set
- *                    (the message carries the fingerprint);
+ *   - unknown-key    a signature packet's claimed issuer is outside the pinned
+ *                    set (the message carries the fingerprint or key ID it
+ *                    claims, which nothing has authenticated), or it names no
+ *                    issuer at all (the all-zero wildcard key ID);
  *   - key-not-valid  the pinned key was not valid when the signature says it
  *                    was made (expired, revoked, or not yet created then).
  *
@@ -128,6 +176,9 @@ function issuerOf(packet: openpgp.SignaturePacket): string {
  *
  * Every signature packet must pass, not just one, so a file carrying a good
  * signature beside one by an unpinned key is refused rather than half-trusted.
+ *
+ * `openpgp` is loaded here, on first use; if it cannot be, the check throws
+ * and the install is refused like any other failed check.
  */
 export async function verifyDetachedSignature(args: {
     /** What was signed, for messages: `Node.js SHASUMS256.txt for v24.21.0`. */
@@ -140,27 +191,43 @@ export async function verifyDetachedSignature(args: {
     const bad = (why: string) =>
         new ReleaseSignatureError('bad-signature', `${what}: signature does not verify (${why}) ${REFUSE}`);
 
-    let signature: openpgp.Signature;
+    let openpgp: OpenPgpModule;
     try {
-        signature = await readDetachedSignature(args.signature);
+        openpgp = await loadOpenPgp();
+    } catch (err) {
+        throw new Error(
+            `${what}: the OpenPGP library could not be loaded (${(err as Error).message}) -- refusing to install an unverified list`,
+        );
+    }
+
+    let signature: OpenPgp.Signature;
+    try {
+        signature = await readDetachedSignature(openpgp, args.signature);
     } catch (err) {
         throw bad(`unreadable: ${(err as Error).message}`);
     }
-    const packets = signature.packets.filter((p): p is openpgp.SignaturePacket => p instanceof openpgp.SignaturePacket);
+    const packets = signature.packets.filter((p): p is OpenPgp.SignaturePacket => p instanceof openpgp.SignaturePacket);
     if (packets.length === 0 || packets.length !== signature.packets.length) {
         throw bad('no signature packet');
     }
 
-    const keys = await parseKeySet(keySet);
+    const keys = await parseKeySet(openpgp, keySet);
     const signers = packets.map((packet) => {
-        const signer = keys.find((k) => k.key.getKeys(packet.issuerKeyID).length > 0);
-        if (!signer) {
+        const signer = pinnedSignerOf(keys, packet);
+        if (signer) return signer;
+        if (isWildcard(packet.issuerKeyID)) {
+            const fpr = packet.issuerFingerprint;
             throw new ReleaseSignatureError(
                 'unknown-key',
-                `${what} is signed by ${issuerOf(packet)}, which is not a pinned ${keySet.label} release key ${REFUSE}`,
+                `${what} names no issuer key (wildcard key ID${
+                    fpr instanceof Uint8Array && fpr.length > 0 ? `; claimed issuer fingerprint ${hex(fpr)}` : ''
+                }), so no pinned ${keySet.label} release key can be matched to it ${REFUSE}`,
             );
         }
-        return signer;
+        throw new ReleaseSignatureError(
+            'unknown-key',
+            `${what} names ${claimedIssuerOf(packet)} as its claimed issuer, which is not a pinned ${keySet.label} release key ${REFUSE}`,
+        );
     });
 
     const result = await openpgp.verify({
@@ -176,6 +243,8 @@ export async function verifyDetachedSignature(args: {
     }
 
     let first: VerifiedSignature | undefined;
+    // Each signer below is matched on an exact, non-wildcard key ID, so
+    // `getKeys` / `getSigningKey` with that ID find exactly that key.
     for (const [i, packet] of packets.entries()) {
         const signer = signers[i]!;
         const created = packet.created;

@@ -169,7 +169,7 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt.sig by a pinned 
 
         expect(result.success).toBe(false);
         expect(result.errorMessage).toBe(
-            `Node.js SHASUMS256.txt for v${version} is signed by ${stranger.fingerprint}, ` +
+            `Node.js SHASUMS256.txt for v${version} names ${stranger.fingerprint} as its claimed issuer, ` +
                 'which is not a pinned Node.js release key -- refusing to install',
         );
         expect(install).not.toHaveBeenCalled();
@@ -190,7 +190,9 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt.sig by a pinned 
         const strangerSigned = setup(version, list, await stranger.sign(list));
         const refused = await strangerSigned.mgr.update('nodejs');
         expect(refused.success).toBe(false);
-        expect(refused.errorMessage).toContain(`is signed by ${stranger.fingerprint}, which is not a pinned`);
+        expect(refused.errorMessage).toContain(
+            `names ${stranger.fingerprint} as its claimed issuer, which is not a pinned`,
+        );
         expect(strangerSigned.install).not.toHaveBeenCalled();
     });
 
@@ -205,7 +207,7 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt.sig by a pinned 
 
         expect(result.success).toBe(false);
         expect(result.errorMessage).toContain(
-            `is signed by ${keys.node.fingerprint}, which is not a pinned Node.js release key`,
+            `names ${keys.node.fingerprint} as its claimed issuer, which is not a pinned Node.js release key`,
         );
         expect(install).not.toHaveBeenCalled();
     });
@@ -329,7 +331,7 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt.asc by th
 
         expect(result.success).toBe(false);
         expect(result.errorMessage).toBe(
-            `scrcpy-server SHA256SUMS.txt for v4.0 is signed by ${keys.node.fingerprint}, ` +
+            `scrcpy-server SHA256SUMS.txt for v4.0 names ${keys.node.fingerprint} as its claimed issuer, ` +
                 'which is not a pinned scrcpy release key -- refusing to install',
         );
         expect(fs.existsSync(installed())).toBe(false);

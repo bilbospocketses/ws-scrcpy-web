@@ -15,19 +15,46 @@ export interface TestSigner {
     fingerprint: string;
     /** A one-key set naming `label`, holding this signer's public key. */
     keySet: ReleaseKeySet;
-    /** A detached signature over `data`: binary like Node's `.sig`, or armored like scrcpy's `.asc`. */
-    sign(data: string | Uint8Array, opts?: { armored?: boolean; date?: Date }): Promise<Uint8Array>;
+    /**
+     * A detached signature over `data`: binary like Node's `.sig`, or armored
+     * like scrcpy's `.asc`. `unchecked` signs the packet directly, skipping
+     * openpgp's own refusal to sign at a `date` its key was not valid on (for
+     * example before the key existed); binary only.
+     */
+    sign(data: string | Uint8Array, opts?: SignOptions): Promise<Uint8Array>;
+}
+
+interface SignOptions {
+    armored?: boolean;
+    date?: Date;
+    unchecked?: boolean;
 }
 
 const bytes = (data: string | Uint8Array) => (typeof data === 'string' ? new TextEncoder().encode(data) : data);
 
+/** A v4 binary-document signature packet made by the primary key at `date`, with no validity check. */
+async function signUnchecked(privateKey: openpgp.PrivateKey, data: Uint8Array, date: Date): Promise<Uint8Array> {
+    const packet = new openpgp.SignaturePacket();
+    packet.signatureType = openpgp.enums.signature.binary;
+    packet.hashAlgorithm = openpgp.enums.hash.sha512;
+    packet.publicKeyAlgorithm = privateKey.keyPacket.algorithm;
+    const literal = new openpgp.LiteralDataPacket();
+    // Neither LiteralDataPacket.setBytes nor SignaturePacket.sign is in openpgp's public typings.
+    (literal as any).setBytes(data, openpgp.enums.literal.binary);
+    await (packet as any).sign(privateKey.keyPacket, literal, date, true, openpgp.config);
+    const list = new openpgp.PacketList<openpgp.SignaturePacket>();
+    list.push(packet);
+    return list.write();
+}
+
 async function signWith(
     privateKey: openpgp.PrivateKey,
     data: string | Uint8Array,
-    opts: { armored?: boolean; date?: Date } = {},
+    opts: SignOptions = {},
 ): Promise<Uint8Array> {
-    const message = await openpgp.createMessage({ binary: bytes(data) });
     const date = opts.date ?? new Date();
+    if (opts.unchecked) return signUnchecked(privateKey, bytes(data), date);
+    const message = await openpgp.createMessage({ binary: bytes(data) });
     if (opts.armored) {
         const armored = await openpgp.sign({
             message,

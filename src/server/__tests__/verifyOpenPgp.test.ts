@@ -1,10 +1,11 @@
 import * as fs from 'fs';
+import * as openpgp from 'openpgp';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 import { PINNED_RELEASE_KEYS } from '../DependencyManager';
 import { NODE_RELEASE_KEYS, SCRCPY_RELEASE_KEYS } from '../release-keys/pinnedReleaseKeys';
-import { ReleaseSignatureError, verifyDetachedSignature } from '../verifyOpenPgp';
+import { type ReleaseKeySet, ReleaseSignatureError, verifyDetachedSignature } from '../verifyOpenPgp';
 import { makeTestSigner } from './helpers/releaseSigning';
 
 /**
@@ -26,6 +27,80 @@ async function refusal(promise: Promise<unknown>): Promise<ReleaseSignatureError
     );
     expect(err).toBeInstanceOf(ReleaseSignatureError);
     return err as ReleaseSignatureError;
+}
+
+/**
+ * A copy of a v4 binary signature that names NO issuer: the hashed issuer key
+ * ID subpacket (type 16) zeroed to the wildcard, and the issuer fingerprint
+ * subpacket (type 33), from which openpgp would otherwise derive the key ID,
+ * retyped to an ignored private-use subpacket (100). The hashed area changes,
+ * so it no longer verifies -- the point is what it is refused AS.
+ */
+function withWildcardIssuer(sig: Uint8Array): Uint8Array {
+    const out = new Uint8Array(sig);
+    // New-format packet header with a one-octet length, then version 4.
+    expect([out[0], out[2]]).toEqual([0xc2, 4]);
+    const start = 8; // version, type, public-key algo, hash algo, 2-octet hashed length
+    const end = start + ((out[6]! << 8) | out[7]!);
+    let found = 0;
+    for (let i = start; i < end; ) {
+        const len = out[i]!;
+        expect(len).toBeLessThan(192); // one-octet subpacket lengths only
+        const type = out[i + 1]! & 0x7f;
+        if (type === 16) {
+            out.fill(0, i + 2, i + 1 + len);
+            found++;
+        } else if (type === 33) {
+            out[i + 1] = 100;
+            found++;
+        }
+        i += 1 + len;
+    }
+    expect(found).toBe(2);
+    return out;
+}
+
+/**
+ * A key whose signing SUBKEY has had its binding signature stripped: the
+ * pinned public key still lists the subkey, but nothing binds it to the primary.
+ */
+async function makeUnboundSubkeySigner(): Promise<{
+    keySet: ReleaseKeySet;
+    subkeyFingerprint: string;
+    sign: (data: string) => Promise<Uint8Array>;
+}> {
+    const { privateKey } = await openpgp.generateKey({
+        type: 'ecc',
+        curve: 'ed25519Legacy',
+        userIDs: [{ name: 'unbound subkey signer' }],
+        subkeys: [{ sign: true }],
+        date: new Date(Date.now() - 24 * 3600 * 1000),
+        format: 'object',
+    });
+    const subkey = privateKey.subkeys[0]!;
+    const stripped = new openpgp.PacketList<openpgp.AnyPacket>();
+    let inSubkey = false;
+    for (const packet of privateKey.toPublic().toPacketList()) {
+        if (packet instanceof openpgp.PublicSubkeyPacket) inSubkey = true;
+        if (inSubkey && packet instanceof openpgp.SignaturePacket) continue;
+        stripped.push(packet);
+    }
+    const pinned = await openpgp.readKey({ binaryKey: stripped.write() });
+    expect(pinned.subkeys).toHaveLength(1);
+    expect(pinned.subkeys[0]!.bindingSignatures).toHaveLength(0);
+    const fingerprint = pinned.getFingerprint().toUpperCase();
+    return {
+        keySet: { label: 'Node.js', keys: [{ fingerprint, owner: 'unbound subkey signer', armored: pinned.armor() }] },
+        subkeyFingerprint: subkey.getFingerprint().toUpperCase(),
+        sign: async (data) =>
+            openpgp.sign({
+                message: await openpgp.createMessage({ binary: enc(data) }),
+                signingKeys: privateKey,
+                signingKeyIDs: [subkey.getKeyID()],
+                detached: true,
+                format: 'binary',
+            }),
+    };
 }
 
 describe('verifyDetachedSignature with a throwaway key', () => {
@@ -71,8 +146,78 @@ describe('verifyDetachedSignature with a throwaway key', () => {
 
         expect(err.reason).toBe('unknown-key');
         expect(err.message).toBe(
-            `${what} is signed by ${stranger.fingerprint}, which is not a pinned Node.js release key -- refusing to install`,
+            `${what} names ${stranger.fingerprint} as its claimed issuer, which is not a pinned Node.js release key -- refusing to install`,
         );
+    });
+
+    it('refuses a signature with the wildcard key ID as unknown-key, not as a bad signature by the first pinned key', async () => {
+        const pinned = await makeTestSigner('Node.js');
+        const stranger = await makeTestSigner('Node.js');
+        const signature = withWildcardIssuer(await stranger.sign(LIST));
+        // The premise: the packet now names no issuer at all.
+        const packet = (await openpgp.readSignature({ binarySignature: signature })).packets[0]!;
+        expect(packet.issuerKeyID.toHex()).toBe('0000000000000000');
+        expect(packet.issuerFingerprint).toBeNull();
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: pinned.keySet }));
+
+        expect(err.reason).toBe('unknown-key');
+        expect(err.message).toBe(
+            `${what} names no issuer key (wildcard key ID), so no pinned Node.js release key can be matched to it -- refusing to install`,
+        );
+    });
+
+    it('refuses an empty signature file', async () => {
+        const signer = await makeTestSigner('Node.js');
+
+        const err = await refusal(
+            verifyDetachedSignature({ what, data: enc(LIST), signature: new Uint8Array(0), keySet: signer.keySet }),
+        );
+
+        expect(err.reason).toBe('bad-signature');
+        expect(err.message).toContain('unreadable');
+    });
+
+    it('refuses a file holding a packet that is not a signature, even beside a good one', async () => {
+        // A signature packet of an unsupported version is kept by openpgp as an
+        // unparsed packet, which its verify() skips: without the guard the
+        // good signature beside it would carry the file.
+        const signer = await makeTestSigner('Node.js');
+        const good = await signer.sign(LIST);
+        const unparsed = new Uint8Array(good);
+        unparsed[2] = 7;
+        const parsed = await openpgp.readSignature({ binarySignature: new Uint8Array([...good, ...unparsed]) });
+        expect(parsed.packets.map((p) => p instanceof openpgp.SignaturePacket)).toEqual([true, false]);
+
+        for (const signature of [new Uint8Array([...good, ...unparsed]), unparsed]) {
+            const err = await refusal(
+                verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet }),
+            );
+            expect(err.reason).toBe('bad-signature');
+            expect(err.message).toContain('no signature packet');
+        }
+    });
+
+    it('refuses a signature by a signing subkey that has no valid binding signature', async () => {
+        const { keySet, sign, subkeyFingerprint } = await makeUnboundSubkeySigner();
+        const signature = await sign(LIST);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('subkey binding signature');
+        expect(subkeyFingerprint).not.toBe(keySet.keys[0]!.fingerprint);
+    });
+
+    it('refuses a signature dated before its key was created', async () => {
+        const created = new Date('2020-01-01T00:00:00Z');
+        const signer = await makeTestSigner('Node.js', { created });
+        const signature = await signer.sign(LIST, { date: new Date('2019-06-01T00:00:00Z'), unchecked: true });
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toMatch(/was signed on 2019-06-01T00:00:00\.000Z by .*, a key that was not valid then/);
     });
 
     it('refuses a file that is not a signature', async () => {
@@ -213,6 +358,44 @@ describe('verifyDetachedSignature against the real published files and the pinne
             const err = await refusal(verifyDetachedSignature({ what: list, data, signature: fixture(sig), keySet }));
             expect(err.reason, list).toBe('bad-signature');
         }
+    });
+
+    it("verifies a historical release signed by a RETIRED key: v24.2.0 by Antoine du Hamel's old RSA key", async () => {
+        const retired = NODE_RELEASE_KEYS.find((k) => k.fingerprint === 'C0D6248439F1D5604AAFFB4021D900FFDB233756');
+        expect(retired?.status).toBe('retired');
+
+        const result = await verifyDetachedSignature({
+            what: 'Node.js SHASUMS256.txt for v24.2.0',
+            data: fixture('node-v24.2.0-SHASUMS256.txt'),
+            signature: fixture('node-v24.2.0-SHASUMS256.txt.sig'),
+            keySet: PINNED_RELEASE_KEYS.nodejs,
+        });
+
+        expect(result.fingerprint).toBe('C0D6248439F1D5604AAFFB4021D900FFDB233756');
+        expect(result.created.toISOString()).toBe('2025-06-09T21:48:06.000Z');
+    });
+
+    it("does NOT verify v24.9.0, signed by Michaël Zasso's retired key before its current self-signature", async () => {
+        // openpgp 6 judges the key at the signature's creation time, and this
+        // key carries no self-signature that old: the one it carries now was
+        // made later. GnuPG accepts the file. The updater offers only the
+        // newest LTS line's latest release, so this refusal reaches no user
+        // today -- but it is what an older release by such a key gets.
+        const retired = NODE_RELEASE_KEYS.find((k) => k.fingerprint === '8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600');
+        expect(retired?.status).toBe('retired');
+
+        const err = await refusal(
+            verifyDetachedSignature({
+                what: 'Node.js SHASUMS256.txt for v24.9.0',
+                data: fixture('node-v24.9.0-SHASUMS256.txt'),
+                signature: fixture('node-v24.9.0-SHASUMS256.txt.sig'),
+                keySet: PINNED_RELEASE_KEYS.nodejs,
+            }),
+        );
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600');
+        expect(err.message).toContain('Signature creation time is in the future');
     });
 
     it("refuses scrcpy's real list against Node's keys: right signature, wrong publisher", async () => {
