@@ -3,11 +3,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVER_JAR_SHA256, SERVER_VERSION } from '../../common/Constants';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { getDependencyDefinitions, NODE_DIST_BASE_ENV, parseAdbArchive } from '../DependencyDefinitions';
 import { DependencyManager } from '../DependencyManager';
+import { bytesResponse, makeTestReleaseKeys } from './helpers/releaseSigning';
 
 /**
  * Node.js, adb and scrcpy-server are checked against what their publishers
@@ -19,6 +20,10 @@ import { DependencyManager } from '../DependencyManager';
  * `child_process` is mocked so the one side effect that precedes an adb
  * install -- `adb kill-server` on the existing binary -- can be observed, not
  * just inferred from the install method not running.
+ *
+ * Node's and scrcpy's lists are signed (M5): each fixture list here is signed
+ * with a throwaway key handed to the manager through its `releaseKeys` seam.
+ * The refusals of the signature itself are in dependencyManager.signatures.test.ts.
  */
 const execFileCalls = vi.hoisted(() => [] as { file: string; args: string[] }[]);
 vi.mock('child_process', async (importOriginal) => {
@@ -56,6 +61,11 @@ function stubFetch(answer: (url: URL) => Response): string[] {
 
 const notFound = () => new Response('Not Found', { status: 404 });
 
+let keys: Awaited<ReturnType<typeof makeTestReleaseKeys>>;
+beforeAll(async () => {
+    keys = await makeTestReleaseKeys();
+});
+
 describe('DependencyManager.update("nodejs") — SHASUMS256.txt before install', () => {
     const version = '24.99.0';
     const ARCHIVE = 'not-a-real-node-archive-but-deterministic-bytes';
@@ -81,18 +91,27 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt before install',
         fs.rmSync(tmpDepsDir, { recursive: true, force: true });
     });
 
-    /** SHASUMS256.txt answers `sums`; anything else is the archive. installNodejs is a spy. */
-    function setup(sums: () => Response) {
-        const fetched = stubFetch((u) => (u.pathname.endsWith('/SHASUMS256.txt') ? sums() : new Response(ARCHIVE)));
-        const mgr = new DependencyManager(tmpDepsDir);
+    /**
+     * SHASUMS256.txt answers `sums` -- a list, which the test key signs at
+     * `.sig`, or a Response served for both -- and anything else is the
+     * archive. installNodejs is a spy.
+     */
+    async function setup(sums: string | (() => Response)) {
+        const sig = typeof sums === 'string' ? await keys.node.sign(sums) : null;
+        const fetched = stubFetch((u) => {
+            if (u.pathname.endsWith('/SHASUMS256.txt')) return typeof sums === 'string' ? new Response(sums) : sums();
+            if (u.pathname.endsWith('/SHASUMS256.txt.sig')) return sig ? bytesResponse(sig) : notFound();
+            return new Response(ARCHIVE);
+        });
+        const mgr = new DependencyManager(tmpDepsDir, { releaseKeys: keys.releaseKeys });
         mgr.getByName('nodejs')!.latestVersion = version;
         const install = vi.spyOn(mgr as any, 'installNodejs').mockResolvedValue(undefined);
         return { mgr, install, fetched };
     }
 
     it('installs when the archive matches its SHASUMS256.txt entry', async () => {
-        const { mgr, install } = setup(
-            () => new Response(`${'a'.repeat(64)}  node-v${version}-other.zip\n${sha256(ARCHIVE)}  ${asset()}\n`),
+        const { mgr, install } = await setup(
+            `${'a'.repeat(64)}  node-v${version}-other.zip\n${sha256(ARCHIVE)}  ${asset()}\n`,
         );
 
         const result = await mgr.update('nodejs');
@@ -104,7 +123,7 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt before install',
 
     it('refuses a mismatch, and installs nothing', async () => {
         const wrong = '0'.repeat(64);
-        const { mgr, install } = setup(() => new Response(`${wrong}  ${asset()}\n`));
+        const { mgr, install } = await setup(`${wrong}  ${asset()}\n`);
 
         const result = await mgr.update('nodejs');
 
@@ -117,7 +136,7 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt before install',
     });
 
     it('refuses when SHASUMS256.txt does not list the archive', async () => {
-        const { mgr, install } = setup(() => new Response(`${sha256(ARCHIVE)}  node-v${version}-aix-ppc64.tar.gz\n`));
+        const { mgr, install } = await setup(`${sha256(ARCHIVE)}  node-v${version}-aix-ppc64.tar.gz\n`);
 
         const result = await mgr.update('nodejs');
 
@@ -129,7 +148,7 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt before install',
     });
 
     it('refuses when SHASUMS256.txt cannot be fetched', async () => {
-        const { mgr, install } = setup(notFound);
+        const { mgr, install } = await setup(notFound);
 
         const result = await mgr.update('nodejs');
 
@@ -143,7 +162,7 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt before install',
     it('reads SHASUMS256.txt from WS_SCRCPY_NODE_DIST_BASE, beside the archive', async () => {
         const base = 'http://127.0.0.1:8146/dist';
         vi.stubEnv(NODE_DIST_BASE_ENV, `${base}/`);
-        const { mgr, fetched } = setup(() => new Response(`${sha256(ARCHIVE)}  ${asset()}\n`));
+        const { mgr, fetched } = await setup(`${sha256(ARCHIVE)}  ${asset()}\n`);
 
         const result = await mgr.update('nodejs');
 
@@ -203,10 +222,17 @@ describe('DependencyManager.update("adb") — size and SHA-1 from repository2-3.
 
     const killServerCalls = () => execFileCalls.filter((c) => c.args.includes('kill-server'));
 
-    /** The XML answers `xml`; anything else is the zip. Extraction is faked to lay out platform-tools/. */
+    /**
+     * The XML answers `xml`; anything else is the zip. Extraction is faked to
+     * lay out platform-tools/. The fake adb.exe is not Authenticode-signed, so
+     * the Windows signer check (dependencyManager.adbAuthenticode.test.ts) is
+     * answered as a valid Google LLC signature here.
+     */
     function setup(xml: () => Response) {
         const fetched = stubFetch((u) => (u.pathname.endsWith('/repository2-3.xml') ? xml() : new Response(ZIP)));
-        const mgr = new DependencyManager(tmpDepsDir);
+        const mgr = new DependencyManager(tmpDepsDir, {
+            checkAuthenticode: async () => ({ status: 'Valid', subject: 'CN=Google LLC, O=Google LLC, C=US' }),
+        });
         mgr.getByName('adb')!.latestVersion = version;
         vi.spyOn(mgr as any, 'extractZip').mockImplementation(async (...args: unknown[]) => {
             const dest = path.join(args[1] as string, 'platform-tools');
@@ -345,17 +371,26 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt and the p
         fs.rmSync(tmpDepsDir, { recursive: true, force: true });
     });
 
-    /** SHA256SUMS.txt answers `sums`; anything else is `jar`. */
-    function setup(version: string, sums: () => Response, jar: string | Buffer = JAR) {
+    /**
+     * SHA256SUMS.txt answers `sums`, whose body the test key signs at `.asc`
+     * when it is a 200; anything else is `jar`.
+     */
+    async function setup(version: string, sums: () => Response, jar: string | Buffer = JAR) {
         const body = typeof jar === 'string' ? jar : new Uint8Array(jar);
-        const fetched = stubFetch((u) => (u.pathname.endsWith('/SHA256SUMS.txt') ? sums() : new Response(body)));
-        const mgr = new DependencyManager(tmpDepsDir);
+        const sample = sums();
+        const sig = sample.ok ? await keys.scrcpy.sign(await sample.text(), { armored: true }) : null;
+        const fetched = stubFetch((u) => {
+            if (u.pathname.endsWith('/SHA256SUMS.txt')) return sums();
+            if (u.pathname.endsWith('/SHA256SUMS.txt.asc')) return sig ? bytesResponse(sig) : notFound();
+            return new Response(body);
+        });
+        const mgr = new DependencyManager(tmpDepsDir, { releaseKeys: keys.releaseKeys });
         mgr.getByName('scrcpy-server')!.latestVersion = version;
         return { mgr, fetched };
     }
 
     it('installs a version the pinned table does not know when it matches SHA256SUMS.txt', async () => {
-        const { mgr, fetched } = setup(
+        const { mgr, fetched } = await setup(
             '4.0',
             () => new Response(`${sha256(JAR)}  scrcpy-server-v4.0\n${'b'.repeat(64)}  scrcpy-win64-v4.0.zip\n`),
         );
@@ -369,7 +404,7 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt and the p
 
     it('refuses a mismatch, and installs nothing', async () => {
         const wrong = '0'.repeat(64);
-        const { mgr } = setup('4.0', () => new Response(`${wrong}  scrcpy-server-v4.0\n`));
+        const { mgr } = await setup('4.0', () => new Response(`${wrong}  scrcpy-server-v4.0\n`));
 
         const result = await mgr.update('scrcpy-server');
 
@@ -382,7 +417,7 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt and the p
     });
 
     it('refuses when SHA256SUMS.txt does not list the asset', async () => {
-        const { mgr } = setup('4.0', () => new Response(`${sha256(JAR)}  scrcpy-win64-v4.0.zip\n`));
+        const { mgr } = await setup('4.0', () => new Response(`${sha256(JAR)}  scrcpy-win64-v4.0.zip\n`));
 
         const result = await mgr.update('scrcpy-server');
 
@@ -394,7 +429,7 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt and the p
     });
 
     it('refuses when SHA256SUMS.txt cannot be fetched', async () => {
-        const { mgr } = setup('4.0', notFound);
+        const { mgr } = await setup('4.0', notFound);
 
         const result = await mgr.update('scrcpy-server');
 
@@ -405,7 +440,10 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt and the p
 
     it('refuses when SHA256SUMS.txt disagrees with SERVER_JAR_SHA256, even though the download matches the list', async () => {
         const pinned = SERVER_JAR_SHA256[SERVER_VERSION]!;
-        const { mgr } = setup(SERVER_VERSION, () => new Response(`${sha256(JAR)}  scrcpy-server-v${SERVER_VERSION}\n`));
+        const { mgr } = await setup(
+            SERVER_VERSION,
+            () => new Response(`${sha256(JAR)}  scrcpy-server-v${SERVER_VERSION}\n`),
+        );
 
         const result = await mgr.update('scrcpy-server');
 
@@ -419,7 +457,7 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt and the p
 
     it('installs the pinned version when the list, the table and the download all agree', async () => {
         const vendored = fs.readFileSync(path.join(REPO_ROOT, 'assets', 'scrcpy-server'));
-        const { mgr } = setup(
+        const { mgr } = await setup(
             SERVER_VERSION,
             () => new Response(`${SERVER_JAR_SHA256[SERVER_VERSION]}  scrcpy-server-v${SERVER_VERSION}\n`),
             vendored,

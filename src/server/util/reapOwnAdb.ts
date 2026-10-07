@@ -110,7 +110,7 @@ function run(file: string, args: string[], options: { timeout: number; env?: Nod
  * parent it points 5.1 at pwsh 7's module tree, and `Get-Process` was measured
  * ~10x slower with it set.
  */
-function envWithoutPsModulePath(): NodeJS.ProcessEnv {
+export function envWithoutPsModulePath(): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = {};
     for (const [key, value] of Object.entries(process.env)) {
         if (key.toLowerCase() === 'psmodulepath') continue;

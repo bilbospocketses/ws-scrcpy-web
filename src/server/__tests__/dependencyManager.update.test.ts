@@ -2,11 +2,27 @@ import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyManager } from '../DependencyManager';
+import { bytesResponse, makeTestReleaseKeys } from './helpers/releaseSigning';
 
 const sha256 = (data: string) => createHash('sha256').update(data).digest('hex');
+
+// The release's SHA256SUMS.txt must carry a signature by a pinned key (M5);
+// these lists are signed with a throwaway key passed through `releaseKeys`.
+let keys: Awaited<ReturnType<typeof makeTestReleaseKeys>>;
+let v4Sums: string;
+let v4SumsSig: Uint8Array;
+let fakeSums: string;
+let fakeSumsSig: Uint8Array;
+beforeAll(async () => {
+    keys = await makeTestReleaseKeys();
+    v4Sums = `${sha256('fake-v4.0-jar-bytes')}  scrcpy-server-v4.0\n`;
+    v4SumsSig = await keys.scrcpy.sign(v4Sums, { armored: true });
+    fakeSums = `${sha256('fake-jar-bytes')}  scrcpy-server-v4.0\n`;
+    fakeSumsSig = await keys.scrcpy.sign(fakeSums, { armored: true });
+});
 
 /**
  * End-to-end coverage for the "scrcpy-server update loop" bug:
@@ -36,7 +52,10 @@ describe('DependencyManager.update("scrcpy-server") — loop fix', () => {
                 });
             }
             if (url.pathname.endsWith('/SHA256SUMS.txt')) {
-                return new Response(`${sha256('fake-v4.0-jar-bytes')}  scrcpy-server-v4.0\n`, { status: 200 });
+                return new Response(v4Sums, { status: 200 });
+            }
+            if (url.pathname.endsWith('/SHA256SUMS.txt.asc')) {
+                return bytesResponse(v4SumsSig);
             }
             // Binary download — return synthetic v4.0 bytes
             return new Response('fake-v4.0-jar-bytes', { status: 200 });
@@ -49,7 +68,7 @@ describe('DependencyManager.update("scrcpy-server") — loop fix', () => {
     });
 
     it('persists the installed version so a subsequent checkAll does not reset it', async () => {
-        const mgr = new DependencyManager(tmpDir);
+        const mgr = new DependencyManager(tmpDir, { releaseKeys: keys.releaseKeys });
 
         // Seed the in-memory state to look like a pre-update install.
         const info = mgr.getByName('scrcpy-server')!;
@@ -137,7 +156,10 @@ describe('DependencyManager.update() has no launcher gate', () => {
                 });
             }
             if (url.pathname.endsWith('/SHA256SUMS.txt')) {
-                return new Response(`${sha256('fake-jar-bytes')}  scrcpy-server-v4.0\n`, { status: 200 });
+                return new Response(fakeSums, { status: 200 });
+            }
+            if (url.pathname.endsWith('/SHA256SUMS.txt.asc')) {
+                return bytesResponse(fakeSumsSig);
             }
             return new Response('fake-jar-bytes', { status: 200 });
         });
@@ -146,7 +168,7 @@ describe('DependencyManager.update() has no launcher gate', () => {
                 fetchSpy.mockRestore();
             },
         };
-        const mgr = new Mgr(tmp);
+        const mgr = new Mgr(tmp, { releaseKeys: keys.releaseKeys });
         const info = mgr.getByName('scrcpy-server')!;
         info.installedVersion = '3.3.4';
         info.latestVersion = '4.0';
