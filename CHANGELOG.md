@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.191] - 2026-10-07
+
 ### Fixed
 - **A failed first-run service install no longer leaves the "installing service" spinner stuck on screen.** When the welcome modal's "yes, install service" failed (an error from the server, a declined admin prompt, or a server that could not be reached), the spinner stayed over the welcome modal's error message and could not be dismissed, since Escape, the backdrop and × deliberately do nothing on it. The spinner now closes on every outcome except a successful install, where it stays up until the service takes over, the same way Settings → Service already behaved (`src/app/client/WelcomeModal.ts`).
 
