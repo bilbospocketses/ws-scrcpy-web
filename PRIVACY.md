@@ -63,6 +63,10 @@ The dependency manager checks each standalone runtime dependency for a newer ver
   that server receives them instead of nodejs.org (a test / mirror seam).
 - `https://dl.google.com/android/repository/` -- ADB platform-tools and their repository listing, which
   also supplies the size and checksum each download is checked against.
+- On Windows only, checking the Authenticode signatures on the downloaded platform-tools binaries
+  (`Get-AuthenticodeSignature`, which uses Windows' own `WinVerifyTrust`) may contact Microsoft's and the
+  signing certificate authority's revocation servers (CRL / OCSP). Windows makes those requests itself,
+  and may answer from its own cache instead.
 - `https://api.github.com/repos/Genymobile/scrcpy/releases/latest` and
   `https://github.com/Genymobile/scrcpy/releases/...` -- the scrcpy-server version lookup, binary, and the
   release's `SHA256SUMS.txt` checksum list with its signature, `SHA256SUMS.txt.asc`.

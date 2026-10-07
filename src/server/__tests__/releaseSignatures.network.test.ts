@@ -24,7 +24,7 @@ import { verifyDetachedSignature } from '../verifyOpenPgp';
  * runner's shared 60-an-hour API quota is not spent on it.
  *
  * CI: the scheduled `release-signatures` workflow
- * (.github/workflows/release-signatures.yml), weekly and on demand.
+ * (.github/workflows/release-signatures.yml), daily (06:17 UTC) and on demand.
  */
 
 const ENABLED = process.env['WS_SCRCPY_NETWORK_TESTS'] === '1';
