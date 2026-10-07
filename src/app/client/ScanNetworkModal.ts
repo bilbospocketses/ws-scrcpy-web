@@ -263,36 +263,47 @@ export class ScanNetworkModal extends Modal {
         this.startBtn.disabled = total === 0;
     }
 
+    // The child dialogs below are opened through openChild, so closing this
+    // modal closes them too, unanswered: no row added, no scan started.
     private openAddSubnet(): void {
-        new AddSubnetModal({
-            onSubmit: (raw: string) => void this.addUserRow(raw),
-        });
+        this.openChild(
+            () =>
+                new AddSubnetModal({
+                    onSubmit: (raw: string) => void this.addUserRow(raw),
+                }),
+        );
     }
 
     private openEditSubnet(id: string, currentRaw: string): void {
-        new AddSubnetModal({
-            mode: 'edit',
-            initialValue: currentRaw,
-            onSubmit: (raw: string) => void this.updateUserRow(id, raw),
-        });
+        this.openChild(
+            () =>
+                new AddSubnetModal({
+                    mode: 'edit',
+                    initialValue: currentRaw,
+                    onSubmit: (raw: string) => void this.updateUserRow(id, raw),
+                }),
+        );
     }
 
     private onStartClick(): void {
         const total = this.rows.reduce((s, r) => s + r.hostCount, 0);
         const rawSubnets = this.rows.map((r) => r.raw);
         if (total > 2048) {
-            new LargeSubnetWarningModal({
-                totalHosts: total,
-                subnetBreakdown: this.rows.map((r) => ({
-                    normalized: r.normalized,
-                    hostCount: r.hostCount,
-                    annotation: r.annotation,
-                })),
-                onContinue: () => {
-                    this.close();
-                    this.opts.onStartScan(rawSubnets);
-                },
-            });
+            this.openChild(
+                () =>
+                    new LargeSubnetWarningModal({
+                        totalHosts: total,
+                        subnetBreakdown: this.rows.map((r) => ({
+                            normalized: r.normalized,
+                            hostCount: r.hostCount,
+                            annotation: r.annotation,
+                        })),
+                        onContinue: () => {
+                            this.close();
+                            this.opts.onStartScan(rawSubnets);
+                        },
+                    }),
+            );
             return;
         }
         this.close();

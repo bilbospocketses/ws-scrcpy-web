@@ -8,6 +8,7 @@ import {
     E2E_LOCAL_APP_DATA,
     E2E_PORT,
     E2E_PROGRAM_DATA,
+    E2E_TEMP_ENV,
     SEED_CONFIG,
     wipeE2EDatabase,
 } from './tests/e2e/support/paths';
@@ -181,6 +182,12 @@ export default defineConfig({
              * sets it too.
              */
             WS_SCRCPY_SKIP_BOOT_LATEST: '1',
+            /**
+             * On Windows the server's own temp folder goes under E2E_TEMP_ROOT
+             * with its data root (tests/e2e/support/paths.ts says why). Empty
+             * elsewhere. `spawnServer` sets it too.
+             */
+            ...E2E_TEMP_ENV,
         },
     },
 });

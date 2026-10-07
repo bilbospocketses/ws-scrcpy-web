@@ -43,7 +43,7 @@ import { makeProductionCoreDeps, parseSystemServiceArgs, runSystemServiceCli } f
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
-import { reapStrayAdbOnWindows } from './shutdownHelpers';
+import { runGracefulShutdown } from './shutdownHelpers';
 import { getCertService } from './tls/createCertService';
 import { UpdateService } from './UpdateService';
 import { forceBlockingStdio } from './util/forceBlockingStdio';
@@ -412,48 +412,27 @@ if (__ssArgs) {
 
     let cleanupStarted = false;
     /**
-     * Shared graceful teardown: stop the adb daemon we own + release running
-     * services. Idempotent so the SIGINT/SIGTERM handler and the
-     * /api/server/shutdown path (Settings "stop server & exit" button / Windows
-     * tray) can both call it without double-teardown. The shutdown API awaits it
-     * before process.exit(0); the signal handler fires it best-effort and relies
-     * on the exit watchdog below. NOT used on the exit-75 restart-for-update path,
-     * which deliberately keeps the adb daemon alive across supervisor-driven
-     * restarts.
+     * Shared graceful teardown: close the open streams with 1001, stop the adb
+     * daemon we own + release running services. Idempotent so the SIGINT/SIGTERM
+     * handler and the /api/server/shutdown path (Settings "stop server & exit"
+     * button / Windows tray) can both call it without double-teardown. The
+     * shutdown API awaits it before process.exit(0); the signal handler fires it
+     * best-effort and relies on the exit watchdog below. NOT used on the exit-75
+     * restart-for-update path, which deliberately keeps the adb daemon alive
+     * across supervisor-driven restarts (it closes the open streams itself, just
+     * before exiting).
      */
     async function gracefulShutdown(): Promise<void> {
         if (cleanupStarted) return;
         cleanupStarted = true;
-        serverLog.info('Stopping adb daemon (kill-server) ...');
-        try {
-            await scanAdb.killServer();
-        } catch (err) {
-            serverLog.warn(`adb kill-server during exit failed: ${(err as Error).message}`);
-        }
-        // The own-adb reaper is Windows-only (reapStrayAdbOnWindows no-ops
-        // elsewhere); only log it where it actually runs, so Linux/macOS logs
-        // don't carry a Windows-only line that does nothing. It stops only
-        // processes running config.adbPath -- another tool's adb (Android
-        // Studio's) must survive this app's exit.
-        if (process.platform === 'win32') {
-            serverLog.info(`Stopping any leftover own adb (${config.adbPath}) ...`);
-        }
-        const reaped = await reapStrayAdbOnWindows(config.adbPath);
-        if (reaped > 0) {
-            serverLog.info(`Reaped ${reaped} own adb process(es) left after kill-server`);
-        }
-        runningServices.forEach((service: Service) => {
-            const serviceName = service.getName();
-            serverLog.info(`Stopping ${serviceName} ...`);
-            service.release();
+        // The steps and their order are in runGracefulShutdown (shutdownHelpers.ts).
+        await runGracefulShutdown({
+            log: serverLog,
+            adbPath: config.adbPath,
+            killAdbServer: () => scanAdb.killServer(),
+            services: runningServices,
+            backupStore: () => backupAndCloseStore(config.db, serverLog),
         });
-        // Snapshot the SQLite store (the last-good `.bak` the corrupt-recovery
-        // path restores from), then close it so SQLite checkpoints the WAL into
-        // wsscrcpy.db (finding 10.21). LAST on purpose: kill-server and the
-        // service releases above do not use the store, and the HTTP and WS
-        // servers are already closed, so no request reaches it afterwards.
-        // Best-effort; never blocks exit.
-        backupAndCloseStore(config.db, serverLog);
     }
 
     // A repeat signal inside the first 2 s is the same stop arriving twice (one
