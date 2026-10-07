@@ -13,6 +13,7 @@ import { ensureScrcpyServerPushed } from './ensureScrcpyServerPushed';
 import { FrameReader } from './FrameReader';
 import { ControlCenter } from './goog-device/services/ControlCenter';
 import { Logger } from './Logger';
+import { liveStreams, SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON } from './liveStreams';
 import { Mw, type RequestParameters } from './mw/Mw';
 import { describeEffectiveOptions, type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
 import { type CongestionEvent, StreamCongestion } from './StreamCongestion';
@@ -47,7 +48,8 @@ function installedVersion(): string {
  * device refused, a timeout) or mid-stream (scrcpy-server exited, the device
  * stopped sending video). The reason travels in the close frame and the browser
  * shows it as `stream failed: <reason>`. A normal end closes with no code,
- * which the browser receives as 1005 and treats as clean (smoke row 8.27).
+ * which the browser receives as 1005 and treats as clean (smoke row 8.27); a
+ * deliberate server stop closes with 1001 (`closeForShutdown`).
  */
 export const SESSION_FAILED_CLOSE_CODE = 4005;
 
@@ -113,6 +115,9 @@ export class ScrcpyConnection extends Mw {
                         'terminating it so the session and the device are released',
                 ),
         });
+        // Tracked so a deliberate server stop can close it with 1001 before
+        // `adb kill-server` kills scrcpy-server under it; see liveStreams.ts.
+        liveStreams.add(this);
         this.start().catch((err) => {
             log.error(`Failed to start session for ${serial}:`, err.message);
             try {
@@ -806,9 +811,28 @@ export class ScrcpyConnection extends Mw {
         this.release();
     }
 
+    /**
+     * End the session because the server is stopping on purpose: 1001 "server
+     * shutting down", which the browser treats as a normal end, then release.
+     * Releasing here, before `adb kill-server`, is what keeps the scrcpy-server
+     * exit that kill-server causes from reaching `releaseAsFailure` as a 4005.
+     */
+    public closeForShutdown(): void {
+        if (this.released) return;
+        try {
+            if (this.ws.readyState === this.ws.OPEN) {
+                this.ws.close(SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON);
+            }
+        } catch (closeErr) {
+            log.error(`Failed to close WebSocket for ${this.serial}:`, closeErr);
+        }
+        this.release();
+    }
+
     public override release(): void {
         if (this.released) return;
         this.released = true;
+        liveStreams.remove(this);
         this.stopClosingWatch?.();
         log.info(`Releasing session for ${this.serial}`);
         // #703: written on EVERY session, not only broken ones. A healthy

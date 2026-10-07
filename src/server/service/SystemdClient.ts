@@ -170,9 +170,24 @@ export function pkexecDeclined(code: number | undefined, stderr: string): boolea
 }
 
 /**
+ * What {@link runPkexec} throws when the user cancelled or did not authorize the
+ * prompt ({@link pkexecDeclined}). Every handler that runs pkexec checks for this
+ * type and answers 403 `reason: 'uac-declined'`, the same as a declined UAC
+ * prompt on Windows, so the page can say privileges were declined rather than
+ * report a failure (smoke 14.10).
+ */
+export class PkexecDeclinedError extends Error {
+    constructor(label: string) {
+        super(`authentication was dismissed or not authorized. ${label} cancelled.`);
+        this.name = 'PkexecDeclinedError';
+    }
+}
+
+/**
  * Run a command via pkexec for graphical privilege escalation. The user
- * sees a single password prompt for the entire shell command. Throws on
- * a declined prompt ({@link pkexecDeclined}), pkexec-not-found, or command failure.
+ * sees a single password prompt for the entire shell command. Throws
+ * {@link PkexecDeclinedError} on a declined prompt, and a plain Error on
+ * pkexec-not-found or command failure.
  */
 export async function runPkexec(shellCmd: string, label: string): Promise<string> {
     try {
@@ -190,8 +205,7 @@ export async function runPkexec(shellCmd: string, label: string): Promise<string
         const stderr = typeof e.stderr === 'string' ? e.stderr.trim() : '';
         const exitCode = typeof e.code === 'number' ? e.code : (e as { status?: number }).status;
         if (pkexecDeclined(exitCode, stderr)) {
-            // "dismissed" is what ServiceApi's install-system-wide handler keys 403 on.
-            throw new Error(`authentication was dismissed or not authorized. ${label} cancelled.`);
+            throw new PkexecDeclinedError(label);
         }
         throw new Error(`pkexec ${label} failed: ${stderr || e.message}`);
     }

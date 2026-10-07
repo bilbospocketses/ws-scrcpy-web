@@ -1,5 +1,6 @@
 import type { UpdateChannel } from '../../../../common/ConfigEvents';
 import type { UpdatesStatusResponse } from '../../../../common/UpdateEvents';
+import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMessage';
 import { runUpgradingHandoff } from '../../UpgradingOverlay';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import type { TabContext } from './EmbeddingTab';
@@ -523,10 +524,18 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         try {
             const r = await fetch('/api/updates/apply', { method: 'POST' });
             if (!r.ok) {
-                setStatusError(`apply failed (${r.status})`);
                 btn.disabled = false;
                 btn.textContent = prevText;
                 applyInFlight = false;
+                if (await isElevationDeclined(r)) {
+                    // A cancelled polkit prompt on a machine-wide update (smoke
+                    // 14.10). Nothing changed and the update is still ready, so
+                    // there is no state to re-read, and the refresh below would
+                    // repaint the line straight back to "update: vX".
+                    setStatusError(reasonToUserMessage('uac-declined', ''));
+                    return;
+                }
+                setStatusError(`apply failed (${r.status})`);
                 // Re-poll to learn the current state (probably 409 because state
                 // wasn't 'ready' anymore by the time we got here). This rebuilds
                 // the body and re-baselines, so any staged edit is dropped — the

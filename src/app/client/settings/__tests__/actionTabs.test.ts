@@ -3,12 +3,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { buildDependenciesTab } from '../tabs/DependenciesTab';
-import { buildEmbeddingTab } from '../tabs/EmbeddingTab';
+import { askUnbound, buildEmbeddingTab } from '../tabs/EmbeddingTab';
 import { buildServiceTab } from '../tabs/ServiceTab';
 import { buildUsersTab } from '../tabs/UsersTab';
 
 function ctx(role: 'admin' | 'user' = 'admin') {
-    return { role, authEnabled: false, docker: false, reload: () => undefined };
+    return {
+        role,
+        authEnabled: false,
+        docker: false,
+        reload: () => undefined,
+        askChild: askUnbound,
+        openChild: <T>(open: () => T) => open(),
+    };
 }
 
 // A never-resolving fetch: these tabs refresh asynchronously, and the point of

@@ -81,11 +81,22 @@ export class ResetConfirmModal extends Modal {
         this.resolveAndClose(false);
     }
 
+    // Closed without an answer (the Settings dialog closed first): settle as
+    // cancel, so no reset runs.
+    protected override onBeforeClose(): void {
+        this.settle(false);
+    }
+
     private resolveAndClose(confirmed: boolean): void {
+        if (this.resolved) return;
+        this.settle(confirmed);
+        this.close(confirmed);
+    }
+
+    private settle(confirmed: boolean): void {
         if (this.resolved) return;
         this.resolved = true;
         this.resolveFn?.(confirmed);
         this.resolveFn = null;
-        this.close(confirmed);
     }
 }

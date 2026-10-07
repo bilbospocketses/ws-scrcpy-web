@@ -12,6 +12,25 @@ import path from 'node:path';
 const PORT_OVERRIDE = process.env['WSSW_E2E_PORT'];
 
 /**
+ * The folder every e2e data root, and every spawned server's own temp folder,
+ * lives under. On Windows it is `<tmpdir>\claude`, the folder the maintainer's
+ * real-time antivirus excludes: the suite writes and runs executables there on
+ * every run (each spec root's adb, the stand-ins in tests/unit/rootProcesses,
+ * the app's Node.js update extraction), and a scan of a freshly written image
+ * holds it open, so removing a root failed with EPERM. On Linux and in CI it is
+ * the plain `tmpdir()`, as before.
+ */
+export const E2E_TEMP_ROOT = process.platform === 'win32' ? path.join(tmpdir(), 'claude') : tmpdir();
+
+/**
+ * Environment that points a spawned server's own temp folder at E2E_TEMP_ROOT
+ * on Windows, where Node's `os.tmpdir()` reads TEMP/TMP. Empty elsewhere: Linux
+ * keeps TMPDIR as inherited.
+ */
+export const E2E_TEMP_ENV: Record<string, string> =
+    process.platform === 'win32' ? { TEMP: E2E_TEMP_ROOT, TMP: E2E_TEMP_ROOT } : {};
+
+/**
  * A throwaway data root for the end-to-end server.
  *
  * Deterministic rather than a random `mkdtemp` name on purpose: the Playwright
@@ -21,11 +40,11 @@ const PORT_OVERRIDE = process.env['WSSW_E2E_PORT'];
  *
  * The server resolves its data root per platform — `PROGRAMDATA/WsScrcpyWeb` on
  * Windows when `DATA_ROOT` is unset, and `DATA_ROOT` ahead of it on every
- * platform (see `resolveDataRoot` in `src/server/Config.ts`) —
+ * platform (see `resolveDataRoot` in `src/server/dataRoot.ts`) —
  * so the suite sets both and works either way.
  */
 export const E2E_PROGRAM_DATA = path.join(
-    tmpdir(),
+    E2E_TEMP_ROOT,
     PORT_OVERRIDE ? `ws-scrcpy-web-e2e-${PORT_OVERRIDE}` : 'ws-scrcpy-web-e2e',
 );
 export const E2E_DATA_ROOT = path.join(E2E_PROGRAM_DATA, 'WsScrcpyWeb');

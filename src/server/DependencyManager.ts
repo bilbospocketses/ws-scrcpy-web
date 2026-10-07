@@ -6,20 +6,28 @@ import path from 'path';
 import type { Writable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { promisify } from 'util';
+import { SERVER_JAR_SHA256 } from '../common/Constants';
 import type { DependencyInfo, LatestLookup, UpdateResult } from '../common/DependencyTypes';
 import { compareVersions, DependencyStatus } from '../common/DependencyTypes';
 import type { DependencyDefinition } from './DependencyDefinitions';
 import {
+    ADB_REPOSITORY_XML_URL,
+    adbArchiveName,
     getDependencyDefinitions,
     getPlatform,
     mkcertAssetName,
     mkcertChecksumsUrl,
     mkcertExeName,
     NODE_DIST_BASE_ENV,
+    nodeChecksumsUrl,
     nodeDistBase,
+    parseAdbArchive,
+    scrcpyServerAssetName,
+    scrcpyServerChecksumsUrl,
 } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { parseSha256Sums } from './linuxUpdateAssets';
+import { liveStreams } from './liveStreams';
 import { defaultMkcertProvenanceDeps, MKCERT_URL_BASE_ENV, verifyMkcertManifestProvenance } from './mkcertProvenance';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
@@ -27,7 +35,7 @@ import { copyFileAtomic, copyFileAtomicSync, rmTreeSyncWithRetry, writeFileAtomi
 import { fetchWithRetry, HttpStatusError, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
 import { ensureRootOwnedTreeIfRoot } from './util/rootOwnedTree';
 import { tarExtractArgs } from './util/tarExtract';
-import { verifySha256 } from './verifySha256';
+import { verifySha1, verifySha256 } from './verifySha256';
 import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
@@ -407,6 +415,13 @@ export class DependencyManager {
             const downloadPath = path.join(tmpDir, fileName);
             await this.download(url, downloadPath);
 
+            // Check the download against what its publisher lists BEFORE
+            // install() runs anything -- adb's install starts by killing the
+            // running adb server, so a bad archive must be refused before that.
+            // Every failure throws into the catch below: nothing is installed,
+            // and the `using` cleanup removes the unverified file.
+            await this.verifyDownload(name, version, fileName, downloadPath);
+
             // Extract / install
             await this.install(name, def, downloadPath, version, tmpDir, mkcertManifest);
 
@@ -556,6 +571,9 @@ export class DependencyManager {
     public requestRestart(): void {
         writeFileAtomicSync(this.restartMarkerPath, `restart-requested-${Date.now()}`);
         log.info(`Restart requested; writing marker at ${this.restartMarkerPath} and exiting with code 75`);
+        // The exit ends every open stream; close them as a deliberate stop
+        // (1001) so a viewer is not told the stream failed. See liveStreams.ts.
+        liveStreams.closeAllForShutdown();
         process.exit(75);
     }
 
@@ -641,13 +659,137 @@ export class DependencyManager {
     }
 
     /**
+     * Fails closed on every download except mkcert's, whose check runs inside
+     * `installMkcert` against its provenance-attested manifest. Each source is
+     * the publisher's own list, fetched from the same host as the download:
+     *
+     *   nodejs         SHASUMS256.txt beside the archive (under nodeDistBase)
+     *   scrcpy-server  the release's SHA256SUMS.txt, cross-checked against the
+     *                  repo's own SERVER_JAR_SHA256 when it pins this version
+     *   adb            size + SHA-1 from repository2-3.xml
+     *
+     * There is deliberately no way to skip or weaken any of these: a URL seam
+     * (WS_SCRCPY_NODE_DIST_BASE) moves where the list is read from, never
+     * whether it is checked.
+     */
+    private async verifyDownload(
+        name: string,
+        version: string,
+        assetName: string,
+        downloadPath: string,
+    ): Promise<void> {
+        switch (name) {
+            case 'nodejs':
+                await this.verifyNodeArchive(version, assetName, downloadPath);
+                return;
+            case 'scrcpy-server':
+                await this.verifyScrcpyServer(version, downloadPath);
+                return;
+            case 'adb':
+                await this.verifyAdbArchive(version, downloadPath);
+                return;
+            case 'mkcert':
+                // Checked in installMkcert, against the attested manifest.
+                return;
+            default:
+                throw new Error(`No checksum source for: ${name} -- refusing to install an unverified download`);
+        }
+    }
+
+    /**
+     * Same fetch policy as mkcert's manifest: the list is a few KB, so it gets
+     * the short version-check budget rather than the download's.
+     */
+    private async fetchChecksumList(label: string, url: string): Promise<string> {
+        const res = await fetchWithRetry(url, {
+            ...VERSION_CHECK_POLICY,
+            onRetry: (n) => log.warn(`${label} checksum list fetch ${n.attempt}/${n.attempts}: ${n.reason}`),
+        });
+        if (!res.ok) {
+            throw new Error(`${label} checksum list fetch failed: HTTP ${res.status} from ${url}`);
+        }
+        return res.text();
+    }
+
+    private async verifyNodeArchive(version: string, assetName: string, downloadPath: string): Promise<void> {
+        const sums = await this.fetchChecksumList('Node.js', nodeChecksumsUrl(version));
+        const expected = parseSha256Sums(sums, assetName);
+        if (!expected) {
+            throw new Error(
+                `Node.js checksum list does not list ${assetName} -- refusing to install an unverified runtime`,
+            );
+        }
+        if (!(await verifySha256(downloadPath, expected))) {
+            throw new Error(`Node.js checksum mismatch for ${assetName} (expected ${expected}) -- refusing to install`);
+        }
+    }
+
+    /**
+     * Two sources, and both must agree when both speak: the release's own
+     * SHA256SUMS.txt, and SERVER_JAR_SHA256, the hash this repo pins for the
+     * jar it vendors. A release whose list disagrees with the pin was altered
+     * after we vendored it, even if the download matches the altered list.
+     */
+    private async verifyScrcpyServer(version: string, downloadPath: string): Promise<void> {
+        const assetName = scrcpyServerAssetName(version);
+        const sums = await this.fetchChecksumList('scrcpy-server', scrcpyServerChecksumsUrl(version));
+        const expected = parseSha256Sums(sums, assetName);
+        if (!expected) {
+            throw new Error(
+                `scrcpy-server checksum list does not list ${assetName} -- refusing to install an unverified binary`,
+            );
+        }
+        // Own keys only: the version is a release tag from api.github.com.
+        const pinned = Object.hasOwn(SERVER_JAR_SHA256, version) ? SERVER_JAR_SHA256[version]!.toLowerCase() : null;
+        if (pinned !== null && pinned !== expected) {
+            throw new Error(
+                `scrcpy-server checksum list disagrees with the pinned SERVER_JAR_SHA256 for ${assetName} ` +
+                    `(list ${expected}, pinned ${pinned}) -- refusing to install`,
+            );
+        }
+        if (!(await verifySha256(downloadPath, expected))) {
+            throw new Error(
+                `scrcpy-server checksum mismatch for ${assetName} (expected ${expected}) -- refusing to install`,
+            );
+        }
+    }
+
+    /**
+     * SHA-1 is all Google publishes for platform-tools, and it is acceptable
+     * HERE: the threat is a substituted archive, which needs a second preimage
+     * of a published digest -- SHA-1's known breaks are collisions, where the
+     * attacker shapes BOTH files, and no second-preimage attack on it is
+     * practical. The exact byte size must match too, and the index comes over
+     * TLS from the same host as the archive. Size is checked first: it is free.
+     */
+    private async verifyAdbArchive(version: string, downloadPath: string): Promise<void> {
+        const assetName = adbArchiveName(version);
+        const xml = await this.fetchChecksumList('adb', ADB_REPOSITORY_XML_URL);
+        const listed = parseAdbArchive(xml, assetName);
+        if (!listed) {
+            throw new Error(
+                `adb checksum list does not list ${assetName} -- refusing to install unverified platform-tools`,
+            );
+        }
+        const { size } = await fs.promises.stat(downloadPath);
+        if (size !== listed.size) {
+            throw new Error(
+                `adb size mismatch for ${assetName} (expected ${listed.size} bytes, got ${size}) -- refusing to install`,
+            );
+        }
+        if (!(await verifySha1(downloadPath, listed.sha1))) {
+            throw new Error(`adb checksum mismatch for ${assetName} (expected ${listed.sha1}) -- refusing to install`);
+        }
+    }
+
+    /**
      * I8: mkcert mints a CA the user then installs into their OS and phone
      * trust stores, so a tampered download does not just break the app -- it
      * becomes a trusted signing authority on every device the user set up.
      * That is the highest-consequence binary this app fetches, which is why
-     * it is the one singled out for verification among the FOUR dependencies
-     * this class manages: nodejs/adb/scrcpy-server check no hash at all today.
-     * (`UpdateService`'s Linux self-update AppImage does, via the same
+     * it alone also has its MANIFEST provenance-checked; the other three are
+     * checked against their publishers' lists in `verifyDownload`.
+     * (`UpdateService`'s Linux self-update AppImage is checked too, via the same
      * `parseSha256Sums`/`verifySha256` pair reused below -- that is a
      * different subsystem, but it is the existing pattern this follows
      * rather than inventing a second one.) Verification runs BEFORE the file

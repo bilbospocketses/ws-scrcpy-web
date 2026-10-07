@@ -31,6 +31,19 @@ export class DeviceStore {
             .run(rec.serial, rec.manufacturer ?? null, rec.model ?? null, rec.address ?? null, rec.lastSeenAt ?? null);
     }
 
+    /**
+     * Record that `serial` answered at `address` just now, for `findByAddress`.
+     * An address belongs to one device at a time, so any other row still
+     * holding it is cleared. Ordering by last_seen_at alone does not settle
+     * that: a device seen since over USB bumps its own last_seen_at while
+     * keeping an old network address, and would win the address back from the
+     * device DHCP handed it to.
+     */
+    claimAddress(serial: string, address: string, at: number): void {
+        this.db.prepare('UPDATE devices SET address = NULL WHERE address = ? AND serial <> ?').run(address, serial);
+        this.upsertDevice({ serial, address, lastSeenAt: at });
+    }
+
     getDevice(serial: string): DeviceRecord | undefined {
         const r = this.db
             .prepare('SELECT serial, manufacturer, model, address, last_seen_at FROM devices WHERE serial = ?')
