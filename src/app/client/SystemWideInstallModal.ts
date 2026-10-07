@@ -1,4 +1,31 @@
 import { Modal } from '../ui/Modal';
+import { isElevationDeclined, reasonToUserMessage } from './serviceFailureMessage';
+
+/**
+ * What the first-run flow does after "yes, all users": reload (the install took,
+ * and the launcher bootstrapper execs the /opt binary), or continue to the
+ * welcome screen. A declined polkit prompt continues with `notice`, the line
+ * every other declined prompt shows, so the welcome screen can say why nothing
+ * was installed. Any other failure, or an unreachable server, continues with no
+ * notice, as it always has.
+ */
+export type SystemWideInstallOutcome = { kind: 'reload' } | { kind: 'continue'; notice?: string };
+
+/** POST the machine-wide install and map the answer to a {@link SystemWideInstallOutcome}. */
+export async function runSystemWideInstall(
+    fetchFn: (url: string, init: RequestInit) => Promise<Response> = (url, init) => fetch(url, init),
+): Promise<SystemWideInstallOutcome> {
+    try {
+        const r = await fetchFn('/api/service/install-system-wide', { method: 'POST' });
+        if (r.ok) return { kind: 'reload' };
+        if (await isElevationDeclined(r)) {
+            return { kind: 'continue', notice: reasonToUserMessage('uac-declined', '') };
+        }
+        return { kind: 'continue' };
+    } catch {
+        return { kind: 'continue' };
+    }
+}
 
 export interface SystemWideInstallModalOptions {
     /**

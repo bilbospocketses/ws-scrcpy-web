@@ -25,7 +25,12 @@ import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
 import { installThemeEmbedListener, notifyThemeReady } from './public/themeEmbed';
 import { onPageTeardown } from './util/onPageTeardown';
 
-function maybeShowWelcomeModal(): void {
+/**
+ * `notice` is a line for the welcome screen's status area: the declined-prompt
+ * line when the first-run "install for all users" prompt was just cancelled. It
+ * shows only when the welcome screen itself does.
+ */
+function maybeShowWelcomeModal(notice?: string): void {
     // Dual-source: /api/config for runtime + installMode + firstRunComplete;
     // /api/settings for the three per-user prompt-dismissal flags which are
     // no longer part of AppConfig. Both are already warm from the boot sequence
@@ -83,6 +88,7 @@ function maybeShowWelcomeModal(): void {
                     onDecision: () => {
                         // WelcomeModal owns persistence (install or PATCH) for P3+.
                     },
+                    ...(notice ? { notice } : {}),
                 });
                 return;
             }
@@ -190,21 +196,20 @@ function maybeShowFirstRunModal(): void {
                 maybeShowWelcomeModal();
                 return;
             }
-            void import('./client/SystemWideInstallModal').then(({ SystemWideInstallModal }) => {
+            void import('./client/SystemWideInstallModal').then(({ SystemWideInstallModal, runSystemWideInstall }) => {
                 new SystemWideInstallModal({
                     onInstall: () => {
-                        void fetch('/api/service/install-system-wide', { method: 'POST' })
-                            .then((r) => {
-                                if (r.ok) {
-                                    // Reload so the launcher bootstrapper execs the /opt binary.
-                                    window.location.reload();
-                                } else {
-                                    // Install didn't take (e.g. the admin prompt was
-                                    // dismissed) — continue the normal first-run flow.
-                                    maybeShowWelcomeModal();
-                                }
-                            })
-                            .catch(() => maybeShowWelcomeModal());
+                        void runSystemWideInstall().then((outcome) => {
+                            if (outcome.kind === 'reload') {
+                                // Reload so the launcher bootstrapper execs the /opt binary.
+                                window.location.reload();
+                            } else {
+                                // Install didn't take — continue the normal first-run
+                                // flow. A cancelled admin prompt carries the declined
+                                // line onto the welcome screen.
+                                maybeShowWelcomeModal(outcome.notice);
+                            }
+                        });
                     },
                     onDecline: () => {
                         // Record the decline (server marker) so we don't re-ask, then

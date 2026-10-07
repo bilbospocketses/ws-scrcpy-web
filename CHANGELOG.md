@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **tests: the unit suite runs against a throwaway data root and fails if anything reaches the machine's real one.** It used to read and write the installed app's `wsscrcpy.db` and control markers. `vitest.setup.ts` points `PROGRAMDATA` and `XDG_DATA_HOME` at a fresh temp directory for every test file and asks the server's own `resolveDataRoot` (moved into `src/server/dataRoot.ts` so the setup can load it alone) whether the data root landed there, and again around every test whether it now points at the real one. Harness only; the app is unchanged.
 
+### Fixed
+- **Cancelling the password prompt after "yes, all users" on first run now says why nothing was installed.** On Linux the first-run "install for all users?" offer went straight on to the welcome screen when the polkit prompt was cancelled, with no word about it. It still goes on to the welcome screen, which now shows "Administrative privileges were declined. Try again and approve the prompt.", the line every other declined prompt uses. Any other failure goes on to the welcome screen as before. A cancelled prompt does not record a decline, so the offer comes back on the next launch; only "no, me only" stops it.
+
 ## [0.1.30-beta.192] - 2026-10-07
 
 ### Fixed
