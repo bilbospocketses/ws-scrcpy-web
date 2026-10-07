@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs: smoke rows 14.8, 14.9 and 2b.5 say what each desktop logs (qa-harness, 2026-10-06).** Row 14.9 said a system-scope service "on either desktop" logs the tray stand-down, but no KDE step read it. 14.8 (KDE) and 14.9 (GNOME) now each run a system-scope service as a third run and read `linux-tray: not spawning (installMode="system-service", ...)` in its `launcher.log`. Row 2b.5 keeps GNOME's "exit-126 path" and notes that KDE's agent exits 127 on a cancel (14.10). The 2026-04-17 stream API design spec and the technical guide (§6.4) now say a missing `deviceId` throws synchronously rather than firing `onError`, which is what the code does.
+
 ## [0.1.30-beta.191] - 2026-10-07
 
 ### Fixed
