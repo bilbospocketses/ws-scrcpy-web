@@ -16,6 +16,7 @@ import {
     SYSTEM_STATE_DIR,
 } from '../service/SystemdClient';
 import { stageSystemHelper } from '../service/systemHelper';
+import type { CommandRunner } from '../service/systemServiceCli';
 import { resolveSystemTool } from '../service/systemTools';
 
 // FD1: a root (system-unit) app uninstall must spawn a bin_t copy under /opt.
@@ -244,6 +245,8 @@ describe('ServiceApi', () => {
     });
 
     it('system-scope uninstall: teardown spawn sets DATA_ROOT (else the helper panics in data_root_for_linux at startup — beta.60 #9 5.1)', async () => {
+        // Host-independent: as root the teardown is spawned detached, otherwise it is
+        // launched through the (injected, never real) awaited pkexec runner.
         const spawned: { cmd: string; args: string[] }[] = [];
         const api = new ServiceApi(
             () => ({ supported: true, platform: 'linux', client: { getInstalledScope: async () => 'system' } }) as any,
@@ -251,6 +254,13 @@ describe('ServiceApi', () => {
             () => true,
             (cmd, args) => {
                 spawned.push({ cmd, args });
+            },
+            undefined,
+            undefined,
+            undefined,
+            async ([cmd, ...args]) => {
+                spawned.push({ cmd: cmd!, args });
+                return { code: 0, stdout: '', stderr: '' };
             },
         );
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
@@ -1533,7 +1543,11 @@ describe('ServiceApi', () => {
             expect(body.status).toBe('shutting-down');
         });
 
-        it('system-scope uninstall wraps in pkexec when the serving process is NOT root', async () => {
+        // Non-root: the pkexec'd `systemd-run` is AWAITED through runElevated. Its
+        // exit says whether the prompt was authorised; systemd-run (no --wait)
+        // returns once the teardown unit has started. installMode is reverted only
+        // after that, so a declined prompt leaves the config saying system-service.
+        function nonRootSystemUninstall(runElevated: CommandRunner) {
             Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
             const client = fakeClient({
                 uninstall: vi.fn(async () => undefined),
@@ -1545,25 +1559,35 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-
-            let spawnedCmd = '';
-            let spawnedArgs: string[] = [];
-            const spawnDetached = vi.fn((cmd: string, args: string[]) => {
-                spawnedCmd = cmd;
-                spawnedArgs = args;
-            });
-
+            const spawnDetached = vi.fn();
             Config.getInstance().updateAppConfig({ installMode: 'system-service' });
-
             const api = new ServiceApi(
                 () => factoryResult,
                 () => 'user',
                 () => true,
                 spawnDetached,
+                undefined,
+                undefined,
+                undefined,
+                runElevated,
             );
+            return { api, spawnDetached };
+        }
+
+        it('system-scope uninstall wraps in pkexec when the serving process is NOT root', async () => {
+            let modeWhileElevating: string | null | undefined;
+            const runElevated = vi.fn<CommandRunner>(async () => {
+                modeWhileElevating = Config.getInstance().getAppConfig().installMode;
+                return { code: 0, stdout: '', stderr: '' };
+            });
+            const { api, spawnDetached } = nonRootSystemUninstall(runElevated);
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
             await api.handle(req, res);
 
+            // Awaited, not fire-and-forget: the prompt's outcome decides what happens next.
+            expect(spawnDetached).not.toHaveBeenCalled();
+            expect(runElevated).toHaveBeenCalledTimes(1);
+            const [spawnedCmd, ...spawnedArgs] = runElevated.mock.calls[0]![0];
             // Non-root → cmd is pkexec; systemd-run is the first arg
             expect(spawnedCmd).toMatch(/pkexec$/);
             expect(spawnedArgs[0]).toMatch(/systemd-run$/);
@@ -1583,10 +1607,48 @@ describe('ServiceApi', () => {
             expect(spawnedArgs).toContain('system');
             expect(spawnedArgs).toContain(WS_SCRCPY_SERVICE_NAME);
 
+            // installMode moves to local only once the prompt was authorised.
+            expect(modeWhileElevating).toBe('system-service');
+            expect(Config.getInstance().getAppConfig().installMode).toBe('system');
+
             expect((res as any).getStatus()).toBe(200);
             const body = JSON.parse((res as any).getBody());
             expect(body.ok).toBe(true);
             expect(body.status).toBe('shutting-down');
+            expect(body.installMode).toBe('system');
+        });
+
+        it('a declined system-scope uninstall prompt leaves installMode system-service and answers 403 uac-declined', async () => {
+            // GNOME exits 126 on a cancel (KDE's 127 is covered by pkexecDeclined's own tests).
+            const runElevated = vi.fn<CommandRunner>(async () => ({ code: 126, stdout: '', stderr: '' }));
+            const { api } = nonRootSystemUninstall(runElevated);
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            expect(Config.getInstance().getAppConfig().installMode).toBe('system-service');
+            expect((res as any).getStatus()).toBe(403);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.reason).toBe('uac-declined');
+            expect(body.status).toBeUndefined();
+        });
+
+        it('a failed system-scope teardown launch leaves installMode system-service and answers 500 with the stderr', async () => {
+            const runElevated = vi.fn<CommandRunner>(async () => ({
+                code: 1,
+                stdout: '',
+                stderr: 'Failed to start transient service unit: Unit wsscrcpy-teardown-1.service already exists.',
+            }));
+            const { api } = nonRootSystemUninstall(runElevated);
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            expect(Config.getInstance().getAppConfig().installMode).toBe('system-service');
+            expect((res as any).getStatus()).toBe(500);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.reason).toBe('servy-failure');
+            expect(body.error).toContain('Failed to start transient service unit');
         });
 
         it('schedules a prompt local-instance exit on Linux user-scope install (handoff frees the lock)', async () => {
