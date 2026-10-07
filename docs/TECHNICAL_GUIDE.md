@@ -602,6 +602,8 @@ export interface StreamHandle {
 
 Calling `startStream()` a second time on the same container without first calling `stop()` throws `Error('container already has an active stream; call stop() first')`.
 
+Calling it with a missing or non-string `deviceId` throws `Error('startStream: deviceId is required')` synchronously and returns no handle; `onError` does not fire for it.
+
 ### 6.5 Lifecycle Callbacks
 
 - **`onConnect(info)`** fires once, as soon as session metadata is received. `info` contains the actual resolved `codec`, `encoder`, and `resolution` strings. Note: this fires at metadata receipt, not first decoded frame — the codebase has no first-frame signal today. This is a deliberate simplification. A future `onFirstFrame` callback would be a non-breaking addition.
