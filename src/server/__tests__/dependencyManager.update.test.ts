@@ -1,9 +1,12 @@
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyManager } from '../DependencyManager';
+
+const sha256 = (data: string) => createHash('sha256').update(data).digest('hex');
 
 /**
  * End-to-end coverage for the "scrcpy-server update loop" bug:
@@ -22,15 +25,18 @@ describe('DependencyManager.update("scrcpy-server") — loop fix', () => {
     beforeEach(() => {
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-update-'));
 
-        // Stub fetch for both checkLatest (GitHub releases API) and the
-        // binary download. Both go through global fetch.
+        // Stub fetch for checkLatest (GitHub releases API), the release's
+        // SHA256SUMS.txt and the binary download. All go through global fetch.
         fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (input: string | URL | Request) => {
-            const url = typeof input === 'string' ? input : input.toString();
-            if (url.includes('api.github.com')) {
+            const url = new URL(typeof input === 'string' ? input : input.toString());
+            if (url.hostname === 'api.github.com') {
                 return new Response(JSON.stringify({ tag_name: 'v4.0' }), {
                     status: 200,
                     headers: { 'content-type': 'application/json' },
                 });
+            }
+            if (url.pathname.endsWith('/SHA256SUMS.txt')) {
+                return new Response(`${sha256('fake-v4.0-jar-bytes')}  scrcpy-server-v4.0\n`, { status: 200 });
             }
             // Binary download — return synthetic v4.0 bytes
             return new Response('fake-v4.0-jar-bytes', { status: 200 });
@@ -123,12 +129,15 @@ describe('DependencyManager.update() has no launcher gate', () => {
             },
         };
         const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (input) => {
-            const url = typeof input === 'string' ? input : input.toString();
-            if (url.includes('api.github.com')) {
+            const url = new URL(typeof input === 'string' ? input : input.toString());
+            if (url.hostname === 'api.github.com') {
                 return new Response(JSON.stringify({ tag_name: 'v4.0' }), {
                     status: 200,
                     headers: { 'content-type': 'application/json' },
                 });
+            }
+            if (url.pathname.endsWith('/SHA256SUMS.txt')) {
+                return new Response(`${sha256('fake-jar-bytes')}  scrcpy-server-v4.0\n`, { status: 200 });
             }
             return new Response('fake-jar-bytes', { status: 200 });
         });

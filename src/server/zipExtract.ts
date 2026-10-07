@@ -3,7 +3,7 @@
  * bundle by webpack.
  *
  * Why this exists: the dependency manager has to unpack two ZIPs (Google's
- * `platform-tools-latest-<os>.zip` and, on Windows, the Node.js distribution).
+ * `platform-tools_r<version>-<os>.zip` and, on Windows, the Node.js distribution).
  * It used to shell out to PowerShell `Expand-Archive` / system `unzip`, which
  * resolved binaries via `PATH`, so the host chose what ran. That was
  * replaced by shelling out to the Rust launcher's `--unzip` subcommand, which
