@@ -12,6 +12,18 @@ import { buildMultiplexUrl } from './multiplexConnection';
 
 const TAG = '[ShellModal]';
 
+// "could not reach 10.0.0.5:8000 (code 1006)": the host and port the socket
+// dialled, plus the close code (and reason) when a close event reported one.
+function describeUnreachable(socketUrl: string, event?: CloseEvent): string {
+    const { hostname, port, protocol } = new URL(socketUrl);
+    const target = `${hostname}:${port || (protocol === 'wss:' ? '443' : '80')}`;
+    let detail = '';
+    if (event?.code) {
+        detail = event.reason ? ` (code ${event.code}: ${event.reason})` : ` (code ${event.code})`;
+    }
+    return `could not reach ${target}${detail}`;
+}
+
 export class ShellModal extends Modal {
     private term?: Terminal | undefined;
     private fitAddon?: FitAddon | undefined;
@@ -77,7 +89,9 @@ export class ShellModal extends Modal {
             this.close();
             return;
         }
-        ShellCloseConfirmModal.confirm().then((confirmed) => {
+        // A child of this modal: if the shell modal closes some other way first,
+        // the confirm closes with it and the answer reads false.
+        this.askChild(() => ShellCloseConfirmModal.confirm(), false).then((confirmed) => {
             if (confirmed) this.close();
         });
     }
@@ -128,7 +142,7 @@ export class ShellModal extends Modal {
         this.bodyEl.innerHTML = '';
         this.bodyEl.appendChild(errorEl);
         // Close after 4s (long enough to read, short enough not to feel stuck).
-        setTimeout(() => this.close(), 4000);
+        this.closeAfter(4000);
     }
 
     private connect(terminalContainer: HTMLElement): void {
@@ -157,14 +171,42 @@ export class ShellModal extends Modal {
 
         // Create a channel for the shell
         const channelData = new TextEncoder().encode(ChannelCode.SHEL);
-        this.ws = multiplexer.createChannel(channelData);
+        const channel = multiplexer.createChannel(channelData);
+        this.ws = channel;
+        // The socket actually dialled, which names the host in the message.
+        const socketUrl = multiplexer.ws.url || url;
 
-        this.ws.addEventListener('open', () => {
+        // A host that does not answer never opens the channel: the shared
+        // socket fails and the multiplexer passes its error and close on to
+        // every channel. Report that once, and only while this channel is
+        // still the modal's (onBeforeClose clears this.ws on a deliberate close).
+        let opened = false;
+        let failed = false;
+        const failBeforeOpen = (event?: CloseEvent): void => {
+            if (opened || failed || this.ws !== channel) {
+                return;
+            }
+            failed = true;
+            this.showConnectError(describeUnreachable(socketUrl, event));
+        };
+
+        channel.addEventListener('open', () => {
+            opened = true;
             this.initTerminal(terminalContainer);
         });
 
-        this.ws.addEventListener('close', (event: CloseEvent) => {
+        // A browser follows a failed socket's error with its close, which
+        // carries the code; wait a tick for it before reporting without one.
+        channel.addEventListener('error', () => {
+            setTimeout(() => failBeforeOpen(), 0);
+        });
+
+        channel.addEventListener('close', (event: CloseEvent) => {
             console.log(TAG, `Connection closed: ${event.reason}`);
+            if (!opened) {
+                failBeforeOpen(event);
+                return;
+            }
             if (this.term) {
                 this.term.dispose();
                 this.term = undefined;

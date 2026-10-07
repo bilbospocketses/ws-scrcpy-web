@@ -77,11 +77,22 @@ export class ConfirmModal extends Modal {
         this.resolveAndClose(false);
     }
 
+    // Closed without an answer (the dialog that opened it closed first): settle
+    // as cancel, so the caller is not left awaiting a dialog that is gone.
+    protected override onBeforeClose(): void {
+        this.settle(false);
+    }
+
     private resolveAndClose(value: boolean): void {
+        if (this.resolved) return;
+        this.settle(value);
+        this.close(value);
+    }
+
+    private settle(value: boolean): void {
         if (this.resolved) return;
         this.resolved = true;
         this.resolveFn?.(value);
         this.resolveFn = null;
-        this.close(value);
     }
 }

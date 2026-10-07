@@ -458,6 +458,49 @@ describe('buildInstallAllUsersControl', () => {
         expect(note.hidden).toBe(false);
         expect(note.textContent).toMatch(/install/i);
     });
+
+    // Smoke 14.10: cancelling the polkit prompt is a decline, not a failure.
+    it('a 403 uac-declined says privileges were declined and frees the button', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 403,
+            json: () =>
+                Promise.resolve({
+                    ok: false,
+                    error: 'authentication was dismissed or not authorized. install-system-wide cancelled.',
+                    reason: 'uac-declined',
+                }),
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const reload = vi.fn();
+
+        const { button, note } = buildInstallAllUsersControl({ reload });
+        button.click();
+        await flush();
+
+        expect(reload).not.toHaveBeenCalled();
+        expect(note.hidden).toBe(false);
+        expect(note.textContent).toBe('Administrative privileges were declined. Try again and approve the prompt.');
+        expect(button.disabled).toBe(false);
+        expect(button.textContent).toBe('install');
+    });
+
+    it('any other failure keeps the "install failed" line', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 500,
+            json: () =>
+                Promise.resolve({ ok: false, error: 'pkexec install-system-wide failed: x', reason: 'unknown' }),
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { button, note } = buildInstallAllUsersControl({ reload: vi.fn() });
+        button.click();
+        await flush();
+
+        expect(note.textContent).toBe('install failed — see the server logs and try again.');
+        expect(button.disabled).toBe(false);
+    });
 });
 
 describe('buildUninstallControl', () => {

@@ -1,3 +1,4 @@
+import { liveStreams } from '../liveStreams';
 import { writeFileAtomicSync } from '../util/atomicFile';
 
 /**
@@ -31,6 +32,9 @@ export function scheduleRestartForPortChange(
     // to fully flush over the socket.
     const handle = schedule(() => {
         log.info('port change committed; exiting with 75 to trigger restart');
+        // The exit ends every open stream; close them as a deliberate stop
+        // (1001) so a viewer is not told the stream failed. See liveStreams.ts.
+        liveStreams.closeAllForShutdown();
         exit(75);
     }, 1000);
     // The real setTimeout's return value supports unref (don't let this lone
