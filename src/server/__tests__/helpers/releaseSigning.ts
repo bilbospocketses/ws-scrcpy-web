@@ -32,16 +32,24 @@ interface SignOptions {
 
 const bytes = (data: string | Uint8Array) => (typeof data === 'string' ? new TextEncoder().encode(data) : data);
 
-/** A v4 binary-document signature packet made by the primary key at `date`, with no validity check. */
-async function signUnchecked(privateKey: openpgp.PrivateKey, data: Uint8Array, date: Date): Promise<Uint8Array> {
+/**
+ * A v4 binary-document signature packet made by `keyPacket` (a secret primary
+ * key or subkey) at `date`, with no validity check at all: not the date, not
+ * the key flags, not the key's strength.
+ */
+export async function signPacketUnchecked(
+    keyPacket: openpgp.SecretKeyPacket | openpgp.SecretSubkeyPacket,
+    data: string | Uint8Array,
+    date: Date,
+): Promise<Uint8Array> {
     const packet = new openpgp.SignaturePacket();
     packet.signatureType = openpgp.enums.signature.binary;
     packet.hashAlgorithm = openpgp.enums.hash.sha512;
-    packet.publicKeyAlgorithm = privateKey.keyPacket.algorithm;
+    packet.publicKeyAlgorithm = keyPacket.algorithm;
     const literal = new openpgp.LiteralDataPacket();
     // Neither LiteralDataPacket.setBytes nor SignaturePacket.sign is in openpgp's public typings.
-    (literal as any).setBytes(data, openpgp.enums.literal.binary);
-    await (packet as any).sign(privateKey.keyPacket, literal, date, true, openpgp.config);
+    (literal as any).setBytes(bytes(data), openpgp.enums.literal.binary);
+    await (packet as any).sign(keyPacket, literal, date, true, openpgp.config);
     const list = new openpgp.PacketList<openpgp.SignaturePacket>();
     list.push(packet);
     return list.write();
@@ -51,21 +59,48 @@ async function signWith(
     privateKey: openpgp.PrivateKey,
     data: string | Uint8Array,
     opts: SignOptions = {},
+    signingKeyIDs?: openpgp.KeyID[],
 ): Promise<Uint8Array> {
     const date = opts.date ?? new Date();
-    if (opts.unchecked) return signUnchecked(privateKey, bytes(data), date);
+    if (opts.unchecked) {
+        return signPacketUnchecked(privateKey.keyPacket as openpgp.SecretKeyPacket, data, date);
+    }
     const message = await openpgp.createMessage({ binary: bytes(data) });
+    const ids = signingKeyIDs ? { signingKeyIDs } : {};
     if (opts.armored) {
         const armored = await openpgp.sign({
             message,
             signingKeys: privateKey,
+            ...ids,
             detached: true,
             format: 'armored',
             date,
         });
         return new TextEncoder().encode(armored);
     }
-    return openpgp.sign({ message, signingKeys: privateKey, detached: true, format: 'binary', date });
+    return openpgp.sign({ message, signingKeys: privateKey, ...ids, detached: true, format: 'binary', date });
+}
+
+export interface TestSignerOptions {
+    created?: Date;
+    expiresAfterSeconds?: number;
+    name?: string;
+    /** Sign with a signing SUBKEY, as scrcpy's key does, instead of the primary key. */
+    subkey?: boolean;
+    /**
+     * Re-self-sign the pinned key (and re-bind its subkeys) at this date, never
+     * expiring, the way a releaser renews a key. The pinned key then carries
+     * ONLY the new self-signatures, as the published Node.js keys do -- unless
+     * `keepOriginalSelfSignature`, which keeps the first ones beside them.
+     */
+    renewedAt?: Date;
+    keepOriginalSelfSignature?: boolean;
+    /**
+     * Add a revocation to the pinned key, of the primary key (`target` `key`,
+     * the default) or of its signing subkey: `compromised` is a hard
+     * revocation, `retired` a soft one.
+     */
+    revoked?: { date: Date; reason: 'compromised' | 'retired'; target?: 'key' | 'subkey' };
 }
 
 /**
@@ -75,12 +110,10 @@ async function signWith(
  * `expiresAfterSeconds` pins the PUBLIC key with that expiry while the signer
  * keeps a non-expiring copy of the same key material, so the test can sign on
  * either side of the pinned key's expiry -- openpgp refuses to sign with a key
- * it knows has expired.
+ * it knows has expired. Renewal and revocation, likewise, change only the
+ * pinned copy: the signer signs as the key stood when it was created.
  */
-export async function makeTestSigner(
-    label: string,
-    opts: { created?: Date; expiresAfterSeconds?: number; name?: string } = {},
-): Promise<TestSigner> {
+export async function makeTestSigner(label: string, opts: TestSignerOptions = {}): Promise<TestSigner> {
     const created = opts.created ?? new Date(Date.now() - 24 * 3600 * 1000);
     const userIDs = [{ name: opts.name ?? `${label} test signer`, email: 'test@example.invalid' }];
     const { privateKey } = await openpgp.generateKey({
@@ -88,6 +121,7 @@ export async function makeTestSigner(
         curve: 'ed25519Legacy',
         userIDs,
         date: created,
+        ...(opts.subkey ? { subkeys: [{ sign: true }] } : {}),
         format: 'object',
     });
     let pinned: openpgp.PublicKey = privateKey.toPublic();
@@ -101,11 +135,47 @@ export async function makeTestSigner(
         });
         pinned = reformatted.publicKey;
     }
+    if (opts.renewedAt) {
+        const renewed = (await openpgp.reformatKey({ privateKey, userIDs, date: opts.renewedAt, format: 'object' }))
+            .publicKey;
+        if (opts.keepOriginalSelfSignature) {
+            pinned.users[0]!.selfCertifications.push(...renewed.users[0]!.selfCertifications);
+            for (const [i, s] of pinned.subkeys.entries()) {
+                s.bindingSignatures.push(...renewed.subkeys[i]!.bindingSignatures);
+            }
+        } else {
+            pinned = renewed;
+        }
+    }
+    if (opts.revoked) {
+        const { reasonForRevocation } = openpgp.enums;
+        const flag =
+            opts.revoked.reason === 'retired' ? reasonForRevocation.keyRetired : reasonForRevocation.keyCompromised;
+        if (opts.revoked.target === 'subkey') {
+            const revoked = await privateKey.subkeys[0]!.revoke(
+                privateKey.keyPacket as openpgp.SecretKeyPacket,
+                { flag },
+                opts.revoked.date,
+            );
+            pinned.subkeys[0]!.revocationSignatures.push(...revoked.revocationSignatures);
+        } else {
+            const revoked = await openpgp.revokeKey({
+                key: privateKey,
+                reasonForRevocation: { flag },
+                date: opts.revoked.date,
+                format: 'object',
+            });
+            pinned.revocationSignatures.push(...revoked.publicKey.revocationSignatures);
+        }
+    }
+    // Round-trip, so the pinned key is exactly what its armor parses to.
+    pinned = await openpgp.readKey({ armoredKey: pinned.armor() });
     const fingerprint = pinned.getFingerprint().toUpperCase();
+    const signingKeyIDs = opts.subkey ? [privateKey.subkeys[0]!.getKeyID()] : undefined;
     return {
         fingerprint,
         keySet: { label, keys: [{ fingerprint, owner: userIDs[0]!.name, armored: pinned.armor() }] },
-        sign: (data, signOpts) => signWith(privateKey, data, signOpts),
+        sign: (data, signOpts) => signWith(privateKey, data, signOpts, signingKeyIDs),
     };
 }
 

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { PINNED_RELEASE_KEYS } from '../DependencyManager';
 import { NODE_RELEASE_KEYS, SCRCPY_RELEASE_KEYS } from '../release-keys/pinnedReleaseKeys';
 import { type ReleaseKeySet, ReleaseSignatureError, verifyDetachedSignature } from '../verifyOpenPgp';
-import { makeTestSigner } from './helpers/releaseSigning';
+import { makeTestSigner, signPacketUnchecked } from './helpers/releaseSigning';
 
 /**
  * M5: verifyDetachedSignature over a hash list's exact bytes. The throwaway-key
@@ -194,8 +194,24 @@ describe('verifyDetachedSignature with a throwaway key', () => {
                 verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet }),
             );
             expect(err.reason).toBe('bad-signature');
-            expect(err.message).toContain('no signature packet');
+            expect(err.message).toBe(
+                `${what}: signature does not verify (a packet that is not a signature) -- refusing to install`,
+            );
         }
+    });
+
+    it('refuses a file that parses but holds no packet at all', async () => {
+        // A lone marker packet (tag 10, "PGP"), which openpgp reads and drops.
+        const signer = await makeTestSigner('Node.js');
+        const marker = new Uint8Array([0xca, 0x03, 0x50, 0x47, 0x50]);
+        expect((await openpgp.readSignature({ binarySignature: marker })).packets).toHaveLength(0);
+
+        const err = await refusal(
+            verifyDetachedSignature({ what, data: enc(LIST), signature: marker, keySet: signer.keySet }),
+        );
+
+        expect(err.reason).toBe('bad-signature');
+        expect(err.message).toBe(`${what}: signature does not verify (no signature packet) -- refusing to install`);
     });
 
     it('refuses a signature by a signing subkey that has no valid binding signature', async () => {
@@ -301,6 +317,294 @@ describe('verifyDetachedSignature with a throwaway key', () => {
         );
     });
 
+    it('refuses a signature made while the key was expired, though the key was renewed since', async () => {
+        // The pinned key keeps BOTH self-signatures: the first, which let the
+        // key expire after 30 days, and the renewal a month after the signing.
+        const created = new Date('2020-01-01T00:00:00Z');
+        const signer = await makeTestSigner('Node.js', {
+            created,
+            expiresAfterSeconds: 30 * 24 * 3600,
+            renewedAt: new Date('2020-04-01T00:00:00Z'),
+            keepOriginalSelfSignature: true,
+        });
+        const signature = await signer.sign(LIST, { date: new Date('2020-03-01T00:00:00Z') });
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('a key that was not valid then (the key had expired by then)');
+    });
+});
+
+describe('verifyDetachedSignature under the key-renewal policy', () => {
+    const KEY_CREATED = new Date('2020-01-01T00:00:00Z');
+    const SIGNED = new Date('2020-02-01T00:00:00Z');
+    const RENEWED = new Date('2020-03-01T00:00:00Z');
+
+    /** The premise of each case: openpgp's own check, at the signing time, refuses it. */
+    async function expectOpenPgpRefuses(signature: Uint8Array, keySet: ReleaseKeySet): Promise<string> {
+        const result = await openpgp.verify({
+            message: await openpgp.createMessage({ binary: enc(LIST) }),
+            signature: await openpgp.readSignature({ binarySignature: signature }),
+            verificationKeys: await openpgp.readKey({ armoredKey: keySet.keys[0]!.armored }),
+            format: 'binary',
+        });
+        const err = await result.signatures[0]!.verified.then(
+            () => null,
+            (e: Error) => e,
+        );
+        expect(err).not.toBeNull();
+        return err!.message;
+    }
+
+    it('passes a signature made before the key was re-self-signed, as GnuPG does', async () => {
+        const signer = await makeTestSigner('Node.js', { created: KEY_CREATED, renewedAt: RENEWED });
+        const signature = await signer.sign(LIST, { date: SIGNED });
+        expect(await expectOpenPgpRefuses(signature, signer.keySet)).toContain(
+            'Signature creation time is in the future',
+        );
+
+        const result = await verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet });
+
+        expect(result.fingerprint).toBe(signer.fingerprint);
+        expect(result.created.toISOString()).toBe(SIGNED.toISOString());
+    });
+
+    it('passes a signing subkey whose only binding signature was made after the signature', async () => {
+        const signer = await makeTestSigner('scrcpy', { created: KEY_CREATED, renewedAt: RENEWED, subkey: true });
+        const signature = await signer.sign(LIST, { date: SIGNED });
+        expect(await expectOpenPgpRefuses(signature, signer.keySet)).toContain(
+            'Signature creation time is in the future',
+        );
+
+        const result = await verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet });
+
+        expect(result.fingerprint).toBe(signer.fingerprint);
+        expect(result.signingKeyFingerprint).not.toBe(signer.fingerprint);
+    });
+
+    it('refuses a renewed key that a hard revocation, made after the signature, revokes', async () => {
+        const signer = await makeTestSigner('Node.js', {
+            created: KEY_CREATED,
+            renewedAt: RENEWED,
+            revoked: { date: new Date('2020-04-01T00:00:00Z'), reason: 'compromised' },
+        });
+        const signature = await signer.sign(LIST, { date: SIGNED });
+        await expectOpenPgpRefuses(signature, signer.keySet);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('a key that was not valid then (the primary key is revoked)');
+    });
+
+    it('refuses a key retired (a soft revocation) before the signature was made', async () => {
+        const signer = await makeTestSigner('Node.js', {
+            created: KEY_CREATED,
+            revoked: { date: new Date('2020-01-15T00:00:00Z'), reason: 'retired' },
+        });
+        const signature = await signer.sign(LIST, { date: SIGNED });
+        await expectOpenPgpRefuses(signature, signer.keySet);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('a key that was not valid then (the primary key is revoked)');
+    });
+
+    it('passes a renewed key retired only after the signature was made: revocation is judged at the signing time', async () => {
+        const signer = await makeTestSigner('Node.js', {
+            created: KEY_CREATED,
+            renewedAt: RENEWED,
+            revoked: { date: new Date('2020-04-01T00:00:00Z'), reason: 'retired' },
+        });
+        const signature = await signer.sign(LIST, { date: SIGNED });
+        await expectOpenPgpRefuses(signature, signer.keySet);
+
+        const result = await verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet });
+
+        expect(result.fingerprint).toBe(signer.fingerprint);
+    });
+
+    it('refuses a renewed key whose signing subkey a hard revocation, made after the signature, revokes', async () => {
+        const signer = await makeTestSigner('scrcpy', {
+            created: KEY_CREATED,
+            renewedAt: RENEWED,
+            subkey: true,
+            revoked: { date: new Date('2020-04-01T00:00:00Z'), reason: 'compromised', target: 'subkey' },
+        });
+        const signature = await signer.sign(LIST, { date: SIGNED });
+        await expectOpenPgpRefuses(signature, signer.keySet);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('a key that was not valid then (the signing subkey is revoked)');
+    });
+
+    it('refuses a signing subkey that had expired before the signature, though its primary key had not', async () => {
+        const { privateKey } = await openpgp.generateKey({
+            type: 'ecc',
+            curve: 'ed25519Legacy',
+            userIDs: [{ name: 'expiring subkey' }],
+            subkeys: [{ sign: true, keyExpirationTime: 15 * 24 * 3600 }],
+            date: KEY_CREATED,
+            format: 'object',
+        });
+        const pinned = privateKey.toPublic();
+        const fingerprint = pinned.getFingerprint().toUpperCase();
+        const keySet = { label: 'scrcpy', keys: [{ fingerprint, owner: 'expiring subkey', armored: pinned.armor() }] };
+        const signature = await signPacketUnchecked(
+            privateKey.subkeys[0]!.keyPacket as openpgp.SecretSubkeyPacket,
+            LIST,
+            SIGNED,
+        );
+        await expectOpenPgpRefuses(signature, keySet);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('a key that was not valid then (the signing subkey had expired by then)');
+    });
+
+    it('refuses a primary key whose self-signature does not grant the signing flag', async () => {
+        const { privateKey } = await openpgp.generateKey({
+            type: 'ecc',
+            curve: 'ed25519Legacy',
+            userIDs: [{ name: 'certify-only primary' }],
+            date: KEY_CREATED,
+            format: 'object',
+        });
+        const user = privateKey.users[0]!;
+        const certifyOnly = new openpgp.SignaturePacket();
+        certifyOnly.signatureType = openpgp.enums.signature.certGeneric;
+        certifyOnly.hashAlgorithm = openpgp.enums.hash.sha512;
+        certifyOnly.publicKeyAlgorithm = privateKey.keyPacket.algorithm;
+        (certifyOnly as any).keyFlags = [openpgp.enums.keyFlags.certifyKeys];
+        // SignaturePacket.sign is not in openpgp's public typings.
+        await (certifyOnly as any).sign(
+            privateKey.keyPacket,
+            { userID: user.userID, key: privateKey.keyPacket },
+            KEY_CREATED,
+            false,
+            openpgp.config,
+        );
+        const pinnedObject = privateKey.toPublic();
+        pinnedObject.users[0]!.selfCertifications = [certifyOnly];
+        const pinned = await openpgp.readKey({ armoredKey: pinnedObject.armor() });
+        const fingerprint = pinned.getFingerprint().toUpperCase();
+        const keySet = { label: 'Node.js', keys: [{ fingerprint, owner: 'certify-only', armored: pinned.armor() }] };
+        const signature = await signPacketUnchecked(privateKey.keyPacket as openpgp.SecretKeyPacket, LIST, SIGNED);
+        await expectOpenPgpRefuses(signature, keySet);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('a key that was not valid then (its self-signature does not allow signing)');
+    });
+
+    it('refuses a subkey whose binding signature does not grant the signing flag', async () => {
+        // An RSA subkey bound for encryption only: RSA can sign, so the packet
+        // verifies over the bytes, but the binding never allowed it to.
+        const { privateKey } = await openpgp.generateKey({
+            type: 'rsa',
+            rsaBits: 2048,
+            userIDs: [{ name: 'encrypt-only subkey signer' }],
+            date: KEY_CREATED,
+            format: 'object',
+        });
+        const subkey = privateKey.subkeys[0]!;
+        const pinned = privateKey.toPublic();
+        const fingerprint = pinned.getFingerprint().toUpperCase();
+        const keySet = { label: 'Node.js', keys: [{ fingerprint, owner: 'encrypt-only', armored: pinned.armor() }] };
+        const signature = await signPacketUnchecked(subkey.keyPacket as openpgp.SecretSubkeyPacket, LIST, SIGNED);
+        await expectOpenPgpRefuses(signature, keySet);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain(
+            'a key that was not valid then (its subkey binding signature does not allow signing)',
+        );
+    });
+
+    it('refuses a signing subkey whose binding signature carries no back-signature', async () => {
+        // The binding grants the signing flag but lacks the subkey's embedded
+        // signature over the primary, so nothing shows the subkey agreed to it.
+        const { privateKey } = await openpgp.generateKey({
+            type: 'ecc',
+            curve: 'ed25519Legacy',
+            userIDs: [{ name: 'no back-signature' }],
+            subkeys: [{ sign: true }],
+            date: KEY_CREATED,
+            format: 'object',
+        });
+        const subkey = privateKey.subkeys[0]!;
+        const binding = new openpgp.SignaturePacket();
+        binding.signatureType = openpgp.enums.signature.subkeyBinding;
+        binding.hashAlgorithm = openpgp.enums.hash.sha512;
+        binding.publicKeyAlgorithm = privateKey.keyPacket.algorithm;
+        (binding as any).keyFlags = [openpgp.enums.keyFlags.signData];
+        // SignaturePacket.sign is not in openpgp's public typings.
+        await (binding as any).sign(
+            privateKey.keyPacket,
+            { key: privateKey.keyPacket, bind: subkey.keyPacket },
+            KEY_CREATED,
+            false,
+            openpgp.config,
+        );
+        const pinnedObject = privateKey.toPublic();
+        pinnedObject.subkeys[0]!.bindingSignatures = [binding];
+        const pinned = await openpgp.readKey({ armoredKey: pinnedObject.armor() });
+        expect(pinned.subkeys[0]!.bindingSignatures[0]!.embeddedSignature).toBeNull();
+        const fingerprint = pinned.getFingerprint().toUpperCase();
+        const keySet = { label: 'Node.js', keys: [{ fingerprint, owner: 'no back-sig', armored: pinned.armor() }] };
+        const signature = await signPacketUnchecked(subkey.keyPacket as openpgp.SecretSubkeyPacket, LIST, SIGNED);
+        expect(await expectOpenPgpRefuses(signature, keySet)).toContain('Missing embedded signature');
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain(
+            'a key that was not valid then (its subkey binding signature has no valid back-signature)',
+        );
+    });
+
+    it("refuses a key openpgp's requirements call too weak (1024-bit RSA)", async () => {
+        const weak = { ...openpgp.config, minRSABits: 1024 };
+        const { privateKey } = await openpgp.generateKey({
+            type: 'rsa',
+            rsaBits: 1024,
+            userIDs: [{ name: 'weak signer' }],
+            date: KEY_CREATED,
+            format: 'object',
+            config: weak,
+        });
+        const pinned = privateKey.toPublic();
+        const fingerprint = pinned.getFingerprint().toUpperCase();
+        const keySet = { label: 'Node.js', keys: [{ fingerprint, owner: 'weak', armored: pinned.armor() }] };
+        const signature = await signPacketUnchecked(privateKey.keyPacket as openpgp.SecretKeyPacket, LIST, SIGNED);
+        await expectOpenPgpRefuses(signature, keySet);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: enc(LIST), signature, keySet }));
+
+        expect(err.reason).toBe('key-not-valid');
+        expect(err.message).toContain('RSA keys shorter than 2047 bits are considered too weak');
+    });
+
+    it('refuses a renewed key whose signature does not verify over these bytes, as a bad signature', async () => {
+        const signer = await makeTestSigner('Node.js', { created: KEY_CREATED, renewedAt: RENEWED });
+        const signature = await signer.sign(LIST, { date: SIGNED });
+        const tampered = enc(LIST);
+        tampered[0] = 'c'.charCodeAt(0);
+
+        const err = await refusal(verifyDetachedSignature({ what, data: tampered, signature, keySet: signer.keySet }));
+
+        expect(err.reason).toBe('bad-signature');
+    });
+});
+
+describe('verifyDetachedSignature pinned-set integrity', () => {
     it('refuses a pinned entry whose armored key is not the fingerprint recorded beside it', async () => {
         const a = await makeTestSigner('Node.js');
         const b = await makeTestSigner('Node.js');
@@ -375,27 +679,65 @@ describe('verifyDetachedSignature against the real published files and the pinne
         expect(result.created.toISOString()).toBe('2025-06-09T21:48:06.000Z');
     });
 
-    it("does NOT verify v24.9.0, signed by Michaël Zasso's retired key before its current self-signature", async () => {
-        // openpgp 6 judges the key at the signature's creation time, and this
-        // key carries no self-signature that old: the one it carries now was
-        // made later. GnuPG accepts the file. The updater offers only the
-        // newest LTS line's latest release, so this refusal reaches no user
-        // today -- but it is what an older release by such a key gets.
-        const retired = NODE_RELEASE_KEYS.find((k) => k.fingerprint === '8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600');
-        expect(retired?.status).toBe('retired');
+    // Two releases signed BEFORE their key's current self-signature was made:
+    // openpgp 6 alone refuses both ("Signature creation time is in the
+    // future"), GnuPG accepts both, and the key-renewal policy accepts both.
+    for (const { version, fingerprint, status, owner, signed } of [
+        {
+            version: 'v24.9.0',
+            fingerprint: '8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600',
+            status: 'retired',
+            owner: 'Michaël Zasso',
+            signed: '2025-09-25T19:48:32.000Z',
+        },
+        {
+            version: 'v24.0.2',
+            fingerprint: '890C08DB8579162FEE0DF9DB8BEAB4DFCF555EF4',
+            status: 'active',
+            owner: 'Rafael Gonzaga',
+            signed: '2025-05-14T21:11:07.000Z',
+        },
+    ] as const) {
+        it(`verifies ${version}, signed by ${owner}'s ${status} key before its current self-signature`, async () => {
+            const pinned = NODE_RELEASE_KEYS.find((k) => k.fingerprint === fingerprint)!;
+            expect(pinned.status).toBe(status);
+            const data = fixture(`node-${version}-SHASUMS256.txt`);
+            const signature = fixture(`node-${version}-SHASUMS256.txt.sig`);
+            // The premise: openpgp's own check refuses it.
+            const strict = await openpgp.verify({
+                message: await openpgp.createMessage({ binary: data }),
+                signature: await openpgp.readSignature({ binarySignature: signature }),
+                verificationKeys: await openpgp.readKey({ armoredKey: pinned.armored }),
+                format: 'binary',
+            });
+            await expect(strict.signatures[0]!.verified).rejects.toThrow('Signature creation time is in the future');
 
-        const err = await refusal(
-            verifyDetachedSignature({
-                what: 'Node.js SHASUMS256.txt for v24.9.0',
-                data: fixture('node-v24.9.0-SHASUMS256.txt'),
-                signature: fixture('node-v24.9.0-SHASUMS256.txt.sig'),
+            const result = await verifyDetachedSignature({
+                what: `Node.js SHASUMS256.txt for ${version}`,
+                data,
+                signature,
                 keySet: PINNED_RELEASE_KEYS.nodejs,
-            }),
-        );
+            });
 
-        expect(err.reason).toBe('key-not-valid');
-        expect(err.message).toContain('8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600');
-        expect(err.message).toContain('Signature creation time is in the future');
+            expect(result.fingerprint).toBe(fingerprint);
+            expect(result.created.toISOString()).toBe(signed);
+        });
+    }
+
+    it('still refuses either renewed-key release changed by one byte', async () => {
+        for (const version of ['v24.9.0', 'v24.0.2']) {
+            const data = fixture(`node-${version}-SHASUMS256.txt`);
+            data[10]! ^= 1;
+            const err = await refusal(
+                verifyDetachedSignature({
+                    what: version,
+                    data,
+                    signature: fixture(`node-${version}-SHASUMS256.txt.sig`),
+                    keySet: PINNED_RELEASE_KEYS.nodejs,
+                }),
+            );
+            expect(err.reason, version).toBe('bad-signature');
+        }
     });
 
     it("refuses scrcpy's real list against Node's keys: right signature, wrong publisher", async () => {

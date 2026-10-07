@@ -156,12 +156,201 @@ function pinnedSignerOf(keys: readonly ParsedKey[], packet: OpenPgp.SignaturePac
 }
 
 /**
+ * The value `valueAt` yields at the time NEAREST `created` at which it yields
+ * one: at `created` itself if it can, else at the earliest of `later` (the
+ * creation times of the signatures it judges) after `created`.
+ */
+async function nearestValid<T>(
+    created: Date,
+    later: readonly (Date | null)[],
+    valueAt: (at: Date) => Promise<T>,
+): Promise<T | undefined> {
+    const times = [
+        ...new Set(later.filter((d): d is Date => d instanceof Date && d > created).map((d) => d.getTime())),
+    ].sort((a, b) => a - b);
+    for (const at of [created.getTime(), ...times]) {
+        try {
+            return await valueAt(new Date(at));
+        } catch {
+            // Not valid at that time; try the next.
+        }
+    }
+    return undefined;
+}
+
+/** The newest of `signatures` that `check` accepts, as openpgp picks a self-signature or binding. */
+async function latestValid(
+    signatures: readonly OpenPgp.SignaturePacket[],
+    check: (signature: OpenPgp.SignaturePacket) => Promise<void>,
+): Promise<OpenPgp.SignaturePacket> {
+    let latest: OpenPgp.SignaturePacket | undefined;
+    for (const signature of signatures) {
+        try {
+            await check(signature);
+        } catch {
+            continue;
+        }
+        if (!latest || signature.created! >= latest.created!) latest = signature;
+    }
+    if (!latest) throw new Error('no valid signature');
+    return latest;
+}
+
+/** Whether the key expiry `signature` sets for `keyPacket` had passed by `date` (openpgp's own arithmetic). */
+function expiredBy(keyPacket: OpenPgp.AnyKeyPacket, signature: OpenPgp.SignaturePacket, date: Date): boolean {
+    if (signature.keyNeverExpires !== false) return false;
+    const expiry = keyPacket.created.getTime() + (signature.keyExpirationTime ?? 0) * 1000;
+    return expiry !== 0 && date.getTime() >= expiry;
+}
+
+/** openpgp's `validateSigningKeyPacket`: a signing algorithm, and key flags that allow signing. */
+function maySign(openpgp: OpenPgpModule, keyPacket: OpenPgp.AnyKeyPacket, signature: OpenPgp.SignaturePacket): boolean {
+    const { publicKey } = openpgp.enums;
+    const signing = [
+        publicKey.rsaEncryptSign,
+        publicKey.rsaSign,
+        publicKey.dsa,
+        publicKey.ecdsa,
+        publicKey.eddsaLegacy,
+        publicKey.ed25519,
+        publicKey.ed448,
+    ];
+    if (!signing.includes(keyPacket.algorithm)) return false;
+    if (!signature.keyFlags) return openpgp.config.allowMissingKeyFlags;
+    return (signature.keyFlags[0]! & openpgp.enums.keyFlags.signData) !== 0;
+}
+
+/** openpgp's `checkKeyRequirements`: why the key is too weak for its config, or null. */
+function weakKey(openpgp: OpenPgpModule, keyPacket: OpenPgp.AnyKeyPacket): string | null {
+    const { config, enums } = openpgp;
+    const info = keyPacket.getAlgorithmInfo();
+    if (config.rejectPublicKeyAlgorithms.has(keyPacket.algorithm))
+        return `${info.algorithm} keys are considered too weak`;
+    switch (keyPacket.algorithm) {
+        case enums.publicKey.rsaEncryptSign:
+        case enums.publicKey.rsaSign:
+        case enums.publicKey.rsaEncrypt:
+            return (info.bits ?? 0) < config.minRSABits
+                ? `RSA keys shorter than ${config.minRSABits} bits are considered too weak`
+                : null;
+        case enums.publicKey.ecdsa:
+        case enums.publicKey.eddsaLegacy:
+        case enums.publicKey.ecdh:
+            return info.curve && config.rejectCurves.has(info.curve as unknown as OpenPgp.enums.curve)
+                ? `${info.algorithm} keys using curve ${info.curve} are disabled`
+                : null;
+        default:
+            return null;
+    }
+}
+
+/**
+ * The key-renewal policy (user decision, 2026-10-07): accept a signature the
+ * way GnuPG does when the pinned key was re-self-signed AFTER it was made.
+ *
+ * openpgp 6 judges a key at the signature's creation time using only the
+ * self-signatures and subkey bindings that existed then. Publishers renew
+ * their keys -- a new self-signature, usually to move the expiry -- and the key
+ * they publish keeps only the newest, so everything signed before the renewal
+ * is refused as "Signature creation time is in the future". In October 2026
+ * that was 53 of the 163 Node.js releases from v20.0.0 on.
+ *
+ * This runs only after openpgp's strict check refused and the packet has
+ * verified over the exact bytes on its own. It judges the key from the
+ * self-signature (and, for a subkey, the binding) NEAREST the signing time:
+ * the newest one already made by then -- exactly what openpgp judged by -- or,
+ * when there is none, the oldest one made after it, the first thing the key
+ * holder said about the key after signing. Every check below must pass:
+ *   - existed     the primary key, and the signing subkey, were created at or
+ *                 before the signature;
+ *   - not revoked no revocation of the primary key or the subkey was in force
+ *                 at the signing time: a hard one (compromise, or no reason)
+ *                 counts whenever it was made, as openpgp counts it, a soft one
+ *                 (retired, superseded) only if it was made by then;
+ *   - not expired the key expiry that self-signature, or binding, sets falls
+ *                 after the signature;
+ *   - may sign    for the primary key, that self-signature's key flags; for a
+ *                 subkey, a valid binding signature (made at any date) with the
+ *                 signing flag and a valid back-signature;
+ *   - not weak    openpgp's own key requirements (rejected algorithms and
+ *                 curves, minimum RSA size).
+ * A key with direct-key signatures is not judged here (none of the pinned keys
+ * has one), so it is refused as openpgp refused it.
+ *
+ * Returns why the key was not valid when it signed, or null when it was.
+ */
+async function whyKeyWasNotValidAt(
+    openpgp: OpenPgpModule,
+    key: OpenPgp.PublicKey,
+    signingKey: OpenPgp.PublicKey | OpenPgp.Subkey,
+    created: Date,
+): Promise<string | null> {
+    const { config, enums } = openpgp;
+    const primary = key.keyPacket;
+    const subkey = signingKey === key ? null : (signingKey as OpenPgp.Subkey);
+
+    if (primary.created > created || signingKey.getCreationTime() > created) {
+        return 'the key did not exist yet';
+    }
+
+    // `isRevoked` with no signature asks about the key itself, at `created`.
+    if (await key.isRevoked(undefined, undefined, created, config)) return 'the primary key is revoked';
+    const anySignature = undefined as unknown as OpenPgp.SignaturePacket;
+    if (subkey && (await subkey.isRevoked(anySignature, primary, created, config))) {
+        return 'the signing subkey is revoked';
+    }
+
+    if (primary.version !== 4 || ((key as { directSignatures?: unknown[] }).directSignatures ?? []).length > 0) {
+        return 'renewal is judged only for v4 keys without direct-key signatures';
+    }
+    const selfSignature = await nearestValid(
+        created,
+        key.users.flatMap((u) => u.selfCertifications.map((s) => s.created)),
+        async (at) => (await key.getPrimaryUser(at, undefined, config)).selfCertification,
+    );
+    if (!selfSignature) return 'it carries no valid self-signature';
+    if (expiredBy(primary, selfSignature, created)) return 'the key had expired by then';
+
+    if (subkey) {
+        const bound = { key: primary, bind: subkey.keyPacket };
+        const found = await nearestValid(
+            created,
+            subkey.bindingSignatures.map((s) => s.created),
+            async (at) => ({
+                at,
+                binding: await latestValid(subkey.bindingSignatures, (s) =>
+                    s.verify(primary, enums.signature.subkeyBinding, bound, at, undefined, config),
+                ),
+            }),
+        );
+        if (!found) return 'it carries no valid subkey binding signature';
+        const { at, binding } = found;
+        if (!maySign(openpgp, subkey.keyPacket, binding)) return 'its subkey binding signature does not allow signing';
+        // The subkey's own back-signature, so a subkey cannot be claimed by a primary key it never agreed to.
+        const back = binding.embeddedSignature;
+        const backValid =
+            back !== null &&
+            (await back.verify(subkey.keyPacket, enums.signature.keyBinding, bound, at, undefined, config).then(
+                () => true,
+                () => false,
+            ));
+        if (!backValid) return 'its subkey binding signature has no valid back-signature';
+        if (expiredBy(subkey.keyPacket, binding, created)) return 'the signing subkey had expired by then';
+    } else if (!maySign(openpgp, primary, selfSignature)) {
+        return 'its self-signature does not allow signing';
+    }
+
+    return weakKey(openpgp, primary) ?? weakKey(openpgp, signingKey.keyPacket);
+}
+
+/**
  * Verifies a DETACHED signature (binary `.sig` or armored `.asc`) over the
  * exact bytes of `data` against one publisher's pinned keys.
  *
  * Returns the signer. Throws `ReleaseSignatureError` for:
  *   - bad-signature  the signature does not parse, holds no signature packet,
- *                    or does not verify over these bytes;
+ *                    holds a packet that is not a signature, or does not
+ *                    verify over these bytes;
  *   - unknown-key    a signature packet's claimed issuer is outside the pinned
  *                    set (the message carries the fingerprint or key ID it
  *                    claims, which nothing has authenticated), or it names no
@@ -169,10 +358,12 @@ function pinnedSignerOf(keys: readonly ParsedKey[], packet: OpenPgp.SignaturePac
  *   - key-not-valid  the pinned key was not valid when the signature says it
  *                    was made (expired, revoked, or not yet created then).
  *
- * A key that has EXPIRED SINCE is fine: openpgp checks the key at the
- * signature's creation time, which is what lets a retired Node.js releaser's
- * key still vouch for the releases it signed. (`missing-signature` is raised
- * by the caller, which is the one that knows the file was not there.)
+ * A key that has EXPIRED SINCE is fine: the key is judged at the signature's
+ * creation time, which is what lets a retired Node.js releaser's key still
+ * vouch for the releases it signed. So is a key RENEWED since, whose
+ * self-signature is newer than the signature: see `whyKeyWasNotValidAt`.
+ * (`missing-signature` is raised by the caller, which is the one that knows
+ * the file was not there.)
  *
  * Every signature packet must pass, not just one, so a file carrying a good
  * signature beside one by an unpinned key is refused rather than half-trusted.
@@ -207,7 +398,13 @@ export async function verifyDetachedSignature(args: {
         throw bad(`unreadable: ${(err as Error).message}`);
     }
     const packets = signature.packets.filter((p): p is OpenPgp.SignaturePacket => p instanceof openpgp.SignaturePacket);
-    if (packets.length === 0 || packets.length !== signature.packets.length) {
+    // A packet openpgp kept but could not parse as a signature (an unsupported
+    // version, say) is skipped by its verify(); refuse the file rather than let
+    // a good signature beside it carry it.
+    if (packets.length !== signature.packets.length) {
+        throw bad('a packet that is not a signature');
+    }
+    if (packets.length === 0) {
         throw bad('no signature packet');
     }
 
@@ -230,8 +427,9 @@ export async function verifyDetachedSignature(args: {
         );
     });
 
+    const message = await openpgp.createMessage({ binary: data });
     const result = await openpgp.verify({
-        message: await openpgp.createMessage({ binary: data }),
+        message,
         signature,
         verificationKeys: signers.map((s) => s.key),
         format: 'binary',
@@ -241,34 +439,44 @@ export async function verifyDetachedSignature(args: {
     if (result.signatures.length !== packets.length) {
         throw bad('a signature packet is not a document signature');
     }
+    const literal = message.packets.find((p): p is OpenPgp.LiteralDataPacket => p instanceof openpgp.LiteralDataPacket);
+    if (!literal) throw bad('no literal data to check against');
 
     let first: VerifiedSignature | undefined;
     // Each signer below is matched on an exact, non-wildcard key ID, so
-    // `getKeys` / `getSigningKey` with that ID find exactly that key.
+    // `getKeys` with that ID finds exactly that key.
     for (const [i, packet] of packets.entries()) {
         const signer = signers[i]!;
         const created = packet.created;
         if (!(created instanceof Date)) throw bad('the signature has no creation time');
+        const signingKey = signer.key.getKeys(packet.issuerKeyID)[0]!;
         try {
             await result.signatures[i]!.verified;
-        } catch (err) {
-            // openpgp checks the bytes first and the key's validity at the
-            // signature's creation time second, and reports both the same way.
-            // Ask the second question on its own to tell them apart.
-            const validity = await signer.key.getSigningKey(packet.issuerKeyID, created).then(
-                () => null,
-                (e: Error) => e,
-            );
-            if (validity) {
+        } catch {
+            // openpgp's strict check refused: the bytes, or the key as its
+            // self-signatures stood at the signing time. Decide it again under
+            // the key-renewal policy below, which asks the two questions apart.
+            try {
+                await packet.verify(
+                    signingKey.keyPacket,
+                    packet.signatureType!,
+                    literal,
+                    new Date(),
+                    true,
+                    openpgp.config,
+                );
+            } catch (err) {
+                throw bad((err as Error).message);
+            }
+            const why = await whyKeyWasNotValidAt(openpgp, signer.key, signingKey, created);
+            if (why) {
                 throw new ReleaseSignatureError(
                     'key-not-valid',
                     `${what} was signed on ${created.toISOString()} by ${signer.pinned.fingerprint} ` +
-                        `(${signer.pinned.owner}), a key that was not valid then (${validity.message}) ${REFUSE}`,
+                        `(${signer.pinned.owner}), a key that was not valid then (${why}) ${REFUSE}`,
                 );
             }
-            throw bad((err as Error).message);
         }
-        const signingKey = signer.key.getKeys(packet.issuerKeyID)[0]!;
         first ??= {
             fingerprint: signer.pinned.fingerprint.toUpperCase(),
             signingKeyFingerprint: signingKey.getFingerprint().toUpperCase(),
