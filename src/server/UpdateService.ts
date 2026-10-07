@@ -149,6 +149,13 @@ export class UpdateService {
      * the stop; a throw before it has nothing to cancel.
      */
     private streamsStoppedForApply = false;
+    /**
+     * True while an applyUpdate is running. A second apply is refused: two at
+     * once would race the swap and reset each other's streamsStoppedForApply.
+     * Cleared when an apply fails (it may be retried); a successful apply ends
+     * in process exit, so it stays set.
+     */
+    private applyInFlight = false;
     private readonly installRoot: string;
     private readonly platform: NodeJS.Platform;
     private readonly locator: VelopackLocatorConfig | undefined;
@@ -604,12 +611,17 @@ export class UpdateService {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
+        if (this.applyInFlight) {
+            throw new Error('apply already in progress');
+        }
+        this.applyInFlight = true;
         const mgr = this.mgr;
         const pendingUpdate = this.state.pendingUpdate;
         this.streamsStoppedForApply = false;
         try {
             return await this.applyByPath(mgr, pendingUpdate);
         } catch (err) {
+            this.applyInFlight = false;
             // A throw means no exit follows (UpdatesApi answers 403 or 500 and the
             // server keeps running). If the point of no return had already closed
             // the streams as a stop, new streams must be accepted again. A throw
@@ -636,7 +648,15 @@ export class UpdateService {
         // apply (item 39) — branched by installMode in the Linux block.
         if (isServiceMode && this.platform === 'win32') {
             await this.enterPointOfNoReturn();
-            mgr.waitExitThenApplyUpdate(pendingUpdate, true, false);
+            try {
+                mgr.waitExitThenApplyUpdate(pendingUpdate, true, false);
+            } catch (err) {
+                // The hand-off is not happening, so the markers written for it
+                // must not outlive this attempt (as on the local-mode and pkexec
+                // paths; see removeApplyHandoffMarkers).
+                await this.removeApplyHandoffMarkers();
+                throw err;
+            }
             return { redirectPort: null };
         }
 

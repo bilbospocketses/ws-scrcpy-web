@@ -183,6 +183,11 @@ describe('UpdateService', () => {
     });
 
     afterEach(() => {
+        // The stream registry is a module singleton: a failed apply test can leave
+        // a fake stream in it or the stop flag set, and that must not reach the
+        // next test.
+        liveStreams.closeAllForShutdown();
+        liveStreams.cancelStop();
         vi.unstubAllGlobals();
         readFileSpy?.mockRestore();
         Config._resetForTest();
@@ -1217,6 +1222,74 @@ describe('UpdateService', () => {
 
         expect(closed).toBe(1);
         expect(liveStreams.isStopping()).toBe(false);
+        // The hand-off did not happen, so its markers are gone too.
+        expect(fs.existsSync(Config.getInstance().applyUpdatePendingMarkerPath)).toBe(false);
+        expect(fs.existsSync(Config.getInstance().suppressBrowserOpenMarkerPath)).toBe(false);
+    });
+
+    it('applyUpdate: a failure before the point of no return leaves a stop it did not start alone', async () => {
+        // Only a stop this apply started is cancelled. A stop already under way
+        // (a stand-in for a real shutdown racing the apply) must stay in force.
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0') }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        // The verify manifest fails to write: a failure before the point of no return.
+        const manifestPath = Config.getInstance().applyUpdateVerifyManifestPath;
+        const realWriteFile = fs.promises.writeFile;
+        const writeSpy = vi
+            .spyOn(fs.promises, 'writeFile')
+            .mockImplementation((file, data, options) =>
+                file === manifestPath
+                    ? Promise.reject(new Error('EACCES: manifest not writable'))
+                    : realWriteFile(file, data, options),
+            );
+        liveStreams.closeAllForShutdown();
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(/manifest not writable/);
+        } finally {
+            writeSpy.mockRestore();
+        }
+
+        expect(liveStreams.isStopping()).toBe(true);
+    });
+
+    it('applyUpdate: a second apply while one is running is refused', async () => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user-service' });
+        const applyFn = vi.fn();
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockResolvedValue(undefined);
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () =>
+                fakeMgr({
+                    checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0'),
+                    waitExitThenApplyUpdate: applyFn,
+                }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            const first = svc.applyUpdate();
+            await expect(svc.applyUpdate()).rejects.toThrow(/already in progress/);
+            await first;
+        } finally {
+            killSpy.mockRestore();
+        }
+
+        expect(applyFn).toHaveBeenCalledTimes(1);
     });
 
     it('applyUpdate (windows local): a verify manifest that cannot be written fails the apply and closes no stream', async () => {
