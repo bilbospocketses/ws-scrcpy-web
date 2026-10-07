@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A stream opened just as the server is stopping now ends cleanly, and a stream closed while it was still starting no longer leaves scrcpy-server running or logs a false error.** In the moment between the server closing its open streams and actually going down, a newly opened stream still started, and the viewer saw "stream failed" when adb was stopped under it; it is now closed at once as a normal end, before anything starts. A stream closed while still starting (the viewer left, or the server is stopping) used to carry on launching scrcpy-server and opening connections that nothing closed until the app exited, and on a stop it logged "Failed to start session" as an error although nothing had failed. It now stops at its next step, closes what it had opened, and notes the abandoned start in the log as information (`src/server/liveStreams.ts`, `src/server/ScrcpyConnection.ts`).
+
 ## [0.1.30-beta.196] - 2026-10-07
 
 ### Fixed

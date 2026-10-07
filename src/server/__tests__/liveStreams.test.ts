@@ -63,4 +63,30 @@ describe('StreamRegistry', () => {
 
         expect(registry.closeAllForShutdown()).toBe(0);
     });
+
+    it('is stopping from the moment the open sessions are closed, so a later one can be refused', () => {
+        const registry = new StreamRegistry();
+        expect(registry.isStopping()).toBe(false);
+
+        registry.closeAllForShutdown();
+
+        expect(registry.isStopping()).toBe(true);
+    });
+
+    it('a sweep that finds no session still marks the stop', () => {
+        const registry = new StreamRegistry();
+
+        expect(registry.closeAllForShutdown()).toBe(0);
+
+        expect(registry.isStopping()).toBe(true);
+    });
+
+    it('a stop that did not happen accepts sessions again', () => {
+        const registry = new StreamRegistry();
+        registry.closeAllForShutdown();
+
+        registry.cancelStop();
+
+        expect(registry.isStopping()).toBe(false);
+    });
 });

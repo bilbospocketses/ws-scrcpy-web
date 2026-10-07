@@ -593,8 +593,25 @@ export class UpdateService {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
+        const mgr = this.mgr;
+        const pendingUpdate = this.state.pendingUpdate;
         await this.preApplyHygiene();
+        try {
+            return await this.applyAfterHygiene(mgr, pendingUpdate);
+        } catch (err) {
+            // Hygiene closed the open streams as a stop, but a throw here means
+            // no exit follows (UpdatesApi answers 500 and the server keeps
+            // running), so new streams must be accepted again. See liveStreams.ts.
+            liveStreams.cancelStop();
+            throw err;
+        }
+    }
 
+    /** Everything `applyUpdate` does once `preApplyHygiene` has run. */
+    private async applyAfterHygiene(
+        mgr: UpdateManagerLike,
+        pendingUpdate: UpdateInfo,
+    ): Promise<{ redirectPort: number | null }> {
         const installMode = Config.getInstance().getAppConfig().installMode;
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
 
@@ -610,7 +627,7 @@ export class UpdateService {
         // handoff below). Linux service mode falls through to the download-based
         // apply (item 39) — branched by installMode in the Linux block.
         if (isServiceMode && this.platform === 'win32') {
-            this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, false);
+            mgr.waitExitThenApplyUpdate(pendingUpdate, true, false);
             return { redirectPort: null };
         }
 
