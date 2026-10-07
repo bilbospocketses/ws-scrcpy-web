@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 import { SERVER_VERSION } from '../common/Constants';
+import { compareVersions } from '../common/DependencyTypes';
 import { Logger } from './Logger';
 import { isMkcertReleaseTag, mkcertUrlBases } from './mkcertProvenance';
 import { loadManifest } from './NodePtyResolver';
@@ -358,8 +359,21 @@ export function getDependencyDefinitions(
                     onRetry: (n) => log.warn(`scrcpy-server latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
                 });
                 const data = (await res.json()) as { tag_name: string };
-                return data.tag_name?.replace(/^v/, '') ?? null;
+                const tag = data.tag_name?.replace(/^v/, '') ?? null;
+                if (tag === null) return null;
+                // Offer only what this build speaks. ScrcpyConnection launches
+                // whichever version is installed, and the stream parser is
+                // written and tested against SERVER_VERSION; a newer release is
+                // reached through an app release that bumps it after testing
+                // (scrcpy v5.0 shipped 2026-10-05 against a 4.1 build). The
+                // lookup itself still runs, so refused / failed lookups keep
+                // their meaning for the fallback install and Settings.
+                return compareVersions(tag, SERVER_VERSION) > 0 ? SERVER_VERSION : tag;
             },
+            // Authoritative, so a server installed ABOVE the supported version
+            // (someone who took v5.0 before the cap) is offered the supported
+            // one back, instead of "newer than latest, stay put".
+            latestIsAuthoritative: true,
             getDownloadUrl: (version) => {
                 return `https://github.com/Genymobile/scrcpy/releases/download/v${version}/${scrcpyServerAssetName(version)}`;
             },
