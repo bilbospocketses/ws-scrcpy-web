@@ -89,7 +89,14 @@ vi.mock('../service/systemTools', async () => {
 });
 
 import type { ServiceInstallOptions } from '../service/ServiceClient';
-import { renderUnitFile, STAGED_SYSTEM_APPIMAGE, STAGED_SYSTEM_DIR, SystemdClient } from '../service/SystemdClient';
+import {
+    PkexecDeclinedError,
+    renderUnitFile,
+    runPkexec,
+    STAGED_SYSTEM_APPIMAGE,
+    STAGED_SYSTEM_DIR,
+    SystemdClient,
+} from '../service/SystemdClient';
 
 const baseOpts: ServiceInstallOptions = {
     name: 'WsScrcpyWeb',
@@ -416,5 +423,40 @@ describe('SystemdClient', () => {
             await client.restart('WsScrcpyWeb');
             expect(execFileMock.mock.calls[0]![1]).toEqual(['--user', 'restart', 'WsScrcpyWeb.service']);
         });
+    });
+});
+
+// Smoke 14.10: every handler that runs pkexec answers a declined prompt with
+// 403 uac-declined by checking for this one error type, so runPkexec must throw
+// it for exactly what pkexecDeclined calls a decline, and a plain Error otherwise.
+describe('runPkexec', () => {
+    function pkexecExits(code: number, stderr: string): void {
+        execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+            cb(Object.assign(new Error('Command failed: pkexec'), { code, stderr }), { stdout: '', stderr }),
+        );
+    }
+
+    beforeEach(() => {
+        execFileMock.mockReset();
+    });
+
+    it.each([
+        ['GNOME: exit 126', 126, ''],
+        ['KDE: exit 127 "Not authorized"', 127, 'Error executing command as another user: Not authorized\n'],
+    ])('%s throws PkexecDeclinedError', async (_label, code, stderr) => {
+        pkexecExits(code, stderr);
+        const err = await runPkexec('true', 'machine-wide-update').catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(PkexecDeclinedError);
+        expect((err as Error).message).toBe(
+            'authentication was dismissed or not authorized. machine-wide-update cancelled.',
+        );
+    });
+
+    it('a 127 naming a real error (no authentication agent) is a plain failure, not a decline', async () => {
+        pkexecExits(127, 'Error creating textual authentication agent: no tty\n');
+        const err = await runPkexec('true', 'machine-wide-update').catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(PkexecDeclinedError);
+        expect((err as Error).message).toMatch(/^pkexec machine-wide-update failed: Error creating textual/);
     });
 });

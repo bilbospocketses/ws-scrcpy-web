@@ -8,6 +8,7 @@ import { AdbClient } from '../AdbClient';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { liveStreams } from '../liveStreams';
+import { PkexecDeclinedError } from '../service/SystemdClient';
 import { stageSystemHelper } from '../service/systemHelper';
 import { type UpdateManagerLike, UpdateService } from '../UpdateService';
 import { betas, type FakeGithubApi, fakeGithubApi, release } from './helpers/fakeGithubReleases';
@@ -1586,6 +1587,63 @@ describe('UpdateService', () => {
             expect(cmdline).not.toContain('--relabel');
         },
     );
+
+    // Smoke 14.10: when the machine-wide update's pkexec does not run (the user
+    // cancelled the prompt, or it failed), nothing was swapped. The error reaches
+    // the caller unchanged, the update stays `ready` to try again, no helper is
+    // spawned, and the hand-off markers and the staged download are gone again:
+    // a lingering apply-update-pending makes the launcher's next exit skip the
+    // tray reap (see removeApplyHandoffMarkers).
+    it.each([
+        ['declined', new PkexecDeclinedError('machine-wide-update')],
+        ['failed', new Error('pkexec machine-wide-update failed: mv: cannot move')],
+    ])('applyUpdate (linux machine-wide-no-service): a %s pkexec changes nothing', async (_label, thrown) => {
+        const { createHash } = await import('crypto');
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'beta',
+            githubOwner: 'bilbospocketses',
+        });
+        const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
+        const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
+        const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+        const fetchFn = vi.fn(async (url: string) =>
+            url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
+        ) as unknown as typeof fetch;
+        const mgr = fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.31-beta.2') });
+        const pkexecMock = vi.fn<(shellCmd: string, label: string) => Promise<string>>(async () => {
+            throw thrown;
+        });
+        const spawnMock = vi.mocked(child_process.spawn);
+        spawnMock.mockClear();
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            fetchFn,
+            runPkexecFn: pkexecMock,
+        });
+        process.env['APPIMAGE'] = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+        svc.init();
+        await svc.checkForUpdates();
+        expect(svc.getStatus().status).toBe('ready');
+
+        await expect(svc.applyUpdate()).rejects.toBe(thrown);
+
+        expect(pkexecMock).toHaveBeenCalledTimes(1);
+        expect(spawnMock).not.toHaveBeenCalled();
+        expect(svc.getStatus().status).toBe('ready');
+        const cfg = Config.getInstance();
+        expect(fs.existsSync(cfg.applyUpdatePendingMarkerPath)).toBe(false);
+        expect(fs.existsSync(cfg.suppressBrowserOpenMarkerPath)).toBe(false);
+        const staged = pkexecMock.mock.calls[0]![0].match(/install -o root -g root -m 0755 '([^']+)'/)?.[1];
+        expect(staged).toMatch(/update-staging/);
+        expect(fs.existsSync(staged!)).toBe(false);
+    });
 
     // ── reconfigure ─────────────────────────────────────────────────────
 

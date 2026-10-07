@@ -1,4 +1,5 @@
 import type { UpdatesStatusResponse } from '../../common/UpdateEvents';
+import { isElevationDeclined, reasonToUserMessage } from './serviceFailureMessage';
 import { runUpgradingHandoff } from './UpgradingOverlay';
 
 /**
@@ -87,11 +88,18 @@ export function createUpdateButton(): HTMLElement {
         container.appendChild(label);
     }
 
-    function renderReady(availableVersion: string | undefined): void {
+    function renderReady(availableVersion: string | undefined, note?: string): void {
         container.replaceChildren();
         setState('state-ready');
         container.style.display = 'flex';
-        container.title = 'click to apply downloaded update';
+        container.title = note ?? 'click to apply downloaded update';
+
+        if (note) {
+            const label = document.createElement('span');
+            label.className = 'update-button-label';
+            label.textContent = note;
+            container.appendChild(label);
+        }
 
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -206,6 +214,13 @@ export function createUpdateButton(): HTMLElement {
                 btn.disabled = false;
                 btn.textContent = prevText;
                 applyInFlight = false;
+                if (await isElevationDeclined(r)) {
+                    // A cancelled polkit prompt on a machine-wide update (smoke
+                    // 14.10): nothing changed, the update is still ready. Say so
+                    // beside the same button; the next poll repaints the chip.
+                    renderReady(lastStatus?.availableVersion, reasonToUserMessage('uac-declined', ''));
+                    return;
+                }
                 // Re-poll to learn current state (probably 409 because state
                 // wasn't 'ready' anymore, or 503 dev mode).
                 void poll();

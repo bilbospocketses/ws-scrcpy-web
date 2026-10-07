@@ -8,6 +8,7 @@ import {
 } from './installHandoffPoll';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import { settingsService } from './SettingsService';
+import { reasonToUserMessage } from './serviceFailureMessage';
 
 export type WelcomeChoice = 'service' | 'on-demand';
 
@@ -331,7 +332,13 @@ export class WelcomeModal extends Modal {
             });
             const data = (await r.json().catch(() => null)) as ServiceInstallResponse | null;
             if (!r.ok || !data || data.ok !== true) {
-                const errMsg = data && data.ok === false ? data.error : `install failed (${r.status})`;
+                // A declined prompt gets Settings → Service's wording (smoke 14.10).
+                const errMsg =
+                    data && data.ok === false
+                        ? data.reason === 'uac-declined'
+                            ? reasonToUserMessage(data.reason, data.error)
+                            : data.error
+                        : `install failed (${r.status})`;
                 this.setStatus(errMsg, true);
                 this.setBusy(false);
                 return;

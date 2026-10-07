@@ -5,6 +5,7 @@ import { canSeeSection } from '../../adminGate';
 import { ConfirmModal } from '../../ConfirmModal';
 import { ResetConfirmModal } from '../../ResetConfirmModal';
 import { settingsService } from '../../SettingsService';
+import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMessage';
 import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
@@ -1505,7 +1506,10 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
                     opts.reload();
                     return;
                 }
-                note.textContent = 'install failed — see the server logs and try again.';
+                // A cancelled polkit prompt is a decline, not a failure (smoke 14.10).
+                note.textContent = (await isElevationDeclined(res))
+                    ? reasonToUserMessage('uac-declined', '')
+                    : 'install failed — see the server logs and try again.';
             } catch {
                 note.textContent = 'install failed — could not reach the server.';
             }
