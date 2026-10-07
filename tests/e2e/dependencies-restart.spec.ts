@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
@@ -23,7 +24,8 @@ import { logOffset, logSince, readServerLog } from './support/serverLog';
  *
  * Node.js is the one dependency whose update needs a restart, and nodejs.org
  * never offers a deterministic one, so `WS_SCRCPY_NODE_DIST_BASE` points Node's
- * release index and archive at a fixture this file serves on loopback. The
+ * release index, archive and SHASUMS256.txt at a fixture this file serves on
+ * loopback. The install still checks the archive against that list. The
  * fixture offers the runner's own Node with its patch raised by one, over an
  * installed `<major>.0.0`.
  *
@@ -58,6 +60,9 @@ const OFFERED = `${MAJOR}.${MINOR}.${PATCH + 1}`;
 const ARCH = process.arch === 'arm64' ? 'arm64' : 'x64';
 const ARCHIVE_DIR = `node-v${OFFERED}-linux-${ARCH}`;
 const ARCHIVE_PATH = `/v${OFFERED}/${ARCHIVE_DIR}.tar.gz`;
+// The install refuses an archive its SHASUMS256.txt does not vouch for, and
+// reads that list from the same base as the archive.
+const SHASUMS_PATH = `/v${OFFERED}/SHASUMS256.txt`;
 
 interface DependencyInfo {
     name: string;
@@ -72,12 +77,18 @@ function fakeNode(file: string, version: string): void {
     fs.writeFileSync(file, `#!/bin/sh\necho v${version}\n`, { mode: 0o755 });
 }
 
-/** nodejs.org's layout under one base: the release index and one archive. `hits` records every path asked for. */
+/**
+ * nodejs.org's layout under one base: the release index, one archive and its
+ * SHASUMS256.txt. `hits` records every path asked for.
+ */
 class FixtureNodeDist {
     readonly hits: string[] = [];
     private server?: Server;
+    private readonly shasums: string;
 
-    constructor(private readonly archive: Buffer) {}
+    constructor(private readonly archive: Buffer) {
+        this.shasums = `${createHash('sha256').update(archive).digest('hex')}  ${ARCHIVE_DIR}.tar.gz\n`;
+    }
 
     async start(): Promise<void> {
         this.server = createServer((req, res) => {
@@ -91,6 +102,11 @@ class FixtureNodeDist {
             if (url === ARCHIVE_PATH) {
                 res.writeHead(200, { 'content-type': 'application/gzip' });
                 res.end(this.archive);
+                return;
+            }
+            if (url === SHASUMS_PATH) {
+                res.writeHead(200, { 'content-type': 'text/plain' });
+                res.end(this.shasums);
                 return;
             }
             res.writeHead(404, { 'content-type': 'application/json' });
@@ -181,6 +197,7 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
             expect(update.status(), await update.text()).toBe(200);
             expect(await update.json()).toEqual({ success: true, newVersion: OFFERED, requiresRestart: true });
             expect(fixture.hits, 'the archive came from the fixture').toContain(ARCHIVE_PATH);
+            expect(fixture.hits, 'and was checked against the fixture SHASUMS256.txt').toContain(SHASUMS_PATH);
             // The update really landed: the version check ran the new binary.
             await expect(nodeRow.locator('td.dep-version').first()).toHaveText(OFFERED);
 

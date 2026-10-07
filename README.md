@@ -261,9 +261,11 @@ The Dependencies tab in Settings lets you check for updates and install them wit
 
 | Dependency | What it does | How it updates |
 |------------|-------------|----------------|
-| **Node.js + node-pty** | Runs the server; provides ADB shell terminal | Downloads new binary from nodejs.org. Paired update -- both must match. Requires app restart (handled automatically by the launcher script). |
-| **ADB (platform-tools)** | Communicates with Android devices | Downloads latest zip from Google, extracts, swaps files. ADB server is stopped and restarted automatically. No app restart needed. |
-| **scrcpy-server** | Runs on Android devices to capture screen and audio | Downloads new binary from Genymobile/scrcpy releases. Replaces `<deps>/scrcpy-server/scrcpy-server`. No restart needed -- new binary is pushed to devices on next connection. |
+| **Node.js + node-pty** | Runs the server; provides ADB shell terminal | Downloads new binary from nodejs.org and checks it against the release's `SHASUMS256.txt`. Paired update -- both must match. Requires app restart (handled automatically by the launcher script). |
+| **ADB (platform-tools)** | Communicates with Android devices | Downloads the latest versioned zip from Google, checks its size and SHA-1 against Google's repository listing, extracts, swaps files. ADB server is stopped and restarted automatically. No app restart needed. |
+| **scrcpy-server** | Runs on Android devices to capture screen and audio | Downloads new binary from Genymobile/scrcpy releases and checks it against the release's `SHA256SUMS.txt`. Replaces `<deps>/scrcpy-server/scrcpy-server`. No restart needed -- new binary is pushed to devices on next connection. |
+
+A download that does not match its publisher's checksum is refused, and nothing is installed.
 
 ### What Requires a New Release (Build-Time Dependencies)
 
@@ -367,7 +369,7 @@ A few advanced switches are only available via environment variables:
 | `VELOPACK_FEED_URL` | Force the Velopack auto-updater to use a custom feed URL (mostly useful for the local update-flow sandbox test). |
 | `WS_SCRCPY_RELEASE_URL_BASE` | Linux only: fetch the in-app update's AppImage and `SHA256SUMS` from `<base>/v<version>/<asset>` instead of GitHub's release downloads (a test or mirror seam; the SHA-256 check still runs). |
 | `WS_SCRCPY_MKCERT_URL_BASE` | Read mkcert's latest-release lookup, downloads and attestation lookup from `<base>/releases/latest`, `<base>/releases/download/<tag>/<asset>` and `<base>/attestations/sha256:<digest>` instead of GitHub (a test or mirror seam; the build-provenance check still runs against the fork's own release workflow). |
-| `WS_SCRCPY_NODE_DIST_BASE` | Read Node.js's release index and archive from `<base>/index.json` and `<base>/v<version>/<archive>` instead of `https://nodejs.org/dist` (a test or mirror seam). |
+| `WS_SCRCPY_NODE_DIST_BASE` | Read Node.js's release index, archive and checksum list from `<base>/index.json`, `<base>/v<version>/<archive>` and `<base>/v<version>/SHASUMS256.txt` instead of `https://nodejs.org/dist` (a test or mirror seam; the SHA-256 check still runs). |
 | `WS_SCRCPY_SKIP_BOOT_LATEST` | Set to `1`, startup skips the latest-version lookup for every dependency that is already installed (a test setting; the end-to-end suite uses it to spare GitHub's rate limit). A missing dependency is still looked up, and "check for updates" and updates are unaffected. |
 
 ### Access control

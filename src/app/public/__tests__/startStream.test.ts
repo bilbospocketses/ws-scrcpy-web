@@ -45,6 +45,30 @@ describe('startStream', () => {
         expect(() => handle.stop()).not.toThrow();
     });
 
+    it('reports a start failure through onError only, and still returns a handle', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        const failure = new Error('device refused');
+        (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+            throw failure;
+        });
+        const onError = vi.fn();
+        const onDisconnect = vi.fn();
+
+        let handle: ReturnType<typeof startStream> | undefined;
+        expect(() => {
+            handle = startStream(container, 'abc123', { onError, onDisconnect });
+        }).not.toThrow();
+
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError).toHaveBeenCalledWith(failure);
+        expect(onDisconnect).not.toHaveBeenCalled();
+        expect(handle?.deviceId).toBe('abc123');
+        expect(handle?.isConnected).toBe(false);
+        expect(() => handle?.stop()).not.toThrow();
+        // The container is free again, so a retry is not refused as a duplicate.
+        expect(() => startStream(container, 'abc123')).not.toThrow();
+    });
+
     it('passes bitrate/maxFps/maxSize through to StreamClientScrcpy.start as VideoSettings', async () => {
         const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
         startStream(container, 'abc123', { codec: 'h265', bitrate: 8000000, maxFps: 30, maxSize: 1920 });

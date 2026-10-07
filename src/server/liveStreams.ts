@@ -28,6 +28,8 @@ export interface ShutdownClosable {
 
 export class StreamRegistry {
     private sessions = new Set<ShutdownClosable>();
+    /** Set by closeAllForShutdown; see isStopping(). */
+    private stopping = false;
 
     add(session: ShutdownClosable): void {
         this.sessions.add(session);
@@ -44,11 +46,34 @@ export class StreamRegistry {
     }
 
     /**
+     * True once a deliberate stop has closed the open sessions. The WebSocket
+     * server keeps accepting until it is released, a beat later, and a session
+     * opened in that window would launch scrcpy-server just in time for
+     * `adb kill-server` to kill it -- "stream failed" again. While this is
+     * true, `ScrcpyConnection.processRequest` refuses a new session with 1001.
+     */
+    isStopping(): boolean {
+        return this.stopping;
+    }
+
+    /**
+     * Accept new sessions again after a stop that did not happen. The one case:
+     * an update apply that fails after its pre-apply step closed the streams
+     * leaves this process running (UpdateService.applyUpdate). Every other stop
+     * ends in process exit, and a restart is a new process.
+     */
+    cancelStop(): void {
+        this.stopping = false;
+    }
+
+    /**
      * Close every open session for a deliberate stop. Returns how many were
      * closed. Run it BEFORE `adb kill-server`, so each session is already
-     * released when its scrcpy-server dies.
+     * released when its scrcpy-server dies. From here on no new session
+     * starts (isStopping()).
      */
     closeAllForShutdown(): number {
+        this.stopping = true;
         // Copy first: closeForShutdown() releases the session, and release
         // calls remove(), which mutates the very set being iterated.
         const doomed = Array.from(this.sessions);

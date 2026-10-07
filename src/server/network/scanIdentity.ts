@@ -120,6 +120,20 @@ export async function scanAddressFor(
     return `${host}:${port}`;
 }
 
+/**
+ * The host of a connect address or transport serial, for a MAC lookup:
+ * `[v6]:port` and `[v6]` give `v6`, `host:port` gives `host`, and a bare host,
+ * including an unbracketed IPv6 literal, is returned as it is. `split(':')[0]`
+ * answered `[` for an IPv6 transport, so its MAC was never found.
+ */
+export function hostOf(address: string): string {
+    const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(address);
+    if (bracketed) return bracketed[1]!;
+    const idx = address.indexOf(':');
+    if (idx === -1 || idx !== address.lastIndexOf(':')) return address;
+    return address.slice(0, idx);
+}
+
 function splitHostPort(value: string): { host: string; port: string } | null {
     const idx = value.lastIndexOf(':');
     if (idx <= 0 || idx === value.length - 1) return null;

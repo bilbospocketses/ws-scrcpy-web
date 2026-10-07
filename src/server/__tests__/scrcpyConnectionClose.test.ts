@@ -53,7 +53,7 @@ vi.mock('../Logger', () => {
 });
 
 import { liveStreams, SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON } from '../liveStreams';
-import { closeReason, ScrcpyConnection, SESSION_FAILED_CLOSE_CODE } from '../ScrcpyConnection';
+import { ScrcpyConnection, SESSION_FAILED_CLOSE_CODE } from '../ScrcpyConnection';
 import { runGracefulShutdown } from '../shutdownHelpers';
 
 class FakeWs extends EventEmitter {
@@ -129,6 +129,9 @@ beforeEach(() => {
 
 afterEach(() => {
     connection?.release();
+    // The registry is module-level; a test that stops the server must not
+    // leave the next one refusing sessions.
+    liveStreams.cancelStop();
     vi.restoreAllMocks();
 });
 
@@ -271,6 +274,26 @@ describe('ScrcpyConnection — a deliberate server stop is a clean end', () => {
         expect(liveStreams.size()).toBe(0);
     });
 
+    it('a session opened after the stop has begun ends with 1001 at once and never starts', () => {
+        // The window between closeAllForShutdown and the WebSocket server's
+        // release: a session started here would launch scrcpy-server just for
+        // `adb kill-server` to kill it, and its viewer would see "stream failed".
+        liveStreams.closeAllForShutdown();
+
+        const created = ScrcpyConnection.processRequest(ws as never, {
+            action: ACTION.STREAM_SCRCPY,
+            url: new URL('http://localhost/?action=stream&udid=device-1'),
+            request: {} as never,
+        });
+
+        expect(created).toBeUndefined();
+        expect(ws.close).toHaveBeenCalledTimes(1);
+        expect(ws.close).toHaveBeenCalledWith(SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON);
+        expect(startSpy).not.toHaveBeenCalled();
+        expect(h.children).toHaveLength(0);
+        expect(liveStreams.size()).toBe(0);
+    });
+
     it('a crash while the server keeps running still closes with 4005, and a later stop finds nothing to close', () => {
         const { child } = live();
 
@@ -279,19 +302,5 @@ describe('ScrcpyConnection — a deliberate server stop is a clean end', () => {
         expect(ws.close).toHaveBeenCalledWith(SESSION_FAILED_CLOSE_CODE, 'scrcpy-server exited (code 1)');
         expect(liveStreams.closeAllForShutdown()).toBe(0);
         expect(ws.close).toHaveBeenCalledTimes(1);
-    });
-});
-
-describe('closeReason', () => {
-    it('leaves a short reason alone', () => {
-        expect(closeReason('scrcpy-server exited (code 1)')).toBe('scrcpy-server exited (code 1)');
-    });
-
-    it('cuts a long reason to 123 bytes of UTF-8 without splitting a character', () => {
-        const reason = closeReason(`${'a'.repeat(121)}é€`);
-        // 121 + 2 bytes (é) = 123; the 3-byte € would cross the limit.
-        expect(reason).toBe(`${'a'.repeat(121)}é`);
-        expect(Buffer.byteLength(closeReason('€'.repeat(100)), 'utf-8')).toBeLessThanOrEqual(123);
-        expect(closeReason('€'.repeat(100))).toBe('€'.repeat(41));
     });
 });

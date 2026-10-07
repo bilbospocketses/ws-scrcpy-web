@@ -40,7 +40,7 @@ export const E2E_TEMP_ENV: Record<string, string> =
  *
  * The server resolves its data root per platform — `PROGRAMDATA/WsScrcpyWeb` on
  * Windows when `DATA_ROOT` is unset, and `DATA_ROOT` ahead of it on every
- * platform (see `resolveDataRoot` in `src/server/Config.ts`) —
+ * platform (see `resolveDataRoot` in `src/server/dataRoot.ts`) —
  * so the suite sets both and works either way.
  */
 export const E2E_PROGRAM_DATA = path.join(
