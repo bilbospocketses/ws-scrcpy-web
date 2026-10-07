@@ -10,6 +10,7 @@ import { Config } from '../../Config';
 import { Logger } from '../../Logger';
 import { Mw, type RequestParameters } from '../../mw/Mw';
 import { getNodePty } from '../../NodePtyResolver';
+import { closeReason } from '../../util/closeReason';
 
 const OS_WINDOWS = os.platform() === 'win32';
 const USE_BINARY = !OS_WINDOWS;
@@ -135,7 +136,7 @@ export class RemoteShell extends Mw {
             } else {
                 this.closeCode = 4500;
             }
-            this.closeReason = `[${[RemoteShell.TAG]}] terminal process exited with code: ${code}`;
+            this.closeReason = closeReason(`[${[RemoteShell.TAG]}] terminal process exited with code: ${code}`);
             if (this.timeoutString || this.timeoutBuffer) {
                 this.terminated = true;
             } else {

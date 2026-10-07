@@ -53,7 +53,7 @@ vi.mock('../Logger', () => {
 });
 
 import { liveStreams, SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON } from '../liveStreams';
-import { closeReason, ScrcpyConnection, SESSION_FAILED_CLOSE_CODE } from '../ScrcpyConnection';
+import { ScrcpyConnection, SESSION_FAILED_CLOSE_CODE } from '../ScrcpyConnection';
 import { runGracefulShutdown } from '../shutdownHelpers';
 
 class FakeWs extends EventEmitter {
@@ -279,19 +279,5 @@ describe('ScrcpyConnection — a deliberate server stop is a clean end', () => {
         expect(ws.close).toHaveBeenCalledWith(SESSION_FAILED_CLOSE_CODE, 'scrcpy-server exited (code 1)');
         expect(liveStreams.closeAllForShutdown()).toBe(0);
         expect(ws.close).toHaveBeenCalledTimes(1);
-    });
-});
-
-describe('closeReason', () => {
-    it('leaves a short reason alone', () => {
-        expect(closeReason('scrcpy-server exited (code 1)')).toBe('scrcpy-server exited (code 1)');
-    });
-
-    it('cuts a long reason to 123 bytes of UTF-8 without splitting a character', () => {
-        const reason = closeReason(`${'a'.repeat(121)}é€`);
-        // 121 + 2 bytes (é) = 123; the 3-byte € would cross the limit.
-        expect(reason).toBe(`${'a'.repeat(121)}é`);
-        expect(Buffer.byteLength(closeReason('€'.repeat(100)), 'utf-8')).toBeLessThanOrEqual(123);
-        expect(closeReason('€'.repeat(100))).toBe('€'.repeat(41));
     });
 });
