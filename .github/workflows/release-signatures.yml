@@ -1,0 +1,47 @@
+# M5's early warning: do the hash lists the dependency updater would install
+# from still verify against the publisher keys this repo pins?
+#
+# The updater refuses a Node.js or scrcpy-server checksum list signed by any key
+# outside the pinned set (src/server/release-keys/pinnedReleaseKeys.ts), and
+# fetches no key at run time. So a NEW Node.js releaser, or a new scrcpy key,
+# would otherwise be discovered by users whose update is refused. This job runs
+# src/server/__tests__/releaseSignatures.network.test.ts against the live
+# releases -- the Node version the updater itself offers right now, the newest
+# Node Current and LTS, and the newest scrcpy release -- and turns red first.
+#
+# When it fails with "is not a pinned Node.js release key": run
+# `node scripts/refresh-release-keys.mjs`, review the fingerprint diff it
+# prints, and ship the regenerated module (docs/TECHNICAL_GUIDE.md §13.1.1).
+#
+# Scheduled, deliberately NOT on pull_request or push: it reads the network, so
+# its result depends on what nodejs.org and github.com publish today rather than
+# on the change under review, and a new releaser must not turn an unrelated PR
+# red. It reads nodejs.org and github.com release assets only, never
+# api.github.com, so it spends none of the runner's shared API quota.
+
+name: Release signatures
+
+on:
+  schedule:
+    - cron: '17 6 * * *'  # daily, 06:17 UTC: off the hour, when the scheduler is least loaded
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-signatures:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Verify the live hash lists against the pinned keys
+        run: npm test -- releaseSignatures.network
+        env:
+          WS_SCRCPY_NETWORK_TESTS: '1'

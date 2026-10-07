@@ -1,4 +1,8 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { describe, expect, it } from 'vitest';
+import { getDependencyDefinitions, NODE_DIST_BASE_ENV } from '../DependencyDefinitions';
 import { PINNED_RELEASE_KEYS } from '../DependencyManager';
 import { verifyDetachedSignature } from '../verifyOpenPgp';
 
@@ -14,9 +18,13 @@ import { verifyDetachedSignature } from '../verifyOpenPgp';
  *
  *   WS_SCRCPY_NETWORK_TESTS=1 npm test -- releaseSignatures.network
  *
- * Reads nodejs.org/dist/index.json and github.com's releases/latest redirect,
- * never api.github.com, so a CI runner's shared 60-an-hour API quota is not
- * spent on it.
+ * Reads nodejs.org/dist/index.json, the node-pty prebuilt manifest (a
+ * github.com release asset, through the updater's own Node lookup) and
+ * github.com's releases/latest redirect, never api.github.com, so a CI
+ * runner's shared 60-an-hour API quota is not spent on it.
+ *
+ * CI: the scheduled `release-signatures` workflow
+ * (.github/workflows/release-signatures.yml), weekly and on demand.
  */
 
 const ENABLED = process.env['WS_SCRCPY_NETWORK_TESTS'] === '1';
@@ -28,15 +36,37 @@ async function bytes(url: string): Promise<Uint8Array> {
     return new Uint8Array(await res.arrayBuffer());
 }
 
+/**
+ * The Node version the updater would offer right now, from the updater's own
+ * lookup (LTS only, filtered to the ABIs the node-pty prebuilt manifest
+ * covers), so this checks the release a user would actually be asked to install.
+ */
+async function nodeVersionTheUpdaterOffers(): Promise<string> {
+    const depsPath = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-release-sig-network-'));
+    const saved = process.env[NODE_DIST_BASE_ENV];
+    delete process.env[NODE_DIST_BASE_ENV];
+    try {
+        const node = getDependencyDefinitions(depsPath).find((d) => d.name === 'nodejs')!;
+        const offered = await node.checkLatest();
+        if (!offered) throw new Error('the updater offers no Node.js version');
+        return `v${offered}`;
+    } finally {
+        if (saved !== undefined) process.env[NODE_DIST_BASE_ENV] = saved;
+        fs.rmSync(depsPath, { recursive: true, force: true });
+    }
+}
+
 describe.runIf(ENABLED)('the newest published hash lists verify against the pinned keys', () => {
-    it('Node.js: the newest Current and the newest LTS SHASUMS256.txt', { timeout: 60_000 }, async () => {
+    it('Node.js: the release the updater offers, and the newest Current and LTS', { timeout: 90_000 }, async () => {
         const res = await fetch('https://nodejs.org/dist/index.json', { headers: UA });
         expect(res.ok).toBe(true);
         const index = (await res.json()) as { version: string; lts: string | false }[];
         const current = index[0]!.version;
         const lts = index.find((r) => r.lts !== false)!.version;
+        const offered = await nodeVersionTheUpdaterOffers();
+        console.log('Node.js: the updater offers %s (newest Current %s, newest LTS %s)', offered, current, lts);
 
-        for (const version of new Set([current, lts])) {
+        for (const version of new Set([offered, current, lts])) {
             const base = `https://nodejs.org/dist/${version}`;
             const signer = await verifyDetachedSignature({
                 what: `Node.js SHASUMS256.txt for ${version}`,
