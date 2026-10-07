@@ -9,7 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runSystemWideInstall } from '../SystemWideInstallModal';
+import { runSystemWideInstall, showSystemWideDeclinedBanner } from '../SystemWideInstallModal';
 import { reasonToUserMessage } from '../serviceFailureMessage';
 import { WelcomeModal } from '../WelcomeModal';
 
@@ -121,5 +121,52 @@ describe('WelcomeModal notice', () => {
         const status = await openWelcome();
 
         expect(status.textContent).toBe('');
+    });
+});
+
+/**
+ * The welcome screen opens only before first-run setup is complete. Past it (or
+ * on a service instance) the declined line was dropped, so the page said nothing
+ * about why nothing was installed. It now goes to the bottom status banner.
+ */
+describe('showSystemWideDeclinedBanner: the declined line when the welcome screen does not open', () => {
+    const button = (banner: HTMLElement): HTMLButtonElement => {
+        const btn = banner.querySelector('button');
+        if (!btn) throw new Error('banner has no button');
+        return btn;
+    };
+
+    it('shows the declined line, visibly, with a try-again button', () => {
+        const banner = showSystemWideDeclinedBanner(DECLINED, vi.fn(), vi.fn());
+
+        expect(banner.querySelector('span')?.textContent).toBe(DECLINED);
+        expect(button(banner).textContent).toBe('try again');
+        expect(isDisplayed(banner)).toBe(true);
+    });
+
+    it('try again re-runs the install and reloads when it takes', async () => {
+        const retry = vi.fn(() => Promise.resolve({ kind: 'reload' as const }));
+        const reload = vi.fn();
+        const banner = showSystemWideDeclinedBanner(DECLINED, retry, reload);
+
+        button(banner).click();
+        await drainMicrotasks();
+
+        expect(retry).toHaveBeenCalledTimes(1);
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('a second decline keeps the banner and its line, and does not reload', async () => {
+        const retry = vi.fn(() => Promise.resolve({ kind: 'continue' as const, notice: DECLINED }));
+        const reload = vi.fn();
+        const banner = showSystemWideDeclinedBanner(DECLINED, retry, reload);
+
+        button(banner).click();
+        await drainMicrotasks();
+
+        expect(retry).toHaveBeenCalledTimes(1);
+        expect(reload).not.toHaveBeenCalled();
+        expect(isDisplayed(banner)).toBe(true);
+        expect(banner.querySelector('span')?.textContent).toBe(DECLINED);
     });
 });
