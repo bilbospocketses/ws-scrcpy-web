@@ -819,12 +819,16 @@ export class ServiceApi {
 
             // Revert installMode to local BEFORE the teardown so the relaunched
             // local instance reads local mode (mirrors the Windows revert-first ordering).
+            // The one exception is a teardown behind a prompt (system scope, not root):
+            // it reverts only once the prompt was authorised, below.
             const newMode: InstallMode = scope === 'system' ? 'system' : 'user';
-            try {
-                cfg.updateAppConfig({ installMode: newMode });
-            } catch (err) {
-                log.warn(`uninstall(linux): installMode revert failed (continuing): ${(err as Error).message}`);
-            }
+            const revertInstallMode = (): void => {
+                try {
+                    cfg.updateAppConfig({ installMode: newMode });
+                } catch (err) {
+                    log.warn(`uninstall(linux): installMode revert failed (continuing): ${(err as Error).message}`);
+                }
+            };
 
             const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
             const systemdRun = resolveSystemTool('systemd-run');
@@ -860,8 +864,40 @@ export class ServiceApi {
                     cmd = systemdRun;
                     sdArgs = runArgs;
                 } else {
-                    cmd = resolveSystemTool('pkexec');
-                    sdArgs = [systemdRun, ...runArgs];
+                    // Not root: the teardown sits behind a polkit prompt, so AWAIT it rather
+                    // than spawn it detached. pkexec exits once the prompt is answered, and
+                    // systemd-run (no --wait) once the teardown unit has started, so the exit
+                    // code is the prompt's outcome. Only an authorised launch moves installMode
+                    // to local and tells the page the service is going away. A declined prompt
+                    // leaves the unit installed and the config saying system-service, and
+                    // answers 403 uac-declined, as the system-service install does.
+                    const r = await this.runElevated([resolveSystemTool('pkexec'), systemdRun, ...runArgs]);
+                    if (r.code !== 0) {
+                        if (pkexecDeclined(r.code, r.stderr)) {
+                            const body: ServiceActionFailure = {
+                                ok: false,
+                                error: 'uninstall was cancelled or not authorized at the authentication prompt',
+                                reason: 'uac-declined',
+                            };
+                            res.writeHead(403);
+                            res.end(JSON.stringify(body));
+                            return true;
+                        }
+                        const body: ServiceActionFailure = {
+                            ok: false,
+                            error: r.stderr.trim() || r.stdout.trim() || 'system-service teardown failed to start',
+                            reason: 'servy-failure',
+                        };
+                        res.writeHead(500);
+                        res.end(JSON.stringify(body));
+                        return true;
+                    }
+                    revertInstallMode();
+                    log.info('uninstall(linux): started teardown helper via pkexec systemd-run (system scope)');
+                    const body: ServiceActionSuccess = { ok: true, status: 'shutting-down', installMode: newMode };
+                    res.writeHead(200);
+                    res.end(JSON.stringify(body));
+                    return true;
                 }
             } else {
                 // User scope: UNCHANGED — home helper, user manager, includes relaunch.
@@ -881,6 +917,7 @@ export class ServiceApi {
                     WS_SCRCPY_SERVICE_NAME,
                 ];
             }
+            revertInstallMode();
             this.spawnDetached(cmd, sdArgs);
             log.info(`uninstall(linux): spawned teardown helper via systemd-run (${scope} scope)`);
 

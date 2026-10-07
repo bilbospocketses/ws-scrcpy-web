@@ -1,4 +1,51 @@
 import { Modal } from '../ui/Modal';
+import { isElevationDeclined, reasonToUserMessage } from './serviceFailureMessage';
+import { showStatusBanner } from './statusBanner';
+
+/**
+ * What the first-run flow does after "yes, all users": reload (the install took,
+ * and the launcher bootstrapper execs the /opt binary), or continue to the
+ * welcome screen. A declined polkit prompt continues with `notice`, the line
+ * every other declined prompt shows, so the welcome screen can say why nothing
+ * was installed. Any other failure, or an unreachable server, continues with no
+ * notice, as it always has.
+ */
+export type SystemWideInstallOutcome = { kind: 'reload' } | { kind: 'continue'; notice?: string };
+
+/** POST the machine-wide install and map the answer to a {@link SystemWideInstallOutcome}. */
+export async function runSystemWideInstall(
+    fetchFn: (url: string, init: RequestInit) => Promise<Response> = (url, init) => fetch(url, init),
+): Promise<SystemWideInstallOutcome> {
+    try {
+        const r = await fetchFn('/api/service/install-system-wide', { method: 'POST' });
+        if (r.ok) return { kind: 'reload' };
+        if (await isElevationDeclined(r)) {
+            return { kind: 'continue', notice: reasonToUserMessage('uac-declined', '') };
+        }
+        return { kind: 'continue' };
+    } catch {
+        return { kind: 'continue' };
+    }
+}
+
+/**
+ * Where a declined line goes when the welcome screen does not open (first run
+ * already complete, a service instance, or no config to decide with): the
+ * bottom status banner, with the install offered again. Without it the line
+ * was dropped and nothing said why nothing was installed. A reload follows a
+ * successful retry; a retry that fails leaves the banner as it is.
+ */
+export function showSystemWideDeclinedBanner(
+    notice: string,
+    retry: () => Promise<SystemWideInstallOutcome> = () => runSystemWideInstall(),
+    reload: () => void = () => window.location.reload(),
+): HTMLElement {
+    return showStatusBanner(notice, 'try again', () => {
+        void retry().then((outcome) => {
+            if (outcome.kind === 'reload') reload();
+        });
+    });
+}
 
 export interface SystemWideInstallModalOptions {
     /**

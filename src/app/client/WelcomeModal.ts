@@ -22,6 +22,11 @@ export interface WelcomeModalOptions {
      * completion to keep the install/PATCH ordering correct.
      */
     onDecision: (choice: WelcomeChoice) => void;
+    /**
+     * A line to show in the status area on open. Set when the first-run "install
+     * for all users" prompt was declined just before this modal (runSystemWideInstall).
+     */
+    notice?: string;
 }
 
 export class WelcomeModal extends Modal {
@@ -187,6 +192,7 @@ export class WelcomeModal extends Modal {
         this.statusEl.style.cssText =
             'margin: 0 0 12px; color: var(--text-color-light); font-size: 13px; min-height: 1em;';
         container.appendChild(this.statusEl);
+        if (this.opts.notice) this.setStatus(this.opts.notice, true);
 
         // v0.1.10 don't-show-again checkbox. Only persists the dismissal
         // flag when the user clicks "no, run on demand" — the install-service
