@@ -77,12 +77,36 @@ function writeSnapshot(db: DatabaseSync, dest: string): void {
     }
 }
 
+/** The `wsscrcpy.db.v<N>.bak` files beside the database, with their N. */
+function listSnapshots(dbFile: string): { name: string; version: number }[] {
+    const prefix = `${path.basename(dbFile)}.v`;
+    const found: { name: string; version: number }[] = [];
+    for (const name of fs.readdirSync(path.dirname(dbFile))) {
+        const m = name.startsWith(prefix) ? /^(\d+)\.bak$/.exec(name.slice(prefix.length)) : null;
+        if (m) found.push({ name, version: Number(m[1]) });
+    }
+    return found;
+}
+
+/**
+ * The snapshot this build can open: the highest N not above the build's
+ * schema. A lower N works too, because this build migrates it forward, which
+ * covers a user who skipped a version (v2 -> v4 wrote v2.bak) and then rolled
+ * back to v3. A higher N is another downgrade and is never offered.
+ */
+function restorableSnapshot(dbFile: string, supported: number): string | undefined {
+    let best: { name: string; version: number } | undefined;
+    for (const s of listSnapshots(dbFile)) {
+        if (s.version <= supported && (!best || s.version > best.version)) best = s;
+    }
+    return best?.name;
+}
+
 /** Keep only the from-version: remove every other `wsscrcpy.db.v<N>.bak` beside the database. */
 function removeOtherSnapshots(dbFile: string, keep: string): void {
     const dir = path.dirname(dbFile);
-    const prefix = `${path.basename(dbFile)}.v`;
-    for (const name of fs.readdirSync(dir)) {
-        if (name === keep || !name.startsWith(prefix) || !/^\d+\.bak$/.test(name.slice(prefix.length))) continue;
+    for (const { name } of listSnapshots(dbFile)) {
+        if (name === keep) continue;
         try {
             fs.rmSync(path.join(dir, name), { force: true });
         } catch (err) {
@@ -123,9 +147,7 @@ export function runMigrations(db: DatabaseSync): void {
     const target = MIGRATIONS.length;
     if (current > target) {
         const dbFile = db.location();
-        const backup = dbFile ? snapshotName(dbFile, target) : undefined;
-        const present = backup && dbFile && fs.existsSync(path.join(path.dirname(dbFile), backup));
-        throw new DatabaseNewerThanBuildError(current, target, present ? backup : undefined);
+        throw new DatabaseNewerThanBuildError(current, target, dbFile ? restorableSnapshot(dbFile, target) : undefined);
     }
     if (current === target) return;
     snapshotBeforeUpgrade(db, current, target);

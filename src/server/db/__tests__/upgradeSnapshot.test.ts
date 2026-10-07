@@ -190,4 +190,45 @@ describe('a database newer than the build', () => {
             `restore the pre-upgrade backup wsscrcpy.db.v${supported}.bak in place of wsscrcpy.db`,
         );
     });
+
+    function newerMessage(p: string): string {
+        try {
+            openDatabase(p).close();
+        } catch (err) {
+            return (err as Error).message;
+        }
+        return '';
+    }
+
+    it('names an older snapshot this build can migrate forward (a skipped version rolled back)', () => {
+        // v2 build -> v4 build (writes v2.bak) -> back to this build: v2.bak is the one that works.
+        const dir = tmpDir();
+        const p = path.join(dir, 'wsscrcpy.db');
+        makeNewer(p);
+        fs.writeFileSync(path.join(dir, 'wsscrcpy.db.v2.bak'), 'snapshot');
+        expect(newerMessage(p)).toContain('restore the pre-upgrade backup wsscrcpy.db.v2.bak in place of wsscrcpy.db');
+    });
+
+    it('picks the highest restorable snapshot when several exist', () => {
+        const dir = tmpDir();
+        const p = path.join(dir, 'wsscrcpy.db');
+        makeNewer(p);
+        fs.writeFileSync(path.join(dir, 'wsscrcpy.db.v1.bak'), 'snapshot');
+        fs.writeFileSync(path.join(dir, 'wsscrcpy.db.v2.bak'), 'snapshot');
+        fs.writeFileSync(path.join(dir, `wsscrcpy.db.v${MIGRATIONS.length + 2}.bak`), 'snapshot');
+        const message = newerMessage(p);
+        expect(message).toContain('wsscrcpy.db.v2.bak');
+        expect(message).not.toContain('wsscrcpy.db.v1.bak');
+    });
+
+    it('never names a snapshot newer than this build supports', () => {
+        const dir = tmpDir();
+        const p = path.join(dir, 'wsscrcpy.db');
+        makeNewer(p);
+        const tooNew = `wsscrcpy.db.v${MIGRATIONS.length + 2}.bak`;
+        fs.writeFileSync(path.join(dir, tooNew), 'snapshot');
+        const message = newerMessage(p);
+        expect(message).not.toContain(tooNew);
+        expect(message).toMatch(/Install that version again\.$/);
+    });
 });
