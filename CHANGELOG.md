@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.193] - 2026-10-07
+
 ### Changed
 - **tests: the unit suite runs against a throwaway data root and fails if anything reaches the machine's real one.** It used to read and write the installed app's `wsscrcpy.db` and control markers. `vitest.setup.ts` points `PROGRAMDATA` and `XDG_DATA_HOME` at a fresh temp directory for every test file and asks the server's own `resolveDataRoot` (moved into `src/server/dataRoot.ts` so the setup can load it alone) whether the data root landed there, and again around every test whether it now points at the real one. Harness only; the app is unchanged.
 
