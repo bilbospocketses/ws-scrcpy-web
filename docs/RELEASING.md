@@ -81,13 +81,15 @@ gh pr merge --squash --delete-branch --auto
 # Auto Release pushes the tag on merge — do NOT tag by hand.
 ```
 
-The release workflow detects `*-beta*` in the tag name, sets `channel=beta`, and uses a separate Velopack feed file (`releases.beta.json`) so beta and stable channels are independent.
+The release workflow detects `*-beta*` in the tag name, sets `channel=beta`, and uses a separate Velopack feed file (`releases.beta.json`), so a stable install never sees a beta. The beta channel is a superset of stable: a beta install's update check reads both feeds and is offered whichever release has the higher version, so a stable release newer than every beta reaches beta installs too (`src/server/UpdateService.ts`, `feedChannels`). The install stays on the beta channel and keeps getting betas after that. That needs the channel stored: a version with no stored channel defaults to its own (beta for a `-beta.N` build, stable otherwise), and only a change on the Updates radio stores one, so before applying an update whose version would default to a different channel the app stores the current one (`keepChannelAcrossApply`).
+
+After a stable `X.Y.Z` has shipped, never ship another `X.Y.Z-beta.N`: the stable release outranks every beta with its core, so beta installs would never be offered it. The next beta is `X.Y.(Z+1)-beta.1` or higher (the `release:beta` label bump already does this; a hand bump must too).
 
 **Note (post-v0.1.23):** `softprops/action-gh-release` is NOT invoked with `prerelease: true`. Channel separation is handled by the per-channel feed file alone. When the in-app updater still used Velopack's `GithubSource`, a prerelease flag hid the build: that source drops prereleases from the 10 newest releases it reads. Since the 2026-10-04 feed fix the app finds the selected channel's newest release itself (`src/server/updateFeedResolver.ts`, paging the releases API) and hands Velopack that release's download folder, and the resolver skips every release marked prerelease, as it skips drafts.
 
 **Never add `prerelease: true` back.** The resolver treats a prerelease as a retracted release and never offers it, so flagging betas would hide every beta from beta-channel installs. The flag is reserved for the rollback procedure below, which relies on exactly that skip.
 
-Beta users opt in by setting `channel=beta` in Settings (writes to `config.json`).
+Beta users opt in by setting `channel=beta` in Settings → Updates (stored in the app's database, `app_settings`; a beta build with no stored channel is on beta already); they receive betas and stable releases.
 
 **Note on no-op companion releases:** earlier in the v0.1.23-beta.{1..18} chain, every fix beta was paired with a no-op target beta (e.g., beta.13 fix + beta.14 no-op) so we could test the in-app updater itself. Once the updater stabilized at beta.23, that practice was retired — fix betas now ship solo, and the upgrade path is tested by installing any earlier kept beta and updating to the new one (the smoke doc's Module 6 names the current "update from" build).
 
