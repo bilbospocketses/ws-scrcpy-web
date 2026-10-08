@@ -129,16 +129,89 @@ describe('DeviceMessageFramer', () => {
         expect(framer.pendingBytes).toBe(0);
     });
 
-    it('does not let an unknown type wedge the stream: drops it, warns once, and carries on', () => {
-        const { framer, texts } = collect();
-        framer.push(Uint8Array.of(42, 1, 2, 3));
-        framer.push(Uint8Array.of(43, 1));
-        expect(framer.pendingBytes).toBe(0);
-        expect(warn).toHaveBeenCalledTimes(1);
-        expect(String(warn.mock.calls[0]![1])).toContain('unknown device message type 42');
+    describe('an unknown type stops the framer for the rest of the connection', () => {
+        it('delivers nothing after it, not even a valid CLIPBOARD, and warns once naming the type', () => {
+            const { framer, messages } = collect();
+            framer.push(Uint8Array.of(42, 1, 2, 3));
+            framer.push(clipboard('after'));
+            framer.push(Uint8Array.of(43, 1));
+            framer.push(ack(1n));
 
-        framer.push(clipboard('after'));
-        expect(texts()).toEqual(['after']);
+            expect(messages).toEqual([]);
+            expect(framer.pendingBytes).toBe(0);
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(String(warn.mock.calls[0]![1])).toContain('unknown device message type 42');
+        });
+
+        it('cannot read a 0x00 from the middle of the unknown message as a CLIPBOARD', () => {
+            // The unknown message's own bytes, split by TCP so the next chunk
+            // starts with what looks like a CLIPBOARD header for "abc".
+            const { framer, messages } = collect();
+            framer.push(Uint8Array.of(42, 9, 9));
+            framer.push(Uint8Array.of(DeviceMessage.TYPE_CLIPBOARD, 0, 0, 0, 3, 0x61, 0x62, 0x63));
+            expect(messages, 'garbage must never reach the host clipboard').toEqual([]);
+        });
+
+        it('still delivers the messages that completed before it in the same chunk', () => {
+            const { framer, texts } = collect();
+            framer.push(concat(clipboard('before'), Uint8Array.of(42, 1, 2), clipboard('after')));
+            expect(texts()).toEqual(['before']);
+        });
+    });
+
+    describe('a handler that throws', () => {
+        let error: ReturnType<typeof vi.spyOn>;
+        beforeEach(() => {
+            error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        });
+        afterEach(() => {
+            error.mockRestore();
+        });
+
+        /** Records every delivery, then throws on the ones listed. */
+        function throwingOn(...bad: string[]) {
+            const delivered: string[] = [];
+            const framer = new DeviceMessageFramer((m) => {
+                const text = DeviceMessage.fromRaw(m).getText();
+                delivered.push(text);
+                if (bad.includes(text)) throw new Error(`handler failed on ${text}`);
+            });
+            return { framer, delivered };
+        }
+
+        it('does not cost the messages after it in the same chunk', () => {
+            const { framer, delivered } = throwingOn('one');
+            expect(() => framer.push(concat(clipboard('one'), clipboard('two')))).not.toThrow();
+            expect(delivered).toEqual(['one', 'two']);
+            expect(error).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not get its message again on the next push', () => {
+            const { framer, delivered } = throwingOn('one');
+            framer.push(concat(clipboard('one'), clipboard('two')));
+            expect(framer.pendingBytes).toBe(0);
+            framer.push(clipboard('three'));
+            expect(delivered).toEqual(['one', 'two', 'three']);
+        });
+
+        it('keeps a partial message that followed it, and completes it on the next push', () => {
+            const { framer, delivered } = throwingOn('one');
+            const second = clipboard('two');
+            framer.push(concat(clipboard('one'), second.subarray(0, 6)));
+            expect(framer.pendingBytes).toBe(6);
+            framer.push(second.subarray(6));
+            expect(delivered).toEqual(['one', 'two']);
+        });
+    });
+
+    it('drops an oversized message that arrives WHOLE in one chunk and delivers the message after it', () => {
+        const { framer, texts } = collect();
+        const oversize = clipboard('w'.repeat(DEVICE_MSG_MAX_SIZE));
+        framer.push(concat(oversize, clipboard('right after')));
+        expect(texts()).toEqual(['right after']);
+        expect(framer.pendingBytes).toBe(0);
+        framer.push(clipboard('and the next one'));
+        expect(texts()).toEqual(['right after', 'and the next one']);
     });
 
     it('drops a message larger than the 256 KiB device limit and stays aligned on what follows', () => {
@@ -164,14 +237,6 @@ describe('DeviceMessageFramer', () => {
         framer.push(atLimit.subarray(131_072));
         expect(messages).toHaveLength(1);
         expect(warn).not.toHaveBeenCalled();
-    });
-
-    it('reset() forgets a partial message', () => {
-        const { framer, texts } = collect();
-        framer.push(clipboard('abandoned').subarray(0, 7));
-        framer.reset();
-        framer.push(clipboard('fresh'));
-        expect(texts()).toEqual(['fresh']);
     });
 });
 

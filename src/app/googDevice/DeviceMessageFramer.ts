@@ -54,12 +54,28 @@ export class DeviceMessageFramer {
     private buffer: Uint8Array = EMPTY;
     /** Bytes still to discard from an oversized message that has not all arrived. */
     private skipRemaining = 0;
-    private warnedUnknownType = false;
+    /**
+     * Set for the rest of the connection by a message type this client cannot
+     * size. With no length there is no telling where the next message starts:
+     * the next byte read as a type could be text from the middle of the unknown
+     * message, and a 0x00 there would read as a CLIPBOARD and put garbage on
+     * the host clipboard. Upstream gives up on the same condition:
+     * `sc_device_msg_deserialize` (device_msg.c, v5.0) returns -1 for an
+     * unknown type — "error, we cannot recover" — and its receiver stops.
+     */
+    private halted = false;
 
     constructor(private readonly onMessage: (message: Uint8Array) => void) {}
 
-    /** Append one relayed chunk and deliver every message it completes. */
+    /**
+     * Append one relayed chunk and deliver every message it completes.
+     *
+     * The buffer is advanced past every complete message BEFORE any is
+     * delivered, and each delivery is isolated: a callback that throws neither
+     * gets its message again on the next push nor costs the messages after it.
+     */
     public push(chunk: Uint8Array): void {
+        if (this.halted) return;
         let data = chunk;
         if (this.skipRemaining > 0) {
             const skipped = Math.min(this.skipRemaining, data.length);
@@ -77,20 +93,21 @@ export class DeviceMessageFramer {
             this.buffer = joined;
         }
 
+        const messages: Uint8Array[] = [];
         let offset = 0;
         while (offset < this.buffer.length) {
             const rest = this.buffer.subarray(offset);
             const length = deviceMessageLength(rest);
             if (length < 0) {
-                // Without a known type there is no length, so no way to find
-                // where the next message starts. Drop what we hold rather than
-                // let one bad byte block every message after it.
-                if (!this.warnedUnknownType) {
-                    this.warnedUnknownType = true;
-                    console.warn(TAG, `unknown device message type ${rest[0]}; dropping ${rest.length} bytes`);
-                }
-                this.buffer = EMPTY;
-                return;
+                // See `halted`. Messages already complete in this chunk came
+                // before the unknown type and are still delivered below.
+                console.warn(
+                    TAG,
+                    `unknown device message type ${rest[0]}; ignoring every device message after it on this connection`,
+                );
+                this.halted = true;
+                offset = this.buffer.length;
+                break;
             }
             if (length === 0) break; // header incomplete
             if (length > DEVICE_MSG_MAX_SIZE) {
@@ -105,20 +122,26 @@ export class DeviceMessageFramer {
                     continue;
                 }
                 this.skipRemaining = length - rest.length;
-                this.buffer = EMPTY;
-                return;
+                offset = this.buffer.length;
+                break;
             }
             if (rest.length < length) break; // body incomplete
-            this.onMessage(rest.slice(0, length));
+            messages.push(rest.slice(0, length));
             offset += length;
         }
-        this.buffer = offset === 0 ? this.buffer : this.buffer.slice(offset);
-    }
+        if (offset >= this.buffer.length) {
+            this.buffer = EMPTY;
+        } else if (offset > 0) {
+            this.buffer = this.buffer.slice(offset);
+        }
 
-    /** Forget any partial message. */
-    public reset(): void {
-        this.buffer = EMPTY;
-        this.skipRemaining = 0;
+        for (const message of messages) {
+            try {
+                this.onMessage(message);
+            } catch (err) {
+                console.error(TAG, 'a device message handler threw; carrying on with the next message:', err);
+            }
+        }
     }
 
     /** Bytes held while waiting for the rest of a message. */
