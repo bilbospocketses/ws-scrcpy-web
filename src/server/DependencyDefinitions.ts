@@ -383,7 +383,9 @@ export function getDependencyDefinitions(
                 // whichever version is installed, and the stream parser is
                 // written and tested against SERVER_VERSION; a newer release is
                 // reached through an app release that bumps it after testing
-                // (scrcpy v5.0 shipped 2026-10-05 against a 4.1 build). The
+                // (scrcpy v5.0 shipped 2026-10-05 against a 4.1 build, and was
+                // offered as an update before this cap; the build that bumped
+                // SERVER_VERSION to 5.0 came after). The
                 // lookup itself still runs, so refused / failed lookups keep
                 // their meaning for the fallback install and Settings.
                 return compareVersions(tag, SERVER_VERSION) > 0 ? SERVER_VERSION : tag;

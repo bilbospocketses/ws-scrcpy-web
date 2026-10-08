@@ -104,7 +104,7 @@ describe('DependencyManager records each latest-version lookup', () => {
         fetchSpy = stubFetch(() => new Response('{"message":"API rate limit exceeded"}', { status }));
         const mgr = new DependencyManager(tmpDir);
         const dep = mgr.getByName('scrcpy-server')!;
-        dep.installedVersion = '4.1';
+        dep.installedVersion = SERVER_VERSION;
 
         await mgr.checkLatest('scrcpy-server');
 
@@ -141,11 +141,11 @@ describe('DependencyManager records each latest-version lookup', () => {
         fetchSpy = stubFetch(() =>
             refuse
                 ? new Response('{}', { status: 403 })
-                : new Response(JSON.stringify({ tag_name: 'v4.1' }), { status: 200 }),
+                : new Response(JSON.stringify({ tag_name: `v${SERVER_VERSION}` }), { status: 200 }),
         );
         const mgr = new DependencyManager(tmpDir);
         const dep = mgr.getByName('scrcpy-server')!;
-        dep.installedVersion = '4.1';
+        dep.installedVersion = SERVER_VERSION;
 
         await mgr.checkLatest('scrcpy-server');
         expect(dep.latestLookup).toMatchObject({ seq: 1, outcome: 'refused', httpStatus: 403 });
@@ -153,7 +153,7 @@ describe('DependencyManager records each latest-version lookup', () => {
         refuse = false;
         await mgr.checkLatest('scrcpy-server');
         expect(dep.latestLookup).toEqual({ seq: 2, at: expect.any(String), outcome: 'ok' });
-        expect(dep.latestVersion).toBe('4.1');
+        expect(dep.latestVersion).toBe(SERVER_VERSION);
     });
 
     it('records the lookup inside update(), numbered after the earlier ones', async () => {

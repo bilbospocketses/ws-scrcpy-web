@@ -68,3 +68,7 @@ gradlew     text eol=lf
 *.mp4       binary
 *.mov       binary
 *.webm      binary
+# The vendored scrcpy-server jar has no extension, so no pattern above reaches
+# it and only text=auto's NUL sniffing kept it binary. Its SHA-256 is pinned
+# (src/common/Constants.ts), so one normalized byte would fail the asset test.
+assets/scrcpy-server binary

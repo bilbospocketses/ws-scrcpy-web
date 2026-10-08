@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The bundled scrcpy-server is now v5.0.** Streaming works as before, since the server speaks the same protocol as v4.1; the difference you may notice is that capturing a device's playback audio now picks up more kinds of sound. Settings → Dependencies offers v5.0 to any install still on v4.1.
+
+### Fixed
+- **An install whose scrcpy-server was set up on first run now records its version, so an app update that ships a newer server replaces it instead of starting it with the wrong version.** The copy made on first run never noted which version it was, and the app assumed it was whatever version the app itself ships. After an update that ships a newer scrcpy-server, that would have started the old server with the new version number, which the server refuses, so no device would stream. On startup the app now identifies such a copy by its checksum and records its version (Settings → Dependencies then offers the update), and replaces a copy it cannot identify with the server it ships.
+
 ## [0.1.30-beta.199] - 2026-10-08
 
 ### Fixed

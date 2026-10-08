@@ -340,9 +340,9 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt.asc by th
         expect(fs.existsSync(installed())).toBe(false);
     });
 
-    it("installs the vendored v4.1 jar from scrcpy's real signed list with the pinned key", async () => {
+    it("installs the vendored v5.0 jar from scrcpy's real signed list with the pinned key", async () => {
         const jar = new Uint8Array(fs.readFileSync(path.join(REPO_ROOT, 'assets', 'scrcpy-server')));
-        const { mgr } = setup('4.1', fixture('scrcpy-v4.1-SHA256SUMS.txt'), fixture('scrcpy-v4.1-SHA256SUMS.txt.asc'), {
+        const { mgr } = setup('5.0', fixture('scrcpy-v5.0-SHA256SUMS.txt'), fixture('scrcpy-v5.0-SHA256SUMS.txt.asc'), {
             pinned: true,
             jar,
         });
@@ -350,6 +350,13 @@ describe('DependencyManager.update("scrcpy-server") — SHA256SUMS.txt.asc by th
         const result = await mgr.update('scrcpy-server');
 
         expect(result.success, result.errorMessage).toBe(true);
-        expect(sha256(fs.readFileSync(installed()))).toBe(SERVER_JAR_SHA256['4.1']);
+        expect(sha256(fs.readFileSync(installed()))).toBe(SERVER_JAR_SHA256['5.0']);
+    });
+
+    it("v4.1's real list agrees with the pin SERVER_JAR_SHA256 keeps for it", () => {
+        // SERVER_JAR_SHA256 keeps '4.1' so the boot-time marker repair can name
+        // a jar an earlier build seed-promoted; the pin must stay the list's.
+        const list = new TextDecoder().decode(fixture('scrcpy-v4.1-SHA256SUMS.txt'));
+        expect(parseSha256Sums(list, 'scrcpy-server-v4.1')).toBe(SERVER_JAR_SHA256['4.1']);
     });
 });
