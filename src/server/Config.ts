@@ -16,7 +16,7 @@ import {
 import type { ServerItem } from '../types/Configuration';
 import { getAppVersion } from './appVersion';
 import { resolveDataRoot } from './dataRoot';
-import { CHANNEL_PICKED_KEY, GLOBAL_KEYS } from './db/constants';
+import { CHANNEL_PINNED_KEY, GLOBAL_KEYS } from './db/constants';
 import { Db, dbDir } from './db/Db';
 import { EnvName } from './EnvName';
 import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
@@ -470,11 +470,8 @@ function sanitizeAppConfig(
         if (r.ok) out.updateCheckIntervalMinutes = r.value;
         else warn(`config.json: ${r.error}; using default 60`);
     }
-    if (raw.channel !== undefined) {
-        const r = validateField('channel', raw.channel);
-        if (r.ok) out.channel = r.value;
-        else warn(`config.json: ${r.error}; using default ${defaultChannel}`);
-    }
+    // `channel` is not read here: config.json's value is one input to
+    // resolveChannel, which composeAppConfig runs once the store is known.
     if (raw.githubOwner !== undefined) {
         const r = validateField('githubOwner', raw.githubOwner);
         if (r.ok) out.githubOwner = r.value;
@@ -537,45 +534,54 @@ function composeAppConfig(
         GLOBAL_KEYS.filter((k) => k !== 'channel'),
         warn,
     );
-    overlayStoredChannel(out, globals, defaultChannel, warn);
+    out.channel = resolveChannel(fileConfig.channel, globals, defaultChannel, warn);
     return out;
 }
 
 /**
- * Overlay the stored `channel` row, honouring it only when it was picked.
+ * The effective update channel: a stored `stable` counts only when pinned.
  *
- * - row + `CHANNEL_PICKED_KEY` true: the row, whatever the build.
- * - row `beta`, unmarked: `beta`. Only a deliberate pick or
- *   `UpdateService.keepChannelAcrossApply` ever wrote `beta`, and before the
- *   marker existed (v0.5.0 and earlier) neither wrote one -- a beta install
- *   that took v0.5.0 must stay on beta.
- * - row `stable`, unmarked: IGNORED; the channel follows the build. Such a row
- *   cannot be told from one left by an earlier install whose data folder was
- *   kept -- measured 2026-10-08, v0.1.30-beta.205 installed over a kept data
- *   folder came up on stable from exactly that row.
- * - no row (or an invalid one): untouched, so config.json's `channel` (the MSI
- *   skeleton writes one) or the build's default stands, as before.
+ * 1. A valid `app_settings` `channel` row:
+ *    - pinned (`CHANNEL_PINNED_KEY` true): the row, whatever the build;
+ *    - `beta`, unpinned: `beta`. Only a channel write or
+ *      `UpdateService.keepChannelAcrossApply` ever wrote `beta`, and before the
+ *      pin existed (v0.5.0 and earlier) neither wrote one -- a beta install
+ *      that took v0.5.0 must stay on beta;
+ *    - `stable`, unpinned: the build's default. Such a row cannot be told from
+ *      one left by an earlier install whose data folder was kept -- measured
+ *      2026-10-08, v0.1.30-beta.205 installed over a kept data folder came up
+ *      on stable from exactly that row. config.json is NOT consulted then: a
+ *      kept config.json is just as stale as the row.
+ * 2. No row, or an invalid one: config.json's `channel`, by the same rule --
+ *    `beta` is honoured, `stable` gives the build's default. The MSI install
+ *    hook keeps an existing config.json (launcher/src/hooks.rs), so a kept
+ *    folder whose earlier install never saved still says `stable` there; on a
+ *    stable build that IS the default, so only a beta build is affected.
+ * 3. Neither: the build's default (`defaultChannelForVersion`).
  *
- * Applied on read; the row is never rewritten at boot.
+ * Applied on read; nothing is rewritten at boot.
  */
-function overlayStoredChannel(
-    out: AppConfig,
+function resolveChannel(
+    fileChannel: unknown,
     globals: Record<string, unknown>,
     defaultChannel: UpdateChannel,
     warn: (msg: string) => void,
-): void {
+): UpdateChannel {
     const stored = globals['channel'];
-    if (stored === undefined) return;
-    const r = validateField('channel', stored);
-    if (!r.ok) {
+    if (stored !== undefined) {
+        const r = validateField('channel', stored);
+        if (r.ok) {
+            if (globals[CHANNEL_PINNED_KEY] === true || r.value === 'beta') return r.value;
+            return defaultChannel;
+        }
         warn(`stored channel: ${r.error}; ignoring`);
-        return;
     }
-    if (globals[CHANNEL_PICKED_KEY] === true || r.value === 'beta') {
-        out.channel = r.value;
-        return;
+    if (fileChannel !== undefined) {
+        const r = validateField('channel', fileChannel);
+        if (r.ok) return r.value === 'beta' ? 'beta' : defaultChannel;
+        warn(`config.json: ${r.error}; using default ${defaultChannel}`);
     }
-    out.channel = defaultChannel;
+    return defaultChannel;
 }
 
 /**
@@ -1462,15 +1468,42 @@ export class Config {
     }
 
     /**
+     * Store `channel` and pin it (`CHANNEL_PINNED_KEY`) as ONE savepoint.
+     *
+     * Every channel write comes through here -- the Updates tab's Save, PATCH
+     * /api/config, PATCH /api/updates/config and keepChannelAcrossApply -- and
+     * each is a write on purpose, so the next boot must honour it
+     * (resolveChannel). As two separate statements, a pin that failed after the
+     * row committed left the new channel stored while the caller was told the
+     * write failed; with a pin already there the next boot took it. Writing the
+     * pin first is no better: a pin that landed while the row failed would pin
+     * the stale row. A savepoint rather than BEGIN, so this also nests inside a
+     * caller's transaction (DeviceStore.mergeDeviceInto).
+     */
+    private writePinnedChannel(channel: UpdateChannel): void {
+        const sqlite = this._db.sqlite;
+        sqlite.exec('SAVEPOINT write_pinned_channel');
+        try {
+            this._db.appSettings.set('channel', channel);
+            this._db.appSettings.set(CHANNEL_PINNED_KEY, true);
+            sqlite.exec('RELEASE write_pinned_channel');
+        } catch (err) {
+            sqlite.exec('ROLLBACK TO write_pinned_channel');
+            sqlite.exec('RELEASE write_pinned_channel');
+            throw err;
+        }
+    }
+
+    /**
      * Apply a partial AppConfig. Validates each provided field; on failure throws
      * a ConfigValidationError that ConfigApi turns into a 400 response. On success,
      * writes config.json synchronously and returns the merged config.
      *
-     * Writing `channel` also writes `CHANNEL_PICKED_KEY` (see constants.ts): a
-     * channel named in a write is treated as picked, even when it equals the
-     * current one. The Settings dialog never sends an unchanged channel (its
-     * staged store drops a field whose value matches the loaded one), so from
-     * the UI the marker follows an actual radio change.
+     * Writing `channel` also pins it (`CHANNEL_PINNED_KEY`, see constants.ts;
+     * `writePinnedChannel`), even when it equals the current channel. The
+     * Settings dialog never sends an unchanged channel (its staged store drops
+     * a field whose value matches the loaded one), so from the UI the pin
+     * follows an actual radio change.
      */
     public updateAppConfig(partial: Partial<AppConfig>): { config: AppConfig; restartRequired: boolean } {
         const merged: AppConfig = { ...this._appConfig };
@@ -1498,15 +1531,10 @@ export class Config {
             // directly via PATCH /api/settings by the frontend.
             if (TRIO_KEYS.has(k)) {
                 // persisted by saveToDisk()
+            } else if (k === 'channel') {
+                this.writePinnedChannel(r.value as UpdateChannel);
             } else if ((GLOBAL_KEYS as readonly string[]).includes(k)) {
                 this._db.appSettings.set(k, r.value);
-                // A channel written here was picked -- by the Updates tab's
-                // Save (whose staged store sends `channel` only when the radio
-                // differs from the channel the tab loaded), PATCH /api/config,
-                // PATCH /api/updates/config, or keepChannelAcrossApply. Record
-                // that, or the next boot cannot tell this `stable` from one an
-                // earlier install left behind (overlayStoredChannel).
-                if (k === 'channel') this._db.appSettings.set(CHANNEL_PICKED_KEY, true);
             }
         }
         const restartRequired = merged.webPort !== this._appConfig.webPort;

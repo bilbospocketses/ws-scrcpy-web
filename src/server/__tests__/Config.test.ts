@@ -67,12 +67,15 @@ describe('Config — AppConfig extension', () => {
         expect(c.channel).toBe(BUILD_CHANNEL);
     });
 
-    it('an explicit channel in config.json is respected whatever the build is', () => {
-        // A written value cannot be told apart from a user's choice, so it wins.
-        setup({ channel: 'stable' });
-        expect(Config.getInstance().getAppConfig().channel).toBe('stable');
+    it("config.json's beta is respected whatever the build is; its stable gives the build's channel", () => {
+        // A kept config.json's `stable` cannot be told from one an earlier
+        // install left behind, so only `beta` moves the channel off the build's
+        // default (Config.ts resolveChannel; the beta-build case is pinned down
+        // in config.channelPin.test.ts with the version mocked).
         setup({ channel: 'beta' });
         expect(Config.getInstance().getAppConfig().channel).toBe('beta');
+        setup({ channel: 'stable' });
+        expect(Config.getInstance().getAppConfig().channel).toBe(BUILD_CHANNEL);
     });
 
     it('falls back to default for an out-of-range webPort', () => {

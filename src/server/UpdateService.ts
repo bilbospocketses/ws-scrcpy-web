@@ -8,7 +8,7 @@ import type { UpdateState } from '../common/UpdateEvents';
 import { AdbClient } from './AdbClient';
 import { getAppVersion } from './appVersion';
 import { Config } from './Config';
-import { CHANNEL_PICKED_KEY } from './db/constants';
+import { CHANNEL_PINNED_KEY } from './db/constants';
 import { Logger } from './Logger';
 import {
     downloadVerifiedAsset,
@@ -950,12 +950,14 @@ export class UpdateService {
     /**
      * Make the configured channel survive the update to `targetVersion`.
      *
-     * The channel a version boots with is the `app_settings` row when it was
-     * picked (`CHANNEL_PICKED_KEY`) or says `beta`; an unmarked `stable` row is
-     * ignored. Without a row it is config.json's `channel`, else the version's
-     * own default (`defaultChannelForVersion`; Config.ts overlayStoredChannel).
-     * Only a channel write through `Config.updateAppConfig` -- the Updates
-     * tab's Save, or this method -- writes the row and its marker, and
+     * The channel a version boots with (Config.ts `resolveChannel`) is the
+     * `app_settings` row when it is pinned (`CHANNEL_PINNED_KEY`) or says
+     * `beta`; an unpinned `stable` row gives the version's own default
+     * (`defaultChannelForVersion`) without consulting config.json. With no row
+     * it is config.json's `channel` when that says `beta`, else the version's
+     * default. Every channel write goes through `Config.updateAppConfig` -- the
+     * Updates tab's Save, PATCH /api/config, PATCH /api/updates/config, and
+     * this method -- which stores the row and its pin in one savepoint, and
      * `Config.saveToDisk` never writes `channel` into config.json (the Windows
      * MSI's skeleton value is dropped by the first save). So a beta install
      * whose user never touched the radio is on beta only by its version's
@@ -964,17 +966,17 @@ export class UpdateService {
      * offered a beta again (review 2026-10-07, finding 1).
      *
      * Written only when the target's default differs from the configured
-     * channel and the row does not already say it WITH the marker: a beta
-     * install taking a beta release, or a stable install taking a stable one,
-     * writes nothing, as before. A row that already matches but carries no
-     * marker (a `beta` this method wrote before the marker existed) is written
-     * again, so the marker lands beside it. The write goes through
-     * `updateAppConfig`, which writes row and marker together. The channel is
-     * read from Config now, not from `this.channel`, so this writes the value
-     * the user has at this moment and cannot undo a later radio change; the
-     * read and the write are one synchronous step.
+     * channel and the row does not already say it WITH the pin: a beta install
+     * taking a beta release, or a stable install taking a stable one, writes
+     * nothing, as before. A row that already matches but carries no pin (a
+     * `beta` this method wrote before the pin existed) is written again, so the
+     * pin lands beside it. The channel is read from Config now, not from
+     * `this.channel`, so this writes the value the user has at this moment and
+     * cannot undo a later radio change; the read and the write are one
+     * synchronous step.
      *
-     * A failed write refuses the apply. Going ahead would silently move the
+     * A failed write -- of the row or of its pin -- refuses the apply, and the
+     * savepoint leaves neither stored. Going ahead would silently move the
      * install to the other channel; refusing happens before anything has been
      * touched (no swap, no stopped streams), so the update stays `ready` and can
      * be retried.
@@ -990,7 +992,7 @@ export class UpdateService {
         if (defaultChannelForVersion(targetVersion) === channel) return;
         try {
             const settings = config.db.appSettings;
-            if (settings.get('channel') === channel && settings.get(CHANNEL_PICKED_KEY) === true) return;
+            if (settings.get('channel') === channel && settings.get(CHANNEL_PINNED_KEY) === true) return;
             config.updateAppConfig({ channel });
         } catch (err) {
             const msg = `could not record the ${channel} channel before installing v${targetVersion}: ${(err as Error).message}`;

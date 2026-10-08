@@ -1026,18 +1026,18 @@ describe('UpdateService', () => {
         expect(channelAfterRestartAs('0.1.30-beta.31')).toBe('beta');
     });
 
-    // ── The channel it stores is marked as picked (2026-10-08) ──
+    // ── The channel it stores is pinned (2026-10-08) ──
     //
-    // A stored channel overrides a build's default only when CHANNEL_PICKED_KEY
-    // sits beside it (an unmarked `stable` is ignored at load), so what
-    // keepChannelAcrossApply writes must carry the marker too.
+    // A stored `stable` overrides a build's default only when CHANNEL_PINNED_KEY
+    // sits beside it (an unpinned `stable` is ignored at load), so what
+    // keepChannelAcrossApply writes must carry the pin too.
 
-    /** The app_settings marker row (undefined when none is stored). */
-    function storedMarker(): unknown {
-        return Config.getInstance().db.appSettings.get('channelPickedByUser');
+    /** The app_settings pin row (undefined when none is stored). */
+    function storedPin(): unknown {
+        return Config.getInstance().db.appSettings.get('channelPinned');
     }
 
-    it('beta install with no stored channel: taking a stable release stores beta WITH the picked marker', async () => {
+    it('beta install with no stored channel: taking a stable release stores beta WITH the pin', async () => {
         betaBuildWithNoStoredChannel();
         Config.getInstance().updateAppConfig({ autoUpdate: false });
         api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
@@ -1045,19 +1045,19 @@ describe('UpdateService', () => {
         svc.init();
         await settled(svc);
         expect(svc.getStatus()).toMatchObject({ status: 'ready', pendingChannel: 'stable' });
-        expect(storedMarker()).toBeUndefined();
+        expect(storedPin()).toBeUndefined();
 
         await svc.applyUpdate();
 
         expect(storedChannel()).toBe('beta');
-        expect(storedMarker()).toBe(true);
+        expect(storedPin()).toBe(true);
         expect(channelAfterRestartAs(STABLE)).toBe('beta');
     });
 
-    it('a beta row stored before the marker existed gets the marker when a stable release is taken', async () => {
-        // v0.5.0's keepChannelAcrossApply wrote `beta` with no marker. The row
+    it('a beta row stored before the pin existed gets the pin when a stable release is taken', async () => {
+        // v0.5.0's keepChannelAcrossApply wrote `beta` with no pin. The row
         // already matches, which used to return early -- it must now still
-        // write, so the marker lands beside it.
+        // write, so the pin lands beside it.
         betaBuildWithNoStoredChannel();
         Config.getInstance().db.appSettings.set('channel', 'beta');
         Config.getInstance().updateAppConfig({ autoUpdate: false });
@@ -1066,19 +1066,42 @@ describe('UpdateService', () => {
         svc.init();
         await settled(svc);
         expect(svc.getStatus().status).toBe('ready');
-        expect(storedMarker()).toBeUndefined();
+        expect(storedPin()).toBeUndefined();
 
         await svc.applyUpdate();
 
         expect(storedChannel()).toBe('beta');
-        expect(storedMarker()).toBe(true);
+        expect(storedPin()).toBe(true);
         expect(channelAfterRestartAs(STABLE)).toBe('beta');
     });
 
-    it('a beta row already marked as picked is not written again', async () => {
+    it('a stable build on an unpinned beta row stays on beta across a stable release, and the row gets the pin', async () => {
+        // A stable install whose v0.5.0-era row says beta (written without a
+        // pin) is on beta; the stable release it takes must not move it.
+        vi.mocked(getAppVersion).mockReturnValue('0.1.29');
+        Config._resetForTest();
+        Config.getInstance().db.appSettings.set('channel', 'beta');
+        Config._resetForTest();
+        expect(Config.getInstance().getAppConfig().channel).toBe('beta');
+        expect(storedPin()).toBeUndefined();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const svc = betaInstallService('win32', STABLE);
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', pendingChannel: 'stable' });
+
+        await svc.applyUpdate();
+
+        expect(storedChannel()).toBe('beta');
+        expect(storedPin()).toBe(true);
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('a beta row already pinned is not written again', async () => {
         betaBuildWithNoStoredChannel();
         Config.getInstance().updateAppConfig({ channel: 'beta', autoUpdate: false });
-        expect(storedMarker()).toBe(true);
+        expect(storedPin()).toBe(true);
         api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
         const svc = betaInstallService('win32', STABLE);
         svc.init();
@@ -1095,10 +1118,10 @@ describe('UpdateService', () => {
         expect(channelAfterRestartAs(STABLE)).toBe('beta');
     });
 
-    it('a beta build on an unmarked stable row left by an earlier install keeps beta across a stable release', async () => {
-        // The 2026-10-08 report: the row reads `stable` but was never picked, so
+    it('a beta build on an unpinned stable row left by an earlier install keeps beta across a stable release', async () => {
+        // The 2026-10-08 report: the row reads `stable` but is not pinned, so
         // the beta build is on beta. Taking a stable release must store beta,
-        // marked, or the stable version would boot on the leftover row.
+        // pinned, or the stable version would boot on the leftover row.
         betaBuildWithNoStoredChannel();
         Config.getInstance().db.appSettings.set('channel', 'stable');
         vi.mocked(getAppVersion).mockReturnValue(BETA_BUILD);
@@ -1114,8 +1137,43 @@ describe('UpdateService', () => {
         await svc.applyUpdate();
 
         expect(storedChannel()).toBe('beta');
-        expect(storedMarker()).toBe(true);
+        expect(storedPin()).toBe(true);
         expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('a pin that cannot be written refuses the apply and leaves no channel row behind', async () => {
+        // The real updateAppConfig runs: only the pin's own write fails. The row
+        // and the pin are one savepoint, so the apply is refused with NOTHING
+        // stored -- not a beta row the caller was told was never written.
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const spawnMock = vi.mocked(child_process.spawn);
+        spawnMock.mockClear();
+        const svc = betaInstallService('win32', STABLE);
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+        const settings = Config.getInstance().db.appSettings;
+        const realSet = settings.set.bind(settings);
+        const set = vi.spyOn(settings, 'set').mockImplementation((key: string, value: unknown) => {
+            if (key === 'channelPinned') throw new Error('disk I/O error');
+            realSet(key, value);
+        });
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(
+                /could not record the beta channel before installing v0\.1\.30: disk I\/O error/,
+            );
+        } finally {
+            set.mockRestore();
+        }
+
+        expect(storedChannel()).toBeUndefined();
+        expect(storedPin()).toBeUndefined();
+        expect(Config.getInstance().getAppConfig().channel).toBe('beta');
+        expect(spawnMock).not.toHaveBeenCalled();
+        expect(svc.getStatus().status).toBe('ready');
     });
 
     it('applying stores the channel the user has NOW, not the one the service last checked with', async () => {
