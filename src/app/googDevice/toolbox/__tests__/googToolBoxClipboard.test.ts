@@ -8,9 +8,11 @@ import { describe, expect, it, vi } from 'vitest';
  * It used to send GET_CLIPBOARD with copy_key NONE (`[0x08, 0x00]`). Upstream's
  * Controller.getClipboard only answers that when clipboard autosync is OFF, and
  * we leave autosync on, so the device said nothing and the button did nothing.
- * It now sends what upstream's own client sends for Ctrl+C (input_manager.c,
- * `get_device_clipboard(im, SC_COPY_KEY_COPY)`): the device presses COPY on its
- * selection, and autosync carries the text back.
+ * It now sends what upstream's own client sends for its MOD+c shortcut
+ * (input_manager.c, `get_device_clipboard(im, SC_COPY_KEY_COPY)`; MOD is scrcpy's
+ * shortcut modifier, and a plain Ctrl+C goes to the device as keys): the device
+ * presses COPY on its selection, and autosync carries the text back. The device
+ * only presses COPY on Android 7 and later.
  */
 
 // The icons are SVG imports, which are irrelevant here and need a bundler.
@@ -72,7 +74,7 @@ describe('GoogToolBox clipboard GET button', () => {
         return button!;
     }
 
-    it('sends GET_CLIPBOARD with copy_key COPY, the bytes upstream sends for Ctrl+C', () => {
+    it('sends GET_CLIPBOARD with copy_key COPY, the bytes upstream sends for MOD+c', () => {
         const { holder, sent } = build();
 
         getButton(holder).click();

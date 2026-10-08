@@ -145,7 +145,7 @@ All communication between browser and server flows through a single WebSocket co
 | `VIDEO` | `0` | Server -> Browser | Encoded video frames |
 | `AUDIO` | `1` | Server -> Browser | Encoded audio frames |
 | `CONTROL` | `2` | Browser -> Server | Touch, key, scroll, UHID commands |
-| `DEVICE_MSG` | `3` | Server -> Browser | Clipboard, ACK and UHID output from device. Relayed as raw control-socket chunks, not one message per frame; the browser reassembles them (`DeviceMessageFramer`) |
+| `DEVICE_MSG` | `3` | Server -> Browser | Clipboard, ACK and UHID output from device. Relayed as raw control-socket chunks, not one message per frame; the browser reassembles them (`DeviceMessageFramer`). An unknown message type stops reassembly for the rest of the connection, since its length, and so the next message's start, cannot be known |
 | `METADATA` | `4` | Server -> Browser | Session metadata (sent once at start) |
 | `SESSION` | `5` | Server -> Browser | Capture-session change: the device rotated or the capture was resized (`{width, height}` JSON, sent on each change) |
 

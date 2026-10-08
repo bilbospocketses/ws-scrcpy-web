@@ -148,12 +148,18 @@ export class GoogToolBox extends ToolBox {
         elements.push(refresh);
 
         // GET: copy the device's selection to the host clipboard. This is what
-        // upstream scrcpy sends for Ctrl+C (input_manager.c, SC_COPY_KEY_COPY):
-        // the device presses COPY on its current selection, and the clipboard
-        // autosync we leave on carries the new text back as a CLIPBOARD device
-        // message. With copy_key NONE the device stays silent while autosync is
-        // on (Controller.getClipboard only replies when it is off), so the
-        // button did nothing at all.
+        // upstream scrcpy sends for its MOD+c shortcut (input_manager.c,
+        // SC_COPY_KEY_COPY; MOD is scrcpy's shortcut modifier, and a plain
+        // Ctrl+C is forwarded to the device as keys): the device presses COPY
+        // on its current selection, and the clipboard autosync we leave on
+        // carries the new text back as a CLIPBOARD device message. With
+        // copy_key NONE the device stays silent while autosync is on
+        // (Controller.getClipboard only replies when it is off), so the button
+        // did nothing at all.
+        //
+        // It still does nothing when there is no selection, and on Android 5
+        // and 6: the server injects KEYCODE_COPY only from Android 7 (API 24),
+        // and with autosync on it sends no reply of its own.
         const clipGet = new ToolBoxButton('copy device selection to host clipboard', SvgImage.Icon.CLIPBOARD_GET);
         clipGet.addEventListener('click', () => {
             client.sendMessage(CommandControlMessage.createGetClipboardCommand(CommandControlMessage.COPY_KEY_COPY));
