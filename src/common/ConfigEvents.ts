@@ -141,7 +141,7 @@ export const VALID_INSTALL_MODES: ReadonlyArray<InstallMode> = ['user', 'user-se
 export const VALID_CHANNELS: ReadonlyArray<UpdateChannel> = ['stable', 'beta'];
 
 /**
- * The update channel a build defaults to when config.json does not name one.
+ * The update channel a build defaults to when nothing pins another one.
  *
  * A prerelease build (`0.1.30-beta.114`) defaults to `beta`; anything else to
  * `stable`. Before 2026-09-09 the default was `stable` for every build, so a
@@ -150,9 +150,22 @@ export const VALID_CHANNELS: ReadonlyArray<UpdateChannel> = ['stable', 'beta'];
  * Arc 3 as `status: error … 404` against a beta-only feed. The MSI install hook
  * (`launcher/src/hooks.rs::default_channel_for_version`) derives the same answer
  * from the version Velopack hands it, so the skeleton config and the runtime
- * agree. Existing configs are NOT migrated: a written `stable` cannot be told
- * apart from a user's choice. `APP_CONFIG_DEFAULTS.channel` stays `stable` as
- * the schema default; `Config` substitutes this at load time.
+ * agree. `APP_CONFIG_DEFAULTS.channel` stays `stable` as the schema default;
+ * `Config` substitutes this at load time.
+ *
+ * A stored `stable` overrides this only when it is pinned. Since 2026-10-08
+ * every channel write through `Config.updateAppConfig` (the Updates tab's Save,
+ * PATCH /api/config, PATCH /api/updates/config, and
+ * `UpdateService.keepChannelAcrossApply`) stores `channelPinned` beside the
+ * `channel` row, in one savepoint. At load (Config.ts `resolveChannel`):
+ * a pinned row wins; an unpinned `beta` row is honoured (only a channel write
+ * or keepChannelAcrossApply ever wrote one); an unpinned `stable` row gives
+ * this default without consulting config.json -- it cannot be told apart from
+ * one left by an earlier install whose data folder was kept, which is how a
+ * beta build came up on stable (v0.1.30-beta.205, 2026-10-08). With no row,
+ * config.json's `beta` is honoured and its `stable` gives this default (a kept
+ * config.json is as stale as a kept row; on a stable build it is this default
+ * anyway). Nothing is rewritten at boot; the rule is applied on read.
  */
 export function defaultChannelForVersion(version: string): UpdateChannel {
     return /-beta(?:[.\-+]|$)/i.test(version) ? 'beta' : 'stable';

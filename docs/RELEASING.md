@@ -89,7 +89,7 @@ After a stable `X.Y.Z` has shipped, never ship another `X.Y.Z-beta.N`: the stabl
 
 **Never add `prerelease: true` back.** The resolver treats a prerelease as a retracted release and never offers it, so flagging betas would hide every beta from beta-channel installs. The flag is reserved for the rollback procedure below, which relies on exactly that skip.
 
-Beta users opt in by setting `channel=beta` in Settings → Updates (stored in the app's database, `app_settings`; a beta build with no stored channel is on beta already); they receive betas and stable releases.
+Beta users opt in by setting `channel=beta` in Settings → Updates (stored in the app's database, `app_settings`, together with a `channelPinned` row; a beta build is on beta already unless `stable` was saved on the Updates tab, because on a beta build a database `stable` without the pin is ignored, and so is a `config.json` `stable` when the database holds no channel; a `config.json` `beta` still counts); they receive betas and stable releases.
 
 **Note on no-op companion releases:** earlier in the v0.1.23-beta.{1..18} chain, every fix beta was paired with a no-op target beta (e.g., beta.13 fix + beta.14 no-op) so we could test the in-app updater itself. Once the updater stabilized at beta.23, that practice was retired — fix betas now ship solo, and the upgrade path is tested by installing any earlier kept beta and updating to the new one (the smoke doc's Module 6 names the current "update from" build).
 

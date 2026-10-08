@@ -1,11 +1,19 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_CONFIG_DEFAULTS, defaultChannelForVersion } from '../../common/ConfigEvents';
 import { getAppVersion } from '../appVersion';
 import { Config, ConfigValidationError } from '../Config';
 import { EnvName } from '../EnvName';
+
+// A pass-through: getAppVersion returns the real version everywhere in this
+// file except inside the one channel test that pins a version and then resets
+// it (config.channelPin.test.ts mocks the same way).
+vi.mock('../appVersion', async (importOriginal) => {
+    const real = await importOriginal<typeof import('../appVersion')>();
+    return { getAppVersion: vi.fn(real.getAppVersion) };
+});
 
 // The channel a config that says nothing defaults to is the BUILD's, derived from
 // package.json's version (a beta build -> 'beta'), not the schema's static 'stable'.
@@ -67,12 +75,26 @@ describe('Config — AppConfig extension', () => {
         expect(c.channel).toBe(BUILD_CHANNEL);
     });
 
-    it('an explicit channel in config.json is respected whatever the build is', () => {
-        // A written value cannot be told apart from a user's choice, so it wins.
-        setup({ channel: 'stable' });
-        expect(Config.getInstance().getAppConfig().channel).toBe('stable');
-        setup({ channel: 'beta' });
-        expect(Config.getInstance().getAppConfig().channel).toBe('beta');
+    it("config.json's beta is respected whatever the build is; its stable gives the build's channel", () => {
+        // A kept config.json's `stable` cannot be told from one an earlier
+        // install left behind, so only `beta` moves the channel off the build's
+        // default (Config.ts resolveChannel). Run on BOTH kinds of build: on a
+        // stable build `stable` is the default anyway, so only the beta build
+        // shows that a config.json `stable` is ignored.
+        const channelOn = (version: string, fileChannel: string): string => {
+            vi.mocked(getAppVersion).mockReturnValue(version);
+            setup({ channel: fileChannel });
+            return Config.getInstance().getAppConfig().channel;
+        };
+        try {
+            expect(channelOn('0.5.0', 'beta')).toBe('beta');
+            expect(channelOn('0.5.0', 'stable')).toBe('stable');
+            expect(channelOn('0.5.1-beta.3', 'beta')).toBe('beta');
+            expect(channelOn('0.5.1-beta.3', 'stable')).toBe('beta');
+        } finally {
+            // Back to the real version for the rest of the suite.
+            vi.mocked(getAppVersion).mockReset();
+        }
     });
 
     it('falls back to default for an out-of-range webPort', () => {

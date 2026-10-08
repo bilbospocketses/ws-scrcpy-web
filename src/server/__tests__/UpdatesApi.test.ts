@@ -528,6 +528,20 @@ describe('UpdatesApi', () => {
         expect(svc.reconfigure).not.toHaveBeenCalled();
     });
 
+    it('PATCH /config: a client cannot set the channel pin; only a channel write sets it', async () => {
+        const svc = fakeService({ isInstalled: true });
+        const api = new UpdatesApi(svc);
+        const first = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ channelPinned: true }));
+        await api.handle(first.req, first.res);
+        expect((first.res as any).getStatus()).toBe(200);
+        expect(Config.getInstance().db.appSettings.get('channelPinned')).toBeUndefined();
+
+        const second = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ channel: OTHER_CHANNEL }));
+        await api.handle(second.req, second.res);
+        expect((second.res as any).getStatus()).toBe(200);
+        expect(Config.getInstance().db.appSettings.get('channelPinned')).toBe(true);
+    });
+
     it('PATCH /config: interval change triggers svc.restartTimer', async () => {
         const svc = fakeService({ isInstalled: true });
         const api = new UpdatesApi(svc);
