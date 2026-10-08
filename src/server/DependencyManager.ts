@@ -6,7 +6,7 @@ import path from 'path';
 import type { Writable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { promisify } from 'util';
-import { SERVER_JAR_SHA256 } from '../common/Constants';
+import { SERVER_JAR_SHA256, SERVER_VERSION } from '../common/Constants';
 import type { DependencyInfo, LatestLookup, UpdateResult } from '../common/DependencyTypes';
 import { compareVersions, DependencyStatus } from '../common/DependencyTypes';
 import {
@@ -37,14 +37,19 @@ import { parseSha256Sums } from './linuxUpdateAssets';
 import { liveStreams } from './liveStreams';
 import { defaultMkcertProvenanceDeps, MKCERT_URL_BASE_ENV, verifyMkcertManifestProvenance } from './mkcertProvenance';
 import { NODE_RELEASE_KEYS, SCRCPY_RELEASE_KEYS } from './release-keys/pinnedReleaseKeys';
-import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
+import {
+    readScrcpyServerVersionMarker,
+    removeScrcpyServerVersionMarker,
+    scrcpyServerVersionForSha256,
+    writeInstalledScrcpyServerVersion,
+} from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, rmTreeSyncWithRetry, writeFileAtomicSync } from './util/atomicFile';
 import { fetchWithRetry, HttpStatusError, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
 import { ensureRootOwnedTreeIfRoot } from './util/rootOwnedTree';
 import { tarExtractArgs } from './util/tarExtract';
 import { type ReleaseKeySet, ReleaseSignatureError, verifyDetachedSignature } from './verifyOpenPgp';
-import { verifySha1, verifySha256 } from './verifySha256';
+import { sha256FileSync, verifySha1, verifySha256 } from './verifySha256';
 import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
@@ -144,6 +149,12 @@ export class DependencyManager {
     private readonly releaseKeys: DependencyReleaseKeys;
     /** Windows only: the Authenticode check on every downloaded platform-tools binary -- see `adbAuthenticode.ts`. */
     private readonly checkAuthenticode: AuthenticodeChecker;
+    /**
+     * Config.dockerMode. In a container the image owns scrcpy-server: updates
+     * are refused there ("Pull a newer image to update"), so the boot repair
+     * replaces a volume's jar with the image's seed whenever they differ.
+     */
+    private readonly inContainer: boolean;
 
     constructor(
         private readonly depsPath: string,
@@ -165,6 +176,7 @@ export class DependencyManager {
         } = {},
     ) {
         this.releaseKeys = opts.releaseKeys ?? PINNED_RELEASE_KEYS;
+        this.inContainer = opts.inContainer === true;
         this.checkAuthenticode = opts.checkAuthenticode ?? defaultAuthenticodeChecker;
         // Default to <depsPath>/.restart preserves pre-Phase-1 behavior for
         // tests that don't care about the marker location. Production code
@@ -587,20 +599,199 @@ export class DependencyManager {
      * root that contains seed/. This mirrors the Rust launcher's
      * `exe_dir.join("seed")` resolution for seed/node.
      */
-    /** @returns true when this call copied the seed in. */
+    /**
+     * The copy records the version the seed's hash names in the `.version`
+     * marker (`verifiedSeedScrcpyServer`). Normally that is SERVER_VERSION,
+     * but a seed left over from an older build -- `npm run start:no-supervisor`
+     * skips `stage-seed` -- is recorded as what it is, so the panel offers the
+     * update instead of a 4.1 jar being marked 5.0 for good. A seed matching no
+     * pin is refused, and the download below installs scrcpy-server instead.
+     * Before 2026-10-07 the promote wrote no marker; see
+     * `repairScrcpyServerVersionMarker` for the installs left that way.
+     *
+     * @returns true when this call copied the seed in.
+     */
     private promoteSeedScrcpyServer(): boolean {
-        const seedFile = DependencyManager.seedScrcpyServerPath();
-        const destDir = path.join(this.depsPath, 'scrcpy-server');
-        const destFile = path.join(destDir, 'scrcpy-server');
+        const destFile = path.join(this.depsPath, 'scrcpy-server', 'scrcpy-server');
         if (fs.existsSync(destFile)) {
             return false; // already promoted or updater-installed
         }
-        if (!fs.existsSync(seedFile)) {
-            return false; // no seed available — autoInstallMissing will fall through to network download
+        const seed = this.verifiedSeedScrcpyServer();
+        if (seed === null) {
+            return false; // no usable seed — autoInstallMissing will fall through to network download
         }
+        this.placeScrcpyServerJar(seed.file, seed.version);
+        log.info(`promoted seed scrcpy-server ${seed.version} → ${destFile}`);
+        return true;
+    }
+
+    /**
+     * The bundled seed and the version its SHA-256 names in SERVER_JAR_SHA256,
+     * or null -- logged -- when there is no seed, it cannot be read, or its
+     * hash matches no pin. Nothing is copied from a seed that has not passed
+     * through here (2026-10-08): the seed directory is not the build's, it is
+     * whatever was last staged into it.
+     */
+    private verifiedSeedScrcpyServer(): { file: string; version: string } | null {
+        const file = DependencyManager.seedScrcpyServerPath();
+        if (!fs.existsSync(file)) {
+            return null;
+        }
+        let digest: string;
+        try {
+            digest = sha256FileSync(file);
+        } catch (err) {
+            log.warn(`seed scrcpy-server at ${file} could not be read; not using it: ${(err as Error).message}`);
+            return null;
+        }
+        const version = scrcpyServerVersionForSha256(digest);
+        if (version === null) {
+            log.warn(
+                `seed scrcpy-server at ${file} matches no pinned version (SHA-256 ${digest}); refusing to install it`,
+            );
+            return null;
+        }
+        return { file, version };
+    }
+
+    /**
+     * Copies `src` in as <deps>/scrcpy-server/scrcpy-server and records
+     * `version`. The old marker is deleted FIRST: a crash after the copy then
+     * leaves a marker-less jar, which the boot repair and
+     * `getInstalledScrcpyServerVersion` identify by its hash, instead of the new
+     * jar under the old jar's marker, which nothing would ever question. The
+     * copy itself is atomic (a rename), so the jar is never half-written.
+     */
+    private placeScrcpyServerJar(src: string, version: string): void {
+        const destDir = path.join(this.depsPath, 'scrcpy-server');
         fs.mkdirSync(destDir, { recursive: true });
-        copyFileAtomicSync(seedFile, destFile);
-        log.info(`promoted seed scrcpy-server → ${destFile}`);
+        removeScrcpyServerVersionMarker(this.depsPath);
+        copyFileAtomicSync(src, path.join(destDir, 'scrcpy-server'));
+        writeInstalledScrcpyServerVersion(this.depsPath, version);
+    }
+
+    /**
+     * Gives a `<deps>/scrcpy-server/scrcpy-server` with no `.version` marker
+     * one, and in a container makes the jar the image's own. Called once at
+     * boot by `index.ts`, synchronously, right after the manager is built and
+     * before any service starts -- so before any probe or stream reads the
+     * version -- which is why it is not in `autoInstallMissing`: that runs only
+     * after `checkAll`'s network lookups, by when a device may already be
+     * streaming.
+     *
+     * Who has a marker-less jar: every install whose scrcpy-server came from
+     * the seed promote before that wrote the marker (Docker's persistent
+     * `/data/dependencies` included). Its version was answered by the
+     * SERVER_VERSION fallback, so once an app update bumps SERVER_VERSION the
+     * old jar would be started with the new version string, which the server
+     * refuses ("The server version (X) does not match the client (Y)"), and the
+     * panel would report the new version and offer no update.
+     *
+     * - Marker present, outside a container: nothing is read or written. The
+     *   jar is never hashed.
+     * - Jar matching a SERVER_JAR_SHA256 pin: that version is recorded. The jar
+     *   keeps working, and the panel offers SERVER_VERSION as an update.
+     * - In a container (2026-10-08), a jar whose marker or pin names a version
+     *   other than SERVER_VERSION is replaced by the image's seed instead. The
+     *   image owns scrcpy-server there: updates are refused ("Pull a newer image
+     *   to update") and the panel is replaced by a note, while the promote never
+     *   overwrites a jar the volume already holds -- so without this, a volume
+     *   repaired to 4.1 would stay on 4.1 under every later image, and so would
+     *   any volume across any later SERVER_VERSION bump.
+     * - Jar matching no pin, or unreadable: the seed is copied over it and the
+     *   seed's version recorded. Nothing installed it that we can name a
+     *   version for, and the seed is the one jar this build is known to work
+     *   with. It cannot be a newer jar from the updater: `installScrcpyServer`
+     *   writes the marker in the same step as the jar, and has since 508da053
+     *   (2026-05-12); one that crashed between the copy and the marker left a
+     *   jar it was offered, which is capped at SERVER_VERSION and so pinned. A
+     *   marker-less jar is otherwise a seed promote or an updater install from
+     *   before then, and either way has been started with SERVER_VERSION ever
+     *   since -- which works only for the SERVER_VERSION jar, and that one is
+     *   pinned, so it lands in the case above.
+     * - No usable seed (a dev tree that never ran `stage-seed`, or a seed
+     *   matching no pin -- see `verifiedSeedScrcpyServer`): the jar is left
+     *   alone; logged. `getInstalledScrcpyServerVersion` still identifies a
+     *   pinned jar by its hash.
+     *
+     * Never throws: a failure here must not stop the server booting.
+     */
+    public repairScrcpyServerVersionMarker(): void {
+        const destFile = path.join(this.depsPath, 'scrcpy-server', 'scrcpy-server');
+        try {
+            if (!fs.existsSync(destFile)) {
+                return; // nothing installed: the promote or the download that installs it writes the marker
+            }
+            const marker = readScrcpyServerVersionMarker(this.depsPath);
+            if (marker !== null) {
+                if (this.inContainer && marker !== SERVER_VERSION) {
+                    this.replaceWithImageSeed(destFile, marker);
+                }
+                return;
+            }
+            let digest: string | null = null;
+            try {
+                digest = sha256FileSync(destFile);
+            } catch (err) {
+                log.warn(
+                    `scrcpy-server at ${destFile} has no version marker and could not be read: ${(err as Error).message}`,
+                );
+            }
+            const known = digest !== null ? scrcpyServerVersionForSha256(digest) : null;
+            if (known !== null) {
+                if (this.inContainer && known !== SERVER_VERSION && this.replaceWithImageSeed(destFile, known)) {
+                    return;
+                }
+                writeInstalledScrcpyServerVersion(this.depsPath, known);
+                log.info(
+                    `scrcpy-server at ${destFile} had no version marker; its SHA-256 is the pinned ${known} jar, ` +
+                        `so ${known} is recorded`,
+                );
+                return;
+            }
+            const seed = this.verifiedSeedScrcpyServer();
+            if (seed === null) {
+                log.warn(
+                    `scrcpy-server at ${destFile} has no version marker and matches no pinned version` +
+                        `${digest !== null ? ` (SHA-256 ${digest})` : ''}, and there is no usable seed to replace it ` +
+                        `with; leaving it, launched as ${SERVER_VERSION}`,
+                );
+                return;
+            }
+            this.placeScrcpyServerJar(seed.file, seed.version);
+            log.warn(
+                `scrcpy-server at ${destFile} had no version marker and matched no pinned version` +
+                    `${digest !== null ? ` (SHA-256 ${digest})` : ''}; replaced it with the bundled seed ` +
+                    `${seed.version}`,
+            );
+        } catch (err) {
+            log.warn(`scrcpy-server version marker repair failed: ${(err as Error).message}`);
+        }
+    }
+
+    /**
+     * Container only: copies the image's (verified) seed over a jar that is
+     * `installed`, unless the seed is that same version. Logged either way.
+     *
+     * @returns true when the seed was copied in.
+     */
+    private replaceWithImageSeed(destFile: string, installed: string): boolean {
+        const seed = this.verifiedSeedScrcpyServer();
+        if (seed === null) {
+            log.warn(
+                `scrcpy-server ${installed} at ${destFile} is not this image's ${SERVER_VERSION}, and there is no ` +
+                    'usable seed to replace it with; leaving it',
+            );
+            return false;
+        }
+        if (seed.version === installed) {
+            return false;
+        }
+        this.placeScrcpyServerJar(seed.file, seed.version);
+        log.info(
+            `scrcpy-server ${installed} at ${destFile} replaced with this image's bundled ${seed.version} ` +
+                '(in a container the image provides scrcpy-server)',
+        );
         return true;
     }
 
@@ -1128,16 +1319,14 @@ export class DependencyManager {
     }
 
     private async installScrcpyServer(downloadPath: string, version: string): Promise<void> {
-        // scrcpy-server is a direct binary download (no archive)
-        const destDir = path.join(this.depsPath, 'scrcpy-server');
-        fs.mkdirSync(destDir, { recursive: true });
-        const destFile = path.join(destDir, 'scrcpy-server');
-        copyFileAtomicSync(downloadPath, destFile);
-        // Persist the installed version so checkInstalled can report it back
-        // accurately on subsequent calls. Without this, the bundled
+        // scrcpy-server is a direct binary download (no archive). The marker
+        // records the installed version so checkInstalled can report it back
+        // accurately on subsequent calls. Without it, the bundled
         // SERVER_VERSION constant would be returned for any updater-installed
-        // version, producing a "perpetual Update available" UI loop.
-        writeInstalledScrcpyServerVersion(this.depsPath, version);
+        // version, producing a "perpetual Update available" UI loop. The old
+        // marker is deleted before the copy (2026-10-08), so a crash between
+        // the two never leaves the new jar under the old version.
+        this.placeScrcpyServerJar(downloadPath, version);
     }
 
     private async extractZip(zipPath: string, destDir: string): Promise<void> {

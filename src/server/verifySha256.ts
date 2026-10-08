@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { createReadStream } from 'fs';
+import { createReadStream, readFileSync } from 'fs';
 
 /** Stream-hash `filePath` with `algorithm` and return the lowercase hex digest. */
 function hashFile(filePath: string, algorithm: 'sha256' | 'sha1'): Promise<string> {
@@ -15,6 +15,17 @@ function hashFile(filePath: string, algorithm: 'sha256' | 'sha1'): Promise<strin
 /** Stream-hash `filePath` (sha256) and return the lowercase hex digest. */
 export function sha256File(filePath: string): Promise<string> {
     return hashFile(filePath, 'sha256');
+}
+
+/**
+ * `filePath`'s sha256 as a lowercase hex digest, read in one synchronous call.
+ * For the scrcpy-server jar (under 1 MB) on paths that must stay synchronous
+ * -- the boot-time marker repair and `getInstalledScrcpyServerVersion` -- and
+ * never for a large download, which `sha256File` streams. Throws when the file
+ * cannot be read.
+ */
+export function sha256FileSync(filePath: string): string {
+    return createHash('sha256').update(readFileSync(filePath)).digest('hex');
 }
 
 /** True iff `filePath`'s sha256 equals `expectedHex` (case-insensitive). */
