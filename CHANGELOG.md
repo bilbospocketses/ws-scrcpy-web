@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The bundled scrcpy-server is now v5.0.** Streaming works as before, since the server speaks the same protocol as v4.1; the difference you may notice is that capturing a device's playback audio now picks up more kinds of sound. Settings → Dependencies offers v5.0 to any install still on v4.1. In Docker, where Settings cannot update dependencies, pulling the new image replaces the v4.1 server on the `/data` volume with v5.0 at startup.
+- **docs: smoke row 8.32 checks audio by ear on a real Android 13+ device.** Rows 8.3 and 8.29 prove that audio connects and that the controls follow the Android version, but no automated run can hear: headless Chromium cannot assert sound, and redroid has no real audio hardware. The new manual row walks each audio source and codec on a real phone, including the notification sounds that scrcpy-server 5.0's playback capture now picks up, and the audio-off connect.
+
+### Fixed
+- **An install whose scrcpy-server was set up on first run now records its version, so an app update that ships a newer server replaces it instead of starting it with the wrong version.** The copy made on first run never noted which version it was, and the app assumed it was whatever version the app itself ships. After an update that ships a newer scrcpy-server, that would have started the old server with the new version number, which the server refuses, so no device would stream. On startup the app now identifies such a copy by its checksum and records its version (Settings → Dependencies then offers the update; in Docker the image's own server replaces it instead), and replaces a copy it cannot identify with the server it ships.
+- **In Docker, the scrcpy-server on the `/data` volume now follows the image.** A container cannot update dependencies from Settings, and the server copied onto the volume on first run was never replaced afterwards, so pulling a newer image kept the volume's older server. At startup the image's server now replaces the volume's whenever the two are different versions.
+- **A scrcpy-server update now reaches a device even when the new server file is the same size as the old one.** Before starting a stream the app sends the server to the device only when the copy already there differs, and it judged that by size alone. It now compares checksums, and falls back to the size on a device that cannot compute one.
+- **The app no longer installs an out-of-date bundled scrcpy-server as the current version.** The server copied in on first run was assumed to be the version the app ships, but a run from source that skips the staging step can leave an older one in place. The app now checks the bundled server's checksum before copying it, records the version it really is (so Settings → Dependencies offers the update), and refuses one it does not recognise.
+- **A scrcpy-server whose version could not be recorded, or an update interrupted partway, no longer starts with the wrong version number.** Either could leave the app starting the server with a version it is not, which the server refuses, so no device would stream. When no version is recorded the app now works it out from the server's checksum, and an update removes the old record before it replaces the file.
+
 ## [0.1.30-beta.201] - 2026-10-08
 
 ### Fixed
