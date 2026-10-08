@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.199] - 2026-10-08
+
 ### Fixed
 - **A device's stream settings now follow it across USB, Wi-Fi and a new IP address.** Video and audio settings were saved against the connection a device was reached on, not the device itself, so the same phone kept one set over USB and another over Wi-Fi, and lost its Wi-Fi set whenever the network gave it a new address. They are now saved against the device's serial number, so changing them on one connection changes them on all. Settings saved before this version are kept: the first time the server sees a device on the connection they were saved under, it takes them over for that device, unless the device already has settings of its own, which then win and the older ones are left untouched.
 - **A network scan now shows the model of a device the app has seen before.** The model the app remembers from an earlier connection was saved under the device's network address, while the scan looks devices up under their serial number, so a scan hit for a Wi-Fi device never showed it. The server now keeps one record per device under its serial number, folds the older address-keyed record into it the next time it sees the device, and also records the address a Wi-Fi device answers at, so the next scan finds the model.
