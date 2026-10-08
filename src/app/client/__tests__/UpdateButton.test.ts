@@ -86,3 +86,55 @@ describe('UpdateButton apply: a declined elevation prompt (smoke 14.10 sweep)', 
         expect(chip.querySelector('button.update-button-action')?.textContent).toBe('apply update v0.2.0');
     });
 });
+
+describe('UpdateButton apply: an install that downloads first (Windows, automatic download off)', () => {
+    it('the tooltip promises an install, not an already-downloaded update', async () => {
+        stubFetch({ ok: true, status: 200, body: { ok: true } });
+        const chip = createUpdateButton();
+        await flush();
+        expect(chip.title).toBe('click to install update');
+    });
+
+    it('shows the download while the apply request runs, and stops polling once the server goes down', async () => {
+        // setTimeout too: the 5 s reload after a successful apply must not fire.
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+        let status: UpdatesStatusResponse = ready;
+        let serverDown = false;
+        let answerApply: ((r: unknown) => void) | undefined;
+        const f = vi.fn((url: string) => {
+            if (url === '/api/updates/apply') {
+                return new Promise((resolve) => {
+                    answerApply = resolve;
+                });
+            }
+            if (serverDown) return Promise.reject(new TypeError('Failed to fetch'));
+            return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(status) });
+        });
+        vi.stubGlobal('fetch', f);
+        const statusPolls = (): number => f.mock.calls.filter((c) => c[0] === '/api/updates/status').length;
+        const label = (chip: HTMLElement): string | null | undefined =>
+            chip.querySelector('.update-button-label')?.textContent;
+
+        const chip = createUpdateButton();
+        await vi.advanceTimersByTimeAsync(0);
+        chip.querySelector<HTMLButtonElement>('button.update-button-action')!.click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(answerApply).toBeDefined();
+
+        // The apply request is held while the server downloads; the next poll shows it.
+        status = { ...ready, status: 'downloading', progress: 40 };
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(label(chip)).toBe('downloading update… 40%');
+
+        // Downloaded and handed off: the server answers, then exits.
+        serverDown = true;
+        answerApply!({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(label(chip)).toBe('restarting…');
+        const polls = statusPolls();
+        // The 2 s downloading cadence would have polled the stopped server twice by now.
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(statusPolls()).toBe(polls);
+        expect(label(chip)).toBe('restarting…');
+    });
+});

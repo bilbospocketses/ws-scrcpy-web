@@ -92,7 +92,8 @@ export function createUpdateButton(): HTMLElement {
         container.replaceChildren();
         setState('state-ready');
         container.style.display = 'flex';
-        container.title = note ?? 'click to apply downloaded update';
+        // Not "downloaded": with automatic download off, the click downloads it first.
+        container.title = note ?? 'click to install update';
 
         if (note) {
             const label = document.createElement('span');
@@ -226,6 +227,10 @@ export function createUpdateButton(): HTMLElement {
                 void poll();
                 return;
             }
+            // The server is going down. A Windows apply that downloaded first was
+            // polled on the 2 s downloading cadence, and a poll failing against the
+            // stopped server would paint "update check failed" over "restarting…".
+            clearTimer();
             const body = (await r.json().catch(() => ({}))) as { mode?: string };
             if (body.mode === 'reconnect') {
                 // Linux: the server is relaunching the AppImage. Show the
