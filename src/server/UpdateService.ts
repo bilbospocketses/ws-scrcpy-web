@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { HttpSource, type UpdateInfo, UpdateManager, type UpdateOptions, type VelopackLocatorConfig } from 'velopack';
-import type { UpdateChannel } from '../common/ConfigEvents';
+import { defaultChannelForVersion, type UpdateChannel } from '../common/ConfigEvents';
 import { WS_SCRCPY_SERVICE_NAME } from '../common/ServiceEvents';
 import type { UpdateState } from '../common/UpdateEvents';
 import { AdbClient } from './AdbClient';
@@ -315,7 +315,9 @@ export class UpdateService {
      * is genuinely newer. The stable channel never reads the beta feed.
      *
      * The configured channel stays `beta` whichever feed wins (nothing here
-     * writes config), so every check considers both again.
+     * writes config), so every check considers both again -- and so does the
+     * stable version a beta install updates to: applying it records `beta`
+     * first when the install has no stored channel ({@link keepChannelAcrossApply}).
      */
     private feedChannels(channel: UpdateChannel): UpdateChannel[] {
         return channel === 'beta' ? ['beta', 'stable'] : ['stable'];
@@ -674,6 +676,10 @@ export class UpdateService {
         const pendingChannel = this.state.pendingChannel ?? this.channel;
         this.streamsStoppedForApply = false;
         try {
+            // Before every path's first irreversible step (the machine-wide
+            // pkexec swap, each point of no return): the new version must boot
+            // on the channel this one is configured with.
+            this.keepChannelAcrossApply(pendingUpdate.TargetFullRelease.Version);
             return await this.applyByPath(mgr, pendingUpdate, pendingChannel);
         } catch (err) {
             this.applyInFlight = false;
@@ -685,6 +691,46 @@ export class UpdateService {
             if (this.streamsStoppedForApply) liveStreams.cancelStop();
             throw err;
         }
+    }
+
+    /**
+     * Make the configured channel survive the update to `targetVersion`.
+     *
+     * The channel a version boots with is the `app_settings` row, else
+     * config.json's `channel`, else the version's own default
+     * (`defaultChannelForVersion`, Config.ts). Only a change on the Updates tab
+     * writes the row, and `Config.saveToDisk` never writes `channel` into
+     * config.json (the Windows MSI's skeleton value is dropped by the first
+     * save). So a beta install whose user never touched the radio is on beta
+     * only by its version's default -- and the beta channel also offers stable
+     * releases (feedChannels), so taking one would boot it on stable, never to
+     * be offered a beta again (review 2026-10-07, finding 1).
+     *
+     * Written only when the target's default differs from the configured
+     * channel and the row does not already say it: a beta install taking a beta
+     * release, or a stable install taking a stable one, writes nothing, as
+     * before. The channel is read from Config now, not from `this.channel`, so
+     * this writes the value the user has at this moment and cannot undo a
+     * later radio change; the read and the write are one synchronous step.
+     *
+     * A failed write refuses the apply. Going ahead would silently move the
+     * install to the other channel; refusing happens before anything has been
+     * touched (no download, no swap, no stopped streams), so the update stays
+     * `ready` and can be retried.
+     */
+    private keepChannelAcrossApply(targetVersion: string): void {
+        const config = Config.getInstance();
+        const channel = config.getAppConfig().channel;
+        if (defaultChannelForVersion(targetVersion) === channel) return;
+        try {
+            if (config.db.appSettings.get('channel') === channel) return;
+            config.updateAppConfig({ channel });
+        } catch (err) {
+            const msg = `could not record the ${channel} channel before installing v${targetVersion}: ${(err as Error).message}`;
+            log.error(`applyUpdate: ${msg}`);
+            throw new Error(`apply: ${msg}`);
+        }
+        log.info(`applyUpdate: recorded the ${channel} channel so v${targetVersion} keeps it`);
     }
 
     /**

@@ -5,12 +5,13 @@ import * as path from 'path';
 import type { UpdateInfo, UpdateOptions, VelopackAsset } from 'velopack';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdbClient } from '../AdbClient';
+import { getAppVersion } from '../appVersion';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { liveStreams } from '../liveStreams';
 import { PkexecDeclinedError } from '../service/SystemdClient';
 import { stageSystemHelper } from '../service/systemHelper';
-import { type UpdateManagerLike, UpdateService } from '../UpdateService';
+import { type UpdateManagerLike, UpdateService, type UpdateServiceOptions } from '../UpdateService';
 import { RELEASES_PER_PAGE, type ResolvedReleaseFeed } from '../updateFeedResolver';
 import { betas, type FakeGithubApi, fakeGithubApi, release } from './helpers/fakeGithubReleases';
 
@@ -19,6 +20,14 @@ import { betas, type FakeGithubApi, fakeGithubApi, release } from './helpers/fak
 // it returns its real destination so the spawn's argv shows which was used.
 const STAGED = '/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher';
 vi.mock('../service/systemHelper', () => ({ stageSystemHelper: vi.fn(() => STAGED) }));
+
+// The running build's version decides the channel of an install with no stored
+// channel (defaultChannelForVersion). The real one unless a test pins it; the
+// tests of an update across that default (beta build -> stable release) do.
+vi.mock('../appVersion', async (importOriginal) => {
+    const real = await importOriginal<typeof import('../appVersion')>();
+    return { getAppVersion: vi.fn(real.getAppVersion) };
+});
 
 // Mock child_process.spawn so local-mode applyUpdate doesn't try to exec
 // the real operation-server helper binary (which doesn't exist in test).
@@ -190,6 +199,8 @@ describe('UpdateService', () => {
         liveStreams.closeAllForShutdown();
         liveStreams.cancelStop();
         vi.unstubAllGlobals();
+        // Back to the real version (vi.fn's original implementation).
+        vi.mocked(getAppVersion).mockReset();
         readFileSpy?.mockRestore();
         Config._resetForTest();
         if (savedEnv.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
@@ -752,6 +763,238 @@ describe('UpdateService', () => {
         );
         expect(fetched.some((u) => u.includes('linux-beta'))).toBe(false);
         expect(vi.mocked(child_process.spawn)).toHaveBeenCalledTimes(1);
+    });
+
+    // ── ...and stays on beta after installing it (review 2026-10-07, finding 1) ──
+    //
+    // A version boots on the stored app_settings channel, else config.json's,
+    // else its own version's default. A beta install whose radio was never
+    // touched stores none: it is on beta only because it is a beta BUILD, and
+    // the stable version it updates to would default to stable, never to be
+    // offered a beta again. applyUpdate stores the channel before any hand-off.
+
+    const BETA_BUILD = '0.1.30-beta.30';
+    const STABLE = '0.1.30';
+
+    /** A beta build with no stored channel: on beta by its version's default only. */
+    function betaBuildWithNoStoredChannel(): void {
+        vi.mocked(getAppVersion).mockReturnValue(BETA_BUILD);
+        Config._resetForTest();
+        expect(storedChannel()).toBeUndefined();
+        expect(Config.getInstance().getAppConfig().channel).toBe('beta');
+    }
+
+    /** The app_settings channel row (undefined when none is stored). */
+    function storedChannel(): unknown {
+        return Config.getInstance().db.appSettings.get('channel');
+    }
+
+    /** The channel the updated app boots on: a fresh Config load as `version`. */
+    function channelAfterRestartAs(version: string): string {
+        vi.mocked(getAppVersion).mockReturnValue(version);
+        Config._resetForTest();
+        return Config.getInstance().getAppConfig().channel;
+    }
+
+    /** Make the next spawn record the stored channel at the moment it is called. */
+    function recordChannelAtNextSpawn(): { atSpawn: unknown } {
+        const seen: { atSpawn: unknown } = { atSpawn: 'never spawned' };
+        const spawnMock = vi.mocked(child_process.spawn);
+        const base = spawnMock.getMockImplementation()!;
+        spawnMock.mockClear();
+        spawnMock.mockImplementationOnce(((...args: Parameters<typeof child_process.spawn>) => {
+            seen.atSpawn = storedChannel();
+            return base(...args);
+        }) as typeof child_process.spawn);
+        return seen;
+    }
+
+    function betaInstallService(
+        platform: NodeJS.Platform,
+        target: string,
+        extra: UpdateServiceOptions = {},
+        mgrOverrides: Partial<UpdateManagerLike> = {},
+    ): UpdateService {
+        return new UpdateService({
+            platform,
+            installRoot: platform === 'linux' ? path.join('/fake', 'mount', 'usr') : '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () =>
+                fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo(target), ...mgrOverrides }),
+            reapOwnAdbFn: async () => 0,
+            ...quietTimers,
+            ...extra,
+        });
+    }
+
+    /** A fetch serving `asset` with a matching SHA256SUMS, for the Linux apply. */
+    async function linuxAssetFetch(asset: string): Promise<typeof fetch> {
+        const { createHash } = await import('crypto');
+        const bytes = Buffer.from('APPIMAGE');
+        const sums = `${createHash('sha256').update(bytes).digest('hex')}  ./linux-final/${asset}\n`;
+        return vi.fn(async (url: string) =>
+            url.endsWith('.AppImage') ? new Response(bytes) : new Response(sums),
+        ) as unknown as typeof fetch;
+    }
+
+    it('precondition: with nothing stored, the stable version a beta build updates to boots on stable', () => {
+        betaBuildWithNoStoredChannel();
+        expect(channelAfterRestartAs(STABLE)).toBe('stable');
+    });
+
+    it('beta install with no stored channel (win32 local): a stable release is applied with beta stored before the hand-off', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const seen = recordChannelAtNextSpawn();
+        const svc = betaInstallService('win32', STABLE);
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', pendingChannel: 'stable' });
+
+        await svc.applyUpdate();
+
+        // The operation-server is the hand-off; the row was there before it.
+        expect(seen.atSpawn).toBe('beta');
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('beta install with no stored channel (win32 service): beta is stored before Velopack is handed the apply', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user-service' });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        let atHandoff: unknown = 'never handed off';
+        const svc = betaInstallService(
+            'win32',
+            STABLE,
+            {},
+            {
+                waitExitThenApplyUpdate: () => {
+                    atHandoff = storedChannel();
+                },
+            },
+        );
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+
+        await svc.applyUpdate();
+
+        expect(atHandoff).toBe('beta');
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('beta install with no stored channel (linux local): beta is stored before the apply helper is spawned', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const seen = recordChannelAtNextSpawn();
+        const svc = betaInstallService('linux', STABLE, {
+            fetchFn: await linuxAssetFetch('WsScrcpyWeb-linux-stable.AppImage'),
+        });
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', pendingChannel: 'stable' });
+
+        await svc.applyUpdate();
+
+        expect(seen.atSpawn).toBe('beta');
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('beta install with no stored channel (linux machine-wide): beta is stored before the pkexec swap', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        let atSwap: unknown = 'never swapped';
+        const svc = betaInstallService('linux', STABLE, {
+            fetchFn: await linuxAssetFetch('WsScrcpyWeb-linux-stable.AppImage'),
+            runPkexecFn: async () => {
+                atSwap = storedChannel();
+                return '';
+            },
+        });
+        process.env['APPIMAGE'] = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+
+        await svc.applyUpdate();
+
+        // The swap of the /opt binary is the first step that cannot be undone.
+        expect(atSwap).toBe('beta');
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('beta install with no stored channel: a beta release is applied without storing anything, and the new beta boots on beta', async () => {
+        // Its own default already says beta, so nothing is written: the install
+        // still follows its build's default, exactly as before.
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set(betas(3, 31));
+        const seen = recordChannelAtNextSpawn();
+        const svc = betaInstallService('win32', '0.1.30-beta.31');
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', pendingChannel: 'beta' });
+
+        await svc.applyUpdate();
+
+        expect(seen.atSpawn).toBeUndefined();
+        expect(storedChannel()).toBeUndefined();
+        expect(channelAfterRestartAs('0.1.30-beta.31')).toBe('beta');
+    });
+
+    it('applying stores the channel the user has NOW, not the one the service last checked with', async () => {
+        // The radio moves to stable after the check offered the stable release
+        // (in the app the PATCH then reconfigures; this is the moment before).
+        // The service still holds beta, but beta must not be written over the
+        // user's choice.
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const svc = betaInstallService('win32', STABLE);
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+        Config.getInstance().updateAppConfig({ channel: 'stable' });
+
+        await svc.applyUpdate();
+
+        expect(storedChannel()).toBe('stable');
+        expect(channelAfterRestartAs(STABLE)).toBe('stable');
+    });
+
+    it('a channel that cannot be stored refuses the apply before anything is touched', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        using probe = hygieneProbe();
+        const spawnMock = vi.mocked(child_process.spawn);
+        spawnMock.mockClear();
+        const svc = betaInstallService('win32', STABLE, { reapOwnAdbFn: probe.reapOwnAdbFn });
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+        const write = vi.spyOn(Config.getInstance(), 'updateAppConfig').mockImplementation(() => {
+            throw new Error('database is locked');
+        });
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(
+                /could not record the beta channel before installing v0\.1\.30: database is locked/,
+            );
+        } finally {
+            write.mockRestore();
+        }
+
+        expect(spawnMock).not.toHaveBeenCalled();
+        expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
+        expect(fs.existsSync(Config.getInstance().applyUpdatePendingMarkerPath)).toBe(false);
+        expect(svc.getStatus().status).toBe('ready');
+        // Not stuck as "in progress": once the write works, the retry goes ahead.
+        await svc.applyUpdate();
+        expect(storedChannel()).toBe('beta');
     });
 
     // ── A channel switch while work for the old channel is still running ──
