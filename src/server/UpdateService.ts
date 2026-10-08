@@ -25,6 +25,17 @@ import { reapOwnAdbOnWindows } from './util/reapOwnAdb';
 const log = Logger.for('UpdateService');
 
 /**
+ * How long one Velopack check (`checkForUpdatesAsync`) may run before the update
+ * check gives up on it. Velopack's HttpSource is built with no HttpOptions, and
+ * velopack 1.2.161's `TimeoutMilliseconds` defaults to 0, "never times out"
+ * (`lib/types.d.ts`): after a laptop sleep or on a half-open connection the
+ * call can wait forever, and since checks are serialised (runCheck) every
+ * later check would join it. The release lookup before it is already bounded
+ * (fetchWithRetry). The download is NOT given a deadline: it is ~60 MB.
+ */
+export const VELOPACK_CHECK_TIMEOUT_MS = 60_000;
+
+/**
  * Minimal subset of {@link UpdateManager} that UpdateService actually uses.
  * Lets unit tests inject a fake without dragging in the velopack native addon.
  */
@@ -95,6 +106,8 @@ export interface UpdateServiceOptions {
      * returns how many processes it killed. Default: {@link reapOwnAdbOnWindows}.
      */
     reapOwnAdbFn?: (adbPath: string) => Promise<number>;
+    /** Override {@link VELOPACK_CHECK_TIMEOUT_MS} for tests. */
+    velopackCheckTimeoutMs?: number;
 }
 
 export interface UpdateServiceState {
@@ -147,6 +160,18 @@ export class UpdateService {
     private generation = 0;
     /** The Velopack download in flight, if any, and the generation it was started for. */
     private download: { generation: number; done: Promise<void> } | null = null;
+    /**
+     * The update check in flight, if any, and the generation it was started
+     * for. A second check in the same generation joins it (see runCheck).
+     */
+    private check: { generation: number; done: Promise<UpdateServiceState> } | null = null;
+    /**
+     * The manager whose check produced `state.pendingUpdate`. Set and cleared
+     * with it (setPending / clearPending), never apart: a download or apply
+     * asks the release folder this manager reads for the package `pendingUpdate`
+     * names, and `mgr` may already have been rebuilt for a newer release.
+     */
+    private pendingMgr: UpdateManagerLike | null = null;
     private readonly resolver: ReleaseFeedResolver;
     private state: UpdateServiceState;
     private timer: NodeJS.Timeout | null = null;
@@ -159,7 +184,7 @@ export class UpdateService {
     /**
      * True while an applyUpdate is running. A second apply is refused: two at
      * once would race the swap and reset each other's streamsStoppedForApply.
-     * Cleared when an apply fails (it may be retried); a successful apply ends
+     * Update checks are skipped while it is set (runCheck). Cleared when an apply fails (it may be retried); a successful apply ends
      * in process exit, so it stays set.
      */
     private applyInFlight = false;
@@ -174,6 +199,7 @@ export class UpdateService {
     private readonly fetchFn: typeof fetch;
     private readonly runPkexecFn: (shellCmd: string, label: string) => Promise<string>;
     private readonly reapOwnAdbFn: (adbPath: string) => Promise<number>;
+    private readonly velopackCheckTimeoutMs: number;
 
     constructor(opts: UpdateServiceOptions = {}) {
         this.platform = opts.platform ?? process.platform;
@@ -273,6 +299,7 @@ export class UpdateService {
         this.fetchFn = opts.fetchFn ?? fetch;
         this.runPkexecFn = opts.runPkexecFn ?? runPkexec;
         this.reapOwnAdbFn = opts.reapOwnAdbFn ?? ((adbPath) => reapOwnAdbOnWindows(adbPath));
+        this.velopackCheckTimeoutMs = opts.velopackCheckTimeoutMs ?? VELOPACK_CHECK_TIMEOUT_MS;
         this.state = { isInstalled: false, currentVersion: '', status: 'idle' };
     }
 
@@ -354,6 +381,9 @@ export class UpdateService {
      * immediate check is fire-and-forget via void.
      */
     public init(): void {
+        // Every path below replaces `this.state` wholesale, which drops the
+        // pending update; its manager goes with it (see pendingMgr).
+        this.pendingMgr = null;
         // v0.1.17: detect Velopack install via Update.exe (Windows) instead
         // of sq.version. sq.version is Squirrel.Windows naming (Velopack's
         // predecessor); Velopack drops Update.exe at the install root next
@@ -440,8 +470,7 @@ export class UpdateService {
         this.generation++;
         this.channel = channel;
         this.githubOwner = githubOwner;
-        this.state.pendingUpdate = undefined;
-        this.state.pendingChannel = undefined;
+        this.clearPending();
         this.state.availableVersion = undefined;
         this.state.errorMessage = undefined;
         this.state.status = 'idle';
@@ -454,17 +483,59 @@ export class UpdateService {
     }
 
     /**
+     * One update check at a time per generation. A check asked for while one is
+     * already running for the current generation (the startup check, the
+     * interval timer, a manual check from the API) joins it, as a second
+     * download joins the first (downloadIfNeeded).
+     *
+     * Two checks used to run side by side, each resolving the newest release
+     * and swapping `mgr` for it across awaits. When the two resolved different
+     * releases (one published between them, or the beta channel's winning feed
+     * moving), the later-landing answer paired its UpdateInfo with the other
+     * check's manager, and the Windows download 404'd: Velopack's HttpSource
+     * joins the package name onto the manager's release folder.
+     *
+     * A check for an OLDER generation is not joined: reconfigure() bumps the
+     * generation and must get a check of the new channel, and the old check
+     * discards its own answer when it lands.
+     *
+     * Joining means a check that never ends would block every later one, so the
+     * Velopack step has a deadline ({@link VELOPACK_CHECK_TIMEOUT_MS}).
+     */
+    private runCheck(buildFailurePrefix: string): Promise<UpdateServiceState> {
+        if (this.applyInFlight) {
+            // The apply works from the update, manager and channel it captured,
+            // and a check now could set 'checking' over 'ready', replace or clear
+            // the pending update, or start a Velopack download into the packages
+            // folder the Windows hand-off is about to read. A failed apply clears
+            // applyInFlight, so checks resume, and checks at once if a
+            // reconfigure() was skipped here; a successful one ends in exit.
+            log.info('update check skipped: an update is being applied');
+            return Promise.resolve(this.state);
+        }
+        const generation = this.generation;
+        if (this.check && this.check.generation === generation) {
+            return this.check.done;
+        }
+        const done: Promise<UpdateServiceState> = this.performCheck(buildFailurePrefix, generation).finally(() => {
+            if (this.check?.done === done) this.check = null;
+        });
+        this.check = { generation, done };
+        return done;
+    }
+
+    /**
      * One update check: find the feed, (re)build the manager if the feed or
      * channel changed, ask Velopack. `buildFailurePrefix` labels a failed
-     * manager build, so a reconfigure that cannot build says so.
+     * manager build, so a reconfigure that cannot build says so. Never rejects.
+     * Only {@link runCheck} calls it.
      */
-    private async runCheck(buildFailurePrefix: string): Promise<UpdateServiceState> {
+    private async performCheck(buildFailurePrefix: string, generation: number): Promise<UpdateServiceState> {
         if (!this.mgr) {
             this.state.status = 'idle';
             return this.state;
         }
 
-        const generation = this.generation;
         const channel = this.channel;
         this.state.status = 'checking';
         this.state.errorMessage = undefined;
@@ -501,8 +572,7 @@ export class UpdateService {
                 this.state.lastCheckedAt = new Date();
                 this.state.status = 'idle';
                 this.state.availableVersion = undefined;
-                this.state.pendingUpdate = undefined;
-                this.state.pendingChannel = undefined;
+                this.clearPending();
                 return this.state;
             }
 
@@ -530,20 +600,20 @@ export class UpdateService {
                 }
             }
 
-            const info = await this.mgr.checkForUpdatesAsync();
+            // The manager this check asks is the one its answer is kept with.
+            const mgr = this.mgr;
+            const info = await this.velopackCheck(mgr);
             if (generation !== this.generation) return this.state;
             this.state.lastCheckedAt = new Date();
             if (info === null) {
                 this.state.status = 'idle';
                 this.state.availableVersion = undefined;
-                this.state.pendingUpdate = undefined;
-                this.state.pendingChannel = undefined;
+                this.clearPending();
                 return this.state;
             }
 
             this.state.availableVersion = info.TargetFullRelease.Version;
-            this.state.pendingUpdate = info;
-            this.state.pendingChannel = feedChannel;
+            this.setPending(info, feedChannel, mgr);
 
             const cfg = Config.getInstance().getAppConfig();
             // On Linux our apply downloads the published AppImage directly, so the
@@ -568,6 +638,27 @@ export class UpdateService {
     }
 
     /**
+     * `mgr.checkForUpdatesAsync()`, given up on after {@link VELOPACK_CHECK_TIMEOUT_MS}
+     * with an error, so the check ends as `error` and the next one runs. The
+     * abandoned call cannot be cancelled; whatever it answers later is dropped,
+     * because only the race's result is read and the race has already settled.
+     */
+    private async velopackCheck(mgr: UpdateManagerLike): Promise<UpdateInfo | null> {
+        const ms = this.velopackCheckTimeoutMs;
+        let timer: NodeJS.Timeout | undefined;
+        const deadline = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error(`update check timed out after ${ms / 1000} s`)), ms);
+            // A hung call must not keep a stopping server alive for the rest of the minute.
+            timer.unref?.();
+        });
+        try {
+            return await Promise.race([mgr.checkForUpdatesAsync(), deadline]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /**
      * Download the pending update. Updates progress.
      *
      * One download at a time, and only the current channel's result counts:
@@ -587,7 +678,7 @@ export class UpdateService {
      */
     public async downloadIfNeeded(): Promise<void> {
         const generation = this.generation;
-        if (!this.mgr || !this.state.pendingUpdate) return;
+        if (!this.pendingMgr || !this.state.pendingUpdate) return;
 
         while (this.download && this.download.generation !== generation) {
             // A waiter whose own channel was itself superseded must not touch the
@@ -598,7 +689,7 @@ export class UpdateService {
             log.info('waiting for the previous channel download to finish before starting this one');
             await this.download.done;
         }
-        if (generation !== this.generation || !this.mgr || !this.state.pendingUpdate) return;
+        if (generation !== this.generation || !this.pendingMgr || !this.state.pendingUpdate) return;
         if (this.download) {
             this.state.status = 'downloading';
             await this.download.done;
@@ -607,11 +698,27 @@ export class UpdateService {
 
         this.state.status = 'downloading';
         this.state.progress = 0;
-        const done: Promise<void> = this.runDownload(this.mgr, this.state.pendingUpdate, generation).finally(() => {
+        // The manager that produced the pending update, not `mgr`: a check may
+        // have rebuilt `mgr` for another release since.
+        const mgr = this.pendingMgr;
+        const done: Promise<void> = this.runDownload(mgr, this.state.pendingUpdate, generation).finally(() => {
             if (this.download?.done === done) this.download = null;
         });
         this.download = { generation, done };
         await done;
+    }
+
+    /** Keep a check's answer with the manager and feed channel that produced it. */
+    private setPending(info: UpdateInfo, channel: UpdateChannel, mgr: UpdateManagerLike): void {
+        this.state.pendingUpdate = info;
+        this.state.pendingChannel = channel;
+        this.pendingMgr = mgr;
+    }
+
+    private clearPending(): void {
+        this.state.pendingUpdate = undefined;
+        this.state.pendingChannel = undefined;
+        this.pendingMgr = null;
     }
 
     /** One Velopack download; never rejects. See {@link downloadIfNeeded}. */
@@ -661,7 +768,7 @@ export class UpdateService {
      * checksum) leaves adb, the open streams and the markers as they were.
      */
     public async applyUpdate(): Promise<{ redirectPort: number | null }> {
-        if (!this.mgr || !this.state.pendingUpdate || this.state.status !== 'ready') {
+        if (!this.pendingMgr || !this.state.pendingUpdate || this.state.status !== 'ready') {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
@@ -669,11 +776,25 @@ export class UpdateService {
             throw new Error('apply already in progress');
         }
         this.applyInFlight = true;
-        const mgr = this.mgr;
+        // The manager, update and channel one check produced together.
+        //
+        // `pendingMgr` rather than `mgr` is the second safeguard; today no user
+        // path reaches a `ready` state in which the two differ. `ready` is set
+        // only by the check that just paired the update with the manager it
+        // asked, or by that check's own download. A later check sets
+        // `checking` before it can rebuild `mgr`, and ends idle (pending
+        // cleared), ready (paired anew) or error (apply refused); a channel
+        // change clears the pending update; and no check runs during an apply.
+        // Only a direct downloadIfNeeded() during a check, which no route calls,
+        // could produce it.
+        const mgr = this.pendingMgr;
         const pendingUpdate = this.state.pendingUpdate;
         // The feed the pending update came from; set with it by every check. The
         // configured channel only covers a state no check produced.
         const pendingChannel = this.state.pendingChannel ?? this.channel;
+        // A reconfigure() during the apply bumps this, and its check is skipped
+        // (runCheck); a failed apply then checks the new channel itself.
+        const generation = this.generation;
         this.streamsStoppedForApply = false;
         try {
             // Before every path's first irreversible step (the machine-wide
@@ -689,6 +810,11 @@ export class UpdateService {
             // before it (a declined pkexec, a failed download, a bad checksum)
             // stopped nothing, so there is nothing to cancel. See liveStreams.ts.
             if (this.streamsStoppedForApply) liveStreams.cancelStop();
+            // The channel changed while the apply ran: reconfigure() cleared the
+            // pending update and set idle, but its check was skipped, so without
+            // this the new channel would wait for the next interval tick. With no
+            // change there is nothing new to check. Never rejects (runCheck).
+            if (this.generation !== generation) void this.checkForUpdates();
             throw err;
         }
     }
@@ -771,7 +897,9 @@ export class UpdateService {
         if (this.platform !== 'win32') {
             const config = Config.getInstance();
             const appCfg = config.getAppConfig();
-            const version = this.state.availableVersion;
+            // The captured update's version, not the live state's: they are one
+            // release only as long as nothing has rewritten the state.
+            const version = pendingUpdate.TargetFullRelease.Version;
             if (!version) {
                 throw new Error('apply: no available version resolved');
             }
@@ -938,7 +1066,7 @@ export class UpdateService {
             // §49: hand the operation-server the Velopack-authenticated
             // version + filename + SHA-256 so it can verify the nupkg (which
             // lives in the user-writable packages/ dir) before extracting it.
-            await this.writeApplyVerifyManifest();
+            await this.writeApplyVerifyManifest(pendingUpdate);
             await this.enterPointOfNoReturn();
             const child = spawn(helperPath, ['--operation-server'], {
                 cwd: dataRoot,
@@ -1064,10 +1192,11 @@ export class UpdateService {
      * dir — before extracting + executing it. Windows local-mode only: service
      * mode uses Velopack's own verified apply, and Linux verifies against the
      * release SHA256SUMS. Throws on write failure so the caller skips spawning
-     * an operation-server that would only fail-closed.
+     * an operation-server that would only fail-closed. `pendingUpdate` is the one
+     * applyUpdate captured, the package Velopack downloaded.
      */
-    private async writeApplyVerifyManifest(): Promise<void> {
-        const asset = this.state.pendingUpdate?.TargetFullRelease;
+    private async writeApplyVerifyManifest(pendingUpdate: UpdateInfo): Promise<void> {
+        const asset = pendingUpdate.TargetFullRelease;
         if (!asset) {
             throw new Error('apply: no pending update asset to build the verify manifest from');
         }

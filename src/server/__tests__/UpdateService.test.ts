@@ -1160,6 +1160,377 @@ describe('UpdateService', () => {
         expect(s.progress).toBe(100);
     });
 
+    // ── Overlapping checks in one generation ──
+    //
+    // The startup check, the interval timer and a manual check from the API
+    // can be asked for while another check is still running. Two checks side
+    // by side each resolved the newest release and swapped the manager for it,
+    // so when they resolved different releases the answer that landed last was
+    // paired with the other check's manager -- and Velopack's HttpSource, which
+    // joins the package name onto the manager's release folder, 404'd.
+
+    function deferred<T>() {
+        let resolve!: (value: T) => void;
+        let reject!: (err: Error) => void;
+        const promise = new Promise<T>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        return { promise, resolve, reject };
+    }
+
+    /**
+     * A resolver whose answers the test hands out: while `hold` is set, every
+     * resolve() waits in `held` for the test to answer it; otherwise it answers
+     * `answer()` at once.
+     */
+    function heldResolver(answer: (channels: readonly string[]) => ResolvedReleaseFeed | null) {
+        const held: { channels: readonly string[]; answer: (r: ResolvedReleaseFeed | null) => void }[] = [];
+        const state = { hold: false };
+        const resolve = vi.fn((_owner: string, channels: string | readonly string[]) => {
+            const list = typeof channels === 'string' ? [channels] : channels;
+            if (!state.hold) return Promise.resolve(answer(list));
+            const d = deferred<ResolvedReleaseFeed | null>();
+            held.push({ channels: list, answer: d.resolve });
+            return d.promise;
+        });
+        return { resolver: { resolve }, resolve, held, state };
+    }
+
+    /** A Windows release folder whose feed offers `version` (the folder is `v<version>`). */
+    function releaseOf(version: string, channel = 'stable'): ResolvedReleaseFeed {
+        return { tag: `v${version}`, url: `https://feeds.example/v${version}/`, channel };
+    }
+
+    /**
+     * Managers keyed by the release folder they read. Each offers that
+     * folder's version; `holdChecks` parks its checkForUpdatesAsync for the
+     * test to answer. A download asks the manager's own folder for the package,
+     * so an UpdateInfo from another release 404s, as Velopack's HttpSource does.
+     */
+    function folderManagers() {
+        const heldChecks: { tag: string; answer: () => void }[] = [];
+        const downloads: { folder: string; version: string }[] = [];
+        const opts = { holdChecks: false };
+        const factory = vi.fn((feed: unknown, _opts: UpdateOptions) => {
+            const tag = (feed as { tag?: string }).tag ?? 'own';
+            const info = tag.startsWith('v') ? fakeUpdateInfo(tag.slice(1)) : null;
+            return fakeMgr({
+                checkForUpdatesAsync: () => {
+                    if (!opts.holdChecks) return Promise.resolve(null);
+                    const d = deferred<UpdateInfo | null>();
+                    heldChecks.push({ tag, answer: () => d.resolve(info) });
+                    return d.promise;
+                },
+                downloadUpdateAsync: async (u: UpdateInfo) => {
+                    downloads.push({ folder: tag, version: u.TargetFullRelease.Version });
+                    if (`v${u.TargetFullRelease.Version}` !== tag) {
+                        throw new Error('Network error: Http error: http status: 404');
+                    }
+                },
+            });
+        });
+        return { factory, heldChecks, downloads, opts };
+    }
+
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it('two checks asked for at once run as one: the pending update and the downloading manager are one release', async () => {
+        Config.getInstance().updateAppConfig({ channel: 'stable', githubOwner: 'bilbospocketses', autoUpdate: true });
+        const { resolver, resolve, held, state } = heldResolver(() => null);
+        const { factory, heldChecks, downloads, opts } = folderManagers();
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            releaseFeedResolver: resolver,
+            ...quietTimers,
+        });
+        svc.init();
+        await settled(svc);
+        resolve.mockClear();
+        state.hold = true;
+        opts.holdChecks = true;
+
+        // The timer's check and a manual one, asked for together.
+        const first = svc.checkForUpdates();
+        const second = svc.checkForUpdates();
+        // A second side-by-side check would resolve a newer release, published
+        // in between: v0.3.0 to the first check's v0.2.0.
+        held[0]?.answer(releaseOf('0.2.0'));
+        held[1]?.answer(releaseOf('0.3.0'));
+        await vi.waitFor(() => expect(heldChecks).toHaveLength(held.length));
+        // The adverse order: the newer check answers first, the older one last.
+        for (const check of [...heldChecks].reverse()) {
+            check.answer();
+            await tick();
+        }
+        await Promise.all([first, second]);
+
+        // Every package was asked of the folder of its own release: no 404.
+        for (const d of downloads) expect(d.folder).toBe(`v${d.version}`);
+        const s = svc.getStatus();
+        expect(s.errorMessage).toBeUndefined();
+        expect(s.status).toBe('ready');
+        // Because only one check ran: Velopack was asked once, the release lookup once.
+        expect(heldChecks).toHaveLength(1);
+        expect(resolve).toHaveBeenCalledTimes(1);
+        expect(s.availableVersion).toBe('0.2.0');
+        expect(downloads).toEqual([{ folder: 'v0.2.0', version: '0.2.0' }]);
+    });
+
+    it('a download asked for while a check rebuilds the manager uses the manager the pending update came from', async () => {
+        Config.getInstance().updateAppConfig({ channel: 'stable', githubOwner: 'bilbospocketses', autoUpdate: false });
+        let newest = releaseOf('0.2.0');
+        const { resolver } = heldResolver(() => newest);
+        const { factory, heldChecks, downloads, opts } = folderManagers();
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            releaseFeedResolver: resolver,
+            ...quietTimers,
+        });
+        opts.holdChecks = true;
+        svc.init();
+        await vi.waitFor(() => expect(heldChecks).toHaveLength(1));
+        heldChecks[0]!.answer();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', availableVersion: '0.2.0' });
+
+        // v0.3.0 is published; the next check rebuilds the manager for it and
+        // is still waiting on Velopack when a download of v0.2.0 is asked for.
+        newest = releaseOf('0.3.0');
+        const check = svc.checkForUpdates();
+        await vi.waitFor(() => expect(heldChecks).toHaveLength(2));
+        await svc.downloadIfNeeded();
+        expect(downloads).toEqual([{ folder: 'v0.2.0', version: '0.2.0' }]);
+
+        heldChecks[1]!.answer();
+        await check;
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', availableVersion: '0.3.0' });
+    });
+
+    it('a channel switch during a check runs its own check of the new channel instead of joining the old one', async () => {
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses', autoUpdate: false });
+        const { resolver, resolve, held, state } = heldResolver((channels) =>
+            channels[0] === 'stable' ? releaseOf('0.3.0') : null,
+        );
+        const { factory, opts } = folderManagers();
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            releaseFeedResolver: resolver,
+            ...quietTimers,
+        });
+        svc.init();
+        await settled(svc);
+        state.hold = true;
+        const oldCheck = svc.checkForUpdates();
+        expect(held).toHaveLength(1);
+        state.hold = false;
+        opts.holdChecks = false;
+
+        let giveUp: NodeJS.Timeout | undefined;
+        const switched = await Promise.race([
+            svc.reconfigure('stable', 'bilbospocketses').then(() => 'checked the new channel'),
+            new Promise((r) => {
+                giveUp = setTimeout(() => r('joined the old check'), 2000);
+            }),
+        ]);
+        clearTimeout(giveUp);
+        expect(switched).toBe('checked the new channel');
+        expect(resolve.mock.calls.at(-1)![1]).toEqual(['stable']);
+        expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
+
+        // The old check's late answer is dropped: it builds no manager for the old channel.
+        const managersBuilt = factory.mock.calls.length;
+        held[0]!.answer(releaseOf('0.2.0', 'beta'));
+        await oldCheck;
+        expect(factory).toHaveBeenCalledTimes(managersBuilt);
+        expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
+        expect(svc.getStatus()).toMatchObject({ status: 'idle', pendingChannel: undefined });
+    });
+
+    it('a timer check during a manual one joins it, and every check after it runs again', async () => {
+        let timerFires: (() => void) | undefined;
+        const { resolver, resolve, held, state } = heldResolver(() => null);
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr(),
+            releaseFeedResolver: resolver,
+            setIntervalFn: (cb) => {
+                timerFires = cb;
+                return 0 as unknown as NodeJS.Timeout;
+            },
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await settled(svc);
+        resolve.mockClear();
+
+        state.hold = true;
+        const manual = svc.checkForUpdates();
+        timerFires!();
+        expect(resolve).toHaveBeenCalledTimes(1);
+        held[0]!.answer(null);
+        await manual;
+        expect(svc.getStatus().status).toBe('idle');
+
+        state.hold = false;
+        await svc.checkForUpdates();
+        timerFires!();
+        await settled(svc);
+        await svc.checkForUpdates();
+        expect(resolve).toHaveBeenCalledTimes(4);
+    });
+
+    it('a Velopack check that never answers gives up at its deadline, the next check runs, and its late answer is dropped', async () => {
+        // Velopack's HttpSource has no timeout: after a sleep or on a half-open
+        // connection checkForUpdatesAsync can wait forever, and every later check
+        // in the generation would join it.
+        Config.getInstance().updateAppConfig({ channel: 'stable', githubOwner: 'bilbospocketses', autoUpdate: false });
+        const { resolver, resolve } = heldResolver(() => releaseOf('0.2.0'));
+        const hung = deferred<UpdateInfo | null>();
+        let hang = false;
+        const checkFn = vi.fn(() => (hang ? hung.promise : Promise.resolve(null)));
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: checkFn }),
+            releaseFeedResolver: resolver,
+            velopackCheckTimeoutMs: 50,
+            ...quietTimers,
+        });
+        svc.init();
+        await settled(svc);
+        resolve.mockClear();
+        checkFn.mockClear();
+
+        hang = true;
+        const stuck = svc.checkForUpdates();
+        await vi.waitFor(() => expect(svc.getStatus().status).toBe('error'));
+        await stuck;
+        expect(svc.getStatus().errorMessage).toBe('update check timed out after 0.05 s');
+
+        hang = false;
+        await svc.checkForUpdates();
+        expect(resolve).toHaveBeenCalledTimes(2);
+        expect(checkFn).toHaveBeenCalledTimes(2);
+        expect(svc.getStatus()).toMatchObject({ status: 'idle', availableVersion: undefined });
+
+        // The abandoned call finally answers: nothing it says reaches the state.
+        hung.resolve(fakeUpdateInfo('0.2.0'));
+        await tick();
+        const s = svc.getStatus();
+        expect(s).toMatchObject({ status: 'idle', availableVersion: undefined, pendingUpdate: undefined });
+    });
+
+    it('a check asked for while an update is being applied changes nothing, and checks resume once the apply fails', async () => {
+        // The Linux apply downloads the AppImage before its point of no return;
+        // the interval timer can fire in the middle of that.
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'stable',
+            githubOwner: 'bilbospocketses',
+        });
+        const { resolver, resolve } = heldResolver(() => releaseOf('0.2.0', 'linux-stable'));
+        const checkFn = vi.fn(async () => fakeUpdateInfo('0.2.0'));
+        const assetDownload = deferred<Response>();
+        const fetchFn = vi.fn(() => assetDownload.promise) as unknown as typeof fetch;
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: checkFn }),
+            releaseFeedResolver: resolver,
+            fetchFn,
+            ...quietTimers,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-stable.AppImage';
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', availableVersion: '0.2.0' });
+        resolve.mockClear();
+        checkFn.mockClear();
+
+        const applying = svc.applyUpdate();
+        await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+        await svc.checkForUpdates();
+        expect(resolve).not.toHaveBeenCalled();
+        expect(checkFn).not.toHaveBeenCalled();
+        const during = svc.getStatus();
+        expect(during).toMatchObject({ status: 'ready', availableVersion: '0.2.0', pendingChannel: 'stable' });
+        expect(during.pendingUpdate?.TargetFullRelease.Version).toBe('0.2.0');
+
+        assetDownload.reject(new Error('network down'));
+        await expect(applying).rejects.toThrow(/network down/);
+        // Nothing changed during the apply, so its failure checks nothing itself.
+        await tick();
+        expect(resolve).not.toHaveBeenCalled();
+        expect(checkFn).not.toHaveBeenCalled();
+        await svc.checkForUpdates();
+        expect(resolve).toHaveBeenCalledTimes(1);
+        expect(checkFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a channel change during an apply is checked as soon as the apply fails', async () => {
+        // reconfigure() clears the pending update and sets idle, but its own
+        // check is skipped while the apply runs. Without a check when the apply
+        // fails, the new channel waits for the next interval tick (an hour by
+        // default) and the Settings change appears to do nothing.
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'stable',
+            githubOwner: 'bilbospocketses',
+        });
+        const { resolver, resolve } = heldResolver(() => releaseOf('0.2.0', 'linux-stable'));
+        const checkFn = vi.fn(async () => fakeUpdateInfo('0.2.0'));
+        const assetDownload = deferred<Response>();
+        const fetchFn = vi.fn(() => assetDownload.promise) as unknown as typeof fetch;
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: checkFn }),
+            releaseFeedResolver: resolver,
+            fetchFn,
+            ...quietTimers,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-stable.AppImage';
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', availableVersion: '0.2.0' });
+        const stableChannels = resolve.mock.calls.at(-1)![1];
+        resolve.mockClear();
+        checkFn.mockClear();
+
+        const applying = svc.applyUpdate();
+        await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+        await svc.reconfigure('beta', 'bilbospocketses');
+        expect(resolve).not.toHaveBeenCalled();
+        expect(checkFn).not.toHaveBeenCalled();
+        expect(svc.getStatus()).toMatchObject({ status: 'idle', pendingUpdate: undefined });
+
+        assetDownload.reject(new Error('network down'));
+        await expect(applying).rejects.toThrow(/network down/);
+        await settled(svc);
+        expect(resolve).toHaveBeenCalledTimes(1);
+        const betaChannels = resolve.mock.calls[0]![1];
+        expect(betaChannels).not.toEqual(stableChannels);
+        expect(betaChannels).toContain('linux-beta');
+        expect(checkFn).toHaveBeenCalledTimes(1);
+    });
+
     // ── VelopackLocator strategy (platform-split) ──────────────────────────
     //
     // BOTH platforms hand Velopack an explicit locator. `platform` is injected
