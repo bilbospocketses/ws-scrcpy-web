@@ -49,6 +49,12 @@ export class Device extends TypedEmitter<DeviceEvents> {
      */
     private sighted = false;
     private readonly sightingWaiters = new Set<(sighted: boolean) => void>();
+    /**
+     * Bumped on every `setState` (M11 fix 2). A property read captures it when
+     * it starts; one that finishes after the transport changed state may have
+     * read another device (DHCP reuse, a swapped cable), so it is discarded.
+     */
+    private stateGeneration = 0;
     public readonly TAG: string;
     public readonly descriptor: GoogDeviceDescriptor;
 
@@ -78,6 +84,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     public setState(state: string): void {
+        this.stateGeneration++;
         this.sighted = false;
         if (state === 'device') {
             this.connected = true;
@@ -180,7 +187,12 @@ export class Device extends TypedEmitter<DeviceEvents> {
         if (!this.connected) {
             return;
         }
-        this.properties = await this.adbClient.getProperties(this.udid);
+        const generation = this.stateGeneration;
+        const properties = await this.adbClient.getProperties(this.udid);
+        // The transport changed state while the read was out: what it read may
+        // be the previous device, so it must not become the cache (M11 fix 2).
+        if (generation !== this.stateGeneration) return;
+        this.properties = properties;
         return this.properties;
     }
 
@@ -348,7 +360,12 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     private fetchDeviceInfo = (): void => {
         if (this.connected) {
+            // A read that finishes after `setState` ran again belongs to the
+            // transport's previous state, maybe to another device: it records
+            // nothing (M11 fix 2).
+            const generation = this.stateGeneration;
             const propsPromise = this.getProperties().then((props) => {
+                if (generation !== this.stateGeneration) return false;
                 if (!props) return false;
                 let changed = false;
                 Properties.forEach((propName: keyof GoogDeviceDescriptor) => {
@@ -389,8 +406,11 @@ export class Device extends TypedEmitter<DeviceEvents> {
             const netIntPromise = this.updateInterfaces().then((interfaces) => {
                 return !!interfaces.length;
             });
+            // The retry bookkeeping is the newer state's to keep: a stale pass
+            // neither reschedules nor resets its timers (M11 fix 2).
             Promise.all([propsPromise, netIntPromise])
                 .then((results) => {
+                    if (generation !== this.stateGeneration) return;
                     this.updateTimeoutId = undefined;
                     const failedCount = results.filter((result) => !result).length;
                     if (!failedCount) {
@@ -401,6 +421,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                     }
                 })
                 .catch(() => {
+                    if (generation !== this.stateGeneration) return;
                     this.updateTimeoutId = undefined;
                     this.scheduleInfoUpdate();
                 });

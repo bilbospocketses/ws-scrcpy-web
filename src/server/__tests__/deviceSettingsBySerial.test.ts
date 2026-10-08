@@ -74,6 +74,22 @@ async function sight(udid: string): Promise<Device> {
     return device;
 }
 
+/** getProperties answers only when `release` is called. */
+function slowGetprop(serial = SERIAL) {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const props = vi.spyOn(AdbClient.prototype, 'getProperties').mockImplementation(async () => {
+        await gate;
+        return { 'ro.serialno': serial, 'ro.product.model': 'Pixel 7' };
+    });
+    return { props, release: () => release() };
+}
+
+/** Let the promise chains a released read starts run to the end. */
+async function settle(): Promise<void> {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+}
+
 async function getSettings(key: string): Promise<unknown> {
     const r = makeReqRes('GET', `/api/settings/device?udid=${encodeURIComponent(key)}`);
     await new SettingsApi().handle(r.req, r.res);
@@ -154,17 +170,6 @@ describe('a live transport whose serial is not read yet is never used as the set
         return device;
     }
     afterEach(() => live.clear());
-
-    /** getProperties answers only when `release` is called. */
-    function slowGetprop(serial = SERIAL) {
-        let release: () => void = () => undefined;
-        const gate = new Promise<void>((r) => (release = r));
-        const props = vi.spyOn(AdbClient.prototype, 'getProperties').mockImplementation(async () => {
-            await gate;
-            return { 'ro.serialno': serial, 'ro.product.model': 'Pixel 7' };
-        });
-        return { props, release: () => release() };
-    }
 
     function request(method: 'GET' | 'PATCH', key: string, body?: Record<string, unknown>, waitMs?: number) {
         const r = makeReqRes(method, `/api/settings/device?udid=${encodeURIComponent(key)}`, body);
@@ -291,5 +296,80 @@ describe('a reused transport forgets the previous device (M11 fix 1, m5)', () =>
 
         expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL');
         expect(await getSettings(WIFI)).toEqual({ video: { fit: false } });
+    });
+});
+
+describe('a property read that finishes after the transport changed state is discarded (M11 fix 2)', () => {
+    // The tracker's getprop can still be out when the transport goes offline,
+    // or goes offline and comes back as another device. What it then reads
+    // belongs to the previous state and must not be recorded as this one's.
+    it('offline before the read lands: no row, no serial, no sighting, no cached properties', async () => {
+        setup();
+        const { props, release } = slowGetprop();
+        const device = new Device(WIFI, 'device');
+        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+
+        device.setState('offline');
+        release();
+        await settle();
+
+        expect(device.descriptor['ro.serialno']).toBe('');
+        expect(serialReadOn(WIFI)).toBeUndefined();
+        expect(Config.getInstance().db.devices.getDevice(SERIAL)).toBeUndefined();
+        expect(await device.whenSighted(10)).toBe(false);
+        expect(await device.getProperties()).toBeUndefined();
+        // Nor does the stale pass schedule a retry for a state that is gone.
+        expect(device['updateTimeoutId']).toBeUndefined();
+    });
+
+    it('offline, then another device on the transport: the old read lands last and the new serial still wins', async () => {
+        setup();
+        const { props, release } = slowGetprop();
+        const device = new Device(WIFI, 'device');
+        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+
+        device.setState('offline');
+        props.mockResolvedValue({ 'ro.serialno': 'OTHER0SERIAL', 'ro.product.model': 'Pixel 8' });
+        device.setState('device');
+        await vi.waitFor(() => expect(props).toHaveBeenCalledTimes(2));
+        await settle();
+        expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL');
+
+        release();
+        await settle();
+
+        const db = Config.getInstance().db;
+        expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL');
+        expect(device.descriptor['ro.product.model']).toBe('Pixel 8');
+        expect(serialReadOn(WIFI)).toBe('OTHER0SERIAL');
+        expect(db.devices.getDevice(SERIAL)).toBeUndefined();
+        expect(db.devices.getDevice('OTHER0SERIAL')?.model).toBe('Pixel 8');
+        expect((await device.getProperties())?.['ro.serialno']).toBe('OTHER0SERIAL');
+        expect(await device.whenSighted(10)).toBe(true);
+        // The new state's read succeeded; the stale pass must not undo that by
+        // scheduling a retry.
+        expect(device['updateTimeoutId']).toBeUndefined();
+    });
+
+    it('the tracker discards a stale read even when getProperties hands it one', async () => {
+        setup();
+        // Bypass the cache-side check, so only the tracker's own one stands.
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((r) => (release = r));
+        const props = vi.spyOn(Device.prototype, 'getProperties').mockImplementation(async () => {
+            await gate;
+            return { 'ro.serialno': SERIAL, 'ro.product.model': 'Pixel 7' };
+        });
+        const device = new Device(WIFI, 'device');
+        await vi.waitFor(() => expect(props).toHaveBeenCalled());
+
+        device.setState('offline');
+        release();
+        await settle();
+
+        expect(device.descriptor['ro.serialno']).toBe('');
+        expect(serialReadOn(WIFI)).toBeUndefined();
+        expect(Config.getInstance().db.devices.getDevice(SERIAL)).toBeUndefined();
+        expect(await device.whenSighted(10)).toBe(false);
     });
 });
