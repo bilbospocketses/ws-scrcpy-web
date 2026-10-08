@@ -565,6 +565,31 @@ function uiDump(): UiNode[] {
     return nodes;
 }
 
+/**
+ * View classes that are text-entry fields: `android.widget.EditText` and the
+ * subclasses a dump reports under their own names. `uiautomator dump` carries
+ * no "editable" trait, so the class is the only witness. Measured on redroid
+ * 13, the Settings search box focuses as `android.widget.AutoCompleteTextView`
+ * — an EditText subclass a bare `=== 'android.widget.EditText'` check misses.
+ */
+const TEXT_FIELD_CLASSES: ReadonlySet<string> = new Set([
+    'android.widget.EditText',
+    'android.widget.AutoCompleteTextView',
+    'android.widget.MultiAutoCompleteTextView',
+    'android.widget.SearchView$SearchAutoComplete',
+    'androidx.appcompat.widget.AppCompatEditText',
+    'androidx.appcompat.widget.AppCompatAutoCompleteTextView',
+    'androidx.appcompat.widget.AppCompatMultiAutoCompleteTextView',
+    'androidx.appcompat.widget.SearchView$SearchAutoComplete',
+    'com.google.android.material.textfield.TextInputEditText',
+    'com.google.android.material.textfield.MaterialAutoCompleteTextView',
+]);
+
+/** A focused text-entry field: the out-of-band proof that a tap landed on one. */
+function isFocusedTextField(node: UiNode): boolean {
+    return node.focused && TEXT_FIELD_CLASSES.has(node.cls);
+}
+
 /** The display rectangle the dump's coordinates are expressed in (the root node's bounds). */
 function displaySize(nodes: UiNode[]): { width: number; height: number } {
     const width = Math.max(...nodes.map((n) => n.right), 0);
@@ -892,11 +917,12 @@ test.describe('device streaming (smoke §8)', () => {
             );
 
             await expect
-                .poll(() => uiDump().some((n) => n.cls === 'android.widget.EditText' && n.focused), {
+                .poll(() => uiDump().some(isFocusedTextField), {
                     timeout: 45_000,
                     message:
-                        'the tap must reach the device and focus the search field — a focused EditText is the ' +
-                        'out-of-band proof that the canvas touch was delivered, not just drawn',
+                        'the tap must reach the device and focus the search field — a focused text field (EditText ' +
+                        'or a subclass such as AutoCompleteTextView) is the out-of-band proof that the canvas touch ' +
+                        'was delivered, not just drawn',
                 })
                 .toBe(true);
 
