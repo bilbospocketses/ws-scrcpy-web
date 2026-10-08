@@ -30,6 +30,7 @@ import { GoogToolBox } from '../toolbox/GoogToolBox';
 import { UhidKeyboardHandler } from '../UhidKeyboardHandler';
 import { UhidManager } from '../UhidManager';
 import { UhidMouseHandler } from '../UhidMouseHandler';
+import { ClipboardCopyPrompt } from './ClipboardCopyPrompt';
 import { ConfigureScrcpy } from './ConfigureScrcpy';
 import { chooseCodec, chooseCodecWithoutProbe } from './codecSelection';
 import { DeviceTracker } from './DeviceTracker';
@@ -155,6 +156,8 @@ export class StreamClientScrcpy
     private degradationCount = 0;
     /** Banner shown over the video while the device reports its keyguard is up. */
     private lockedNotice?: HTMLElement | undefined;
+    /** Offers the device clipboard for a click when the browser refuses to write it unprompted. */
+    private readonly clipboardPrompt = new ClipboardCopyPrompt();
     private lastLockCheckTime = 0;
     /** Each check is an adb round trip, so do not ask more often than this. */
     private static readonly LOCK_CHECK_INTERVAL_MS = 5000;
@@ -289,11 +292,7 @@ export class StreamClientScrcpy
         const message = DeviceMessage.fromRaw(data);
         if (message.type === DeviceMessage.TYPE_CLIPBOARD) {
             const text = message.getText();
-            if (text && navigator.clipboard?.writeText) {
-                navigator.clipboard.writeText(text).catch((err) => {
-                    console.error('[StreamClientScrcpy] clipboard write failed:', err);
-                });
-            }
+            if (text) this.clipboardPrompt.deliver(text);
         }
     };
 
@@ -480,6 +479,7 @@ export class StreamClientScrcpy
             this.audioPlayer?.stop();
             this.audioPlayer = undefined;
             if (this.player) this.player.stop();
+            this.clipboardPrompt.dispose();
         };
 
         this.stopFn = () => stop();
@@ -497,6 +497,7 @@ export class StreamClientScrcpy
         this.lockedNotice.hidden = true;
         this.lockedNotice.textContent = 'device is locked — unlock it to see the screen';
         video.appendChild(this.lockedNotice);
+        video.appendChild(this.clipboardPrompt.element);
         deviceView.appendChild(video);
         player.setParent(video);
         player.pause();

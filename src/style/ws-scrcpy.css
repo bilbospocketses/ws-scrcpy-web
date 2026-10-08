@@ -96,6 +96,42 @@
     display: none;
 }
 
+/* Offered when the browser refuses to put the device's clipboard on this
+ * computer's clipboard by itself (Safari and Firefox only allow it from a
+ * click). Same look as the locked notice, but it takes clicks, so it sits at
+ * the bottom edge rather than over the middle of the picture. */
+.stream-clipboard-prompt {
+    grid-area: 1 / 1;
+    align-self: end;
+    justify-self: center;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--info-color);
+    border-radius: 4px;
+    background-color: var(--controls-bg-color);
+    color: var(--text-color);
+    font-size: 0.85rem;
+}
+
+/* The class's `display: flex` would otherwise outrank the UA's [hidden] rule. */
+.stream-clipboard-prompt[hidden] {
+    display: none;
+}
+
+.stream-clipboard-prompt > button {
+    padding: 0.1rem 0.4rem;
+    border: 1px solid var(--button-border-color);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--button-text-color);
+    font: inherit;
+    cursor: pointer;
+}
+
 .control-wrapper > input[type="checkbox"] {
     display: none;
 }
