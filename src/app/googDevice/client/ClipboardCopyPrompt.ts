@@ -6,22 +6,30 @@ const TAG = '[ClipboardCopyPrompt]';
  *
  * The device's text arrives as a WebSocket message, outside any user gesture.
  * Chrome lets a focused page write the clipboard then; Safari and Firefox may
- * refuse, and on plain HTTP there is no `navigator.clipboard` at all. In those
- * cases a small prompt over the stream offers the text, and its button does the
- * write inside the click — the gesture those browsers want.
+ * refuse, and so does any browser when the stream is embedded in an iframe the
+ * host page did not grant `clipboard-write` (permissions policy). In those cases
+ * a small prompt over the stream offers the text, and its button does the write
+ * inside the click — the gesture those browsers want.
  *
  * Only the newest device clipboard is ever offered: a later one replaces the
  * pending text, and a later one that copied fine hides the prompt, since what
  * it offered is no longer what the device holds.
  */
 export class ClipboardCopyPrompt {
-    /** The prompt hides itself after this long; the device clipboard can be fetched again. */
+    /**
+     * The prompt hides itself after this long. Its text is not lost from the
+     * device, but nothing here re-reads it: copying it again on the device (or
+     * the toolbar's copy button over a selection) sends it again.
+     */
     public static readonly AUTO_HIDE_MS = 30_000;
 
     public readonly element: HTMLElement;
     private pendingText: string | undefined;
     private hideTimer: ReturnType<typeof setTimeout> | undefined;
-    /** Bumped per delivery, so an older write that settles late cannot overrule a newer one. */
+    /**
+     * Bumped per delivery and on dispose, so a write that settles late cannot
+     * overrule a newer delivery, nor re-arm a prompt whose stream has stopped.
+     */
     private generation = 0;
 
     constructor() {
@@ -60,6 +68,7 @@ export class ClipboardCopyPrompt {
     public deliver(text: string): void {
         const generation = ++this.generation;
         if (!navigator.clipboard?.writeText) {
+            // No async Clipboard API on this page at all: only a click can copy.
             this.offer(text);
             return;
         }
@@ -80,8 +89,12 @@ export class ClipboardCopyPrompt {
         this.element.hidden = true;
     }
 
-    /** Stop the auto-hide timer; for when the stream view is torn down. */
+    /**
+     * Stop the auto-hide timer, and disown any write still in flight so it
+     * cannot show the prompt again; for when the stream view is torn down.
+     */
     public dispose(): void {
+        this.generation++;
         this.clearTimer();
     }
 
@@ -102,42 +115,52 @@ export class ClipboardCopyPrompt {
     /**
      * Must stay synchronous up to the write: the user gesture is only honoured
      * for work started inside the click handler itself.
+     *
+     * The legacy copy command goes first because it is synchronous, so it runs
+     * wholly inside this click. That is what rescues an iframe embed whose host
+     * did not grant `clipboard-write`: there the async API rejects even from a
+     * click, while the copy command still works. Only if the command is
+     * unavailable or refuses does the async API get its turn.
      */
     private onCopyClick = (): void => {
         const text = this.pendingText;
         if (text === undefined) return;
-        if (navigator.clipboard?.writeText) {
-            navigator.clipboard.writeText(text).then(
-                () => {
-                    // Only if nothing newer replaced it while the write ran.
-                    if (this.pendingText === text) this.hide();
-                },
-                (err: unknown) => {
-                    console.error(TAG, 'clipboard write failed even from a click:', err);
-                },
-            );
-            return;
-        }
-        // No async clipboard API (plain HTTP is not a secure context). The
-        // legacy copy command still works from a click.
         if (copyWithExecCommand(text)) {
             this.hide();
-        } else {
-            console.error(TAG, 'this browser offers no way to write the clipboard from this page');
+            return;
         }
+        if (!navigator.clipboard?.writeText) {
+            console.error(TAG, 'this browser offers no way to write the clipboard from this page');
+            return;
+        }
+        const generation = this.generation;
+        navigator.clipboard.writeText(text).then(
+            () => {
+                // Only if no newer delivery arrived while the write ran.
+                if (generation === this.generation) this.hide();
+            },
+            (err: unknown) => {
+                console.error(TAG, 'clipboard write failed even from a click:', err);
+            },
+        );
     };
 }
 
+/** The pre-Clipboard-API copy: select a hidden textarea's text and run the copy command. */
 function copyWithExecCommand(text: string): boolean {
     if (typeof document.execCommand !== 'function') return false;
     const area = document.createElement('textarea');
     area.value = text;
     area.setAttribute('readonly', '');
+    // Pinned to the viewport's corner, so selecting it never scrolls the page,
+    // and transparent, so it is never seen.
     area.style.position = 'fixed';
+    area.style.top = '0';
+    area.style.left = '0';
     area.style.opacity = '0';
     document.body.appendChild(area);
-    area.select();
     try {
+        area.select();
         return document.execCommand('copy');
     } catch {
         return false;
