@@ -1078,6 +1078,62 @@ describe('UpdateService', () => {
         expect(storedChannel()).toBe('beta');
     });
 
+    it('a channel that cannot be stored (linux machine-wide) drops the verified download and touches nothing', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        using probe = hygieneProbe();
+        const spawnMock = vi.mocked(child_process.spawn);
+        spawnMock.mockClear();
+        const pkexecMock = vi.fn<(shellCmd: string, label: string) => Promise<string>>(async () => '');
+        const svc = betaInstallService('linux', STABLE, {
+            fetchFn: await linuxAssetFetch('WsScrcpyWeb-linux-stable.AppImage'),
+            runPkexecFn: pkexecMock,
+            reapOwnAdbFn: probe.reapOwnAdbFn,
+        });
+        process.env['APPIMAGE'] = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', pendingChannel: 'stable' });
+        const cfg = Config.getInstance();
+        const staged = path.join(
+            cfg.dataRoot ?? path.dirname(cfg.dependenciesPath),
+            'control',
+            'update-staging',
+            'WsScrcpyWeb-linux-stable.AppImage.new',
+        );
+        // Read from this test's own data root, never the machine's.
+        expect(path.relative(tmpDirs.at(-1)!, staged).startsWith('..')).toBe(false);
+        let stagedAtWrite: boolean | undefined;
+        const write = vi.spyOn(cfg, 'updateAppConfig').mockImplementation(() => {
+            stagedAtWrite = fs.existsSync(staged);
+            throw new Error('database is locked');
+        });
+
+        try {
+            await expect(svc.applyUpdate()).rejects.toThrow(
+                /could not record the beta channel before installing v0\.1\.30: database is locked/,
+            );
+        } finally {
+            write.mockRestore();
+        }
+
+        // The write came after the verified download, which is then removed.
+        expect(stagedAtWrite).toBe(true);
+        expect(fs.existsSync(staged)).toBe(false);
+        expect(pkexecMock).not.toHaveBeenCalled();
+        expect(spawnMock).not.toHaveBeenCalled();
+        expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
+        expect(fs.existsSync(cfg.applyUpdatePendingMarkerPath)).toBe(false);
+        expect(fs.existsSync(cfg.suppressBrowserOpenMarkerPath)).toBe(false);
+        expect(storedChannel()).toBeUndefined();
+        expect(svc.getStatus().status).toBe('ready');
+        // Not stuck as "in progress": once the write works, the retry goes ahead.
+        await svc.applyUpdate();
+        expect(pkexecMock).toHaveBeenCalledTimes(1);
+        expect(storedChannel()).toBe('beta');
+    });
+
     it('beta install with no stored channel (win32): a failed download records nothing, the retry does', async () => {
         betaBuildWithNoStoredChannel();
         Config.getInstance().updateAppConfig({ autoUpdate: false });
