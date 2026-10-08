@@ -12,7 +12,7 @@ import { liveStreams } from '../liveStreams';
 import { PkexecDeclinedError } from '../service/SystemdClient';
 import { stageSystemHelper } from '../service/systemHelper';
 import { type UpdateManagerLike, UpdateService, type UpdateServiceOptions } from '../UpdateService';
-import { RELEASES_PER_PAGE, type ResolvedReleaseFeed } from '../updateFeedResolver';
+import { GithubReleaseFeedResolver, RELEASES_PER_PAGE, type ResolvedReleaseFeed } from '../updateFeedResolver';
 import { betas, type FakeGithubApi, fakeGithubApi, release } from './helpers/fakeGithubReleases';
 
 // FD2: the system-service apply must spawn a bin_t copy under /opt, not the
@@ -1074,6 +1074,56 @@ describe('UpdateService', () => {
         expect(fs.existsSync(Config.getInstance().applyUpdatePendingMarkerPath)).toBe(false);
         expect(svc.getStatus().status).toBe('ready');
         // Not stuck as "in progress": once the write works, the retry goes ahead.
+        await svc.applyUpdate();
+        expect(storedChannel()).toBe('beta');
+    });
+
+    it('beta install with no stored channel (win32): a failed download records nothing, the retry does', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        let fail = true;
+        const svc = betaInstallService(
+            'win32',
+            STABLE,
+            {},
+            {
+                downloadUpdateAsync: async () => {
+                    if (fail) throw new Error('Network error');
+                },
+            },
+        );
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+
+        await expect(svc.applyUpdate()).rejects.toThrow('update download failed: Network error');
+        expect(storedChannel()).toBeUndefined();
+
+        await settled(svc);
+        fail = false;
+        await svc.applyUpdate();
+        expect(storedChannel()).toBe('beta');
+    });
+
+    it('beta install with no stored channel (linux local): a failed download records nothing, the retry does', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const good = await linuxAssetFetch('WsScrcpyWeb-linux-stable.AppImage');
+        let fail = true;
+        const fetchFn = vi.fn((url: string, init?: RequestInit) =>
+            fail ? Promise.resolve(new Response('gone', { status: 404 })) : good(url, init),
+        ) as unknown as typeof fetch;
+        const svc = betaInstallService('linux', STABLE, { fetchFn });
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+
+        await expect(svc.applyUpdate()).rejects.toThrow();
+        expect(storedChannel()).toBeUndefined();
+
+        fail = false;
         await svc.applyUpdate();
         expect(storedChannel()).toBe('beta');
     });
@@ -3078,47 +3128,220 @@ describe('UpdateService', () => {
             const { spawnMock } = handoff;
             let fail = true;
             const applyFn = vi.fn();
+            const downloaded: UpdateInfo[] = [];
+            // A new UpdateInfo per check, so which check's answer a download uses is visible.
+            const checkFn = vi.fn(async () => fakeUpdateInfo('0.2.0'));
+            const forget = vi.spyOn(GithubReleaseFeedResolver.prototype, 'forget');
+            try {
+                const svc = windowsApplyService(
+                    installMode,
+                    false,
+                    {
+                        checkForUpdatesAsync: checkFn,
+                        downloadUpdateAsync: async (u) => {
+                            downloaded.push(u);
+                            if (fail) throw new Error('Network error: Http error: http status: 503');
+                        },
+                        waitExitThenApplyUpdate: applyFn,
+                    },
+                    { reapOwnAdbFn: probe.reapOwnAdbFn },
+                );
+                svc.init();
+                await settled(svc);
+                expect(svc.getStatus().status).toBe('ready');
+                const firstOffer = svc.getStatus().pendingUpdate;
+                checkFn.mockClear();
+                forget.mockClear();
+
+                await expect(svc.applyUpdate()).rejects.toThrow(
+                    'update download failed: Network error: Http error: http status: 503',
+                );
+
+                expect(spawnMock).not.toHaveBeenCalled();
+                expect(applyFn).not.toHaveBeenCalled();
+                expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
+                expect(liveStreams.isStopping()).toBe(false);
+                const cfg = Config.getInstance();
+                expect(fs.existsSync(cfg.applyUpdatePendingMarkerPath)).toBe(false);
+                expect(fs.existsSync(cfg.suppressBrowserOpenMarkerPath)).toBe(false);
+                expect(fs.existsSync(cfg.applyUpdateVerifyManifestPath)).toBe(false);
+                // The release is looked up afresh and checked again at once, so the
+                // retry does not reuse the pairing whose download just failed.
+                expect(forget).toHaveBeenCalledTimes(1);
+                await vi.waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
+                await settled(svc);
+                // Still on offer, as after a failed Linux download, with the reason
+                // beside it for any page that asks; the check did not wipe it.
+                expect(svc.getStatus()).toMatchObject({
+                    status: 'ready',
+                    availableVersion: '0.2.0',
+                    errorMessage: undefined,
+                    lastApplyError: 'update download failed: Network error: Http error: http status: 503',
+                });
+                const freshOffer = svc.getStatus().pendingUpdate;
+                expect(freshOffer).not.toBe(firstOffer);
+
+                // Not stuck as "in progress": the retry downloads the fresh offer and installs.
+                fail = false;
+                await svc.applyUpdate();
+                expect(downloaded.at(-1)).toBe(freshOffer);
+                if (installMode === 'user') expect(spawnMock).toHaveBeenCalledTimes(1);
+                else expect(applyFn).toHaveBeenCalledTimes(1);
+                // An install that starts clears the last one's failure.
+                expect(svc.getStatus().lastApplyError).toBeUndefined();
+            } finally {
+                forget.mockRestore();
+            }
+        },
+    );
+
+    it('applyUpdate (win32): a failed install is forgotten once a check offers another version', async () => {
+        let offered = '0.2.0';
+        const svc = windowsApplyService('user-service', false, {
+            checkForUpdatesAsync: async () => fakeUpdateInfo(offered),
+            downloadUpdateAsync: async () => {
+                throw new Error('Network error');
+            },
+        });
+        svc.init();
+        await settled(svc);
+        await expect(svc.applyUpdate()).rejects.toThrow('update download failed');
+        await settled(svc);
+        expect(svc.getStatus().lastApplyError).toBe('update download failed: Network error');
+
+        // The same version again keeps it; another one is a different install.
+        await svc.checkForUpdates();
+        expect(svc.getStatus().lastApplyError).toBe('update download failed: Network error');
+        offered = '0.3.0';
+        await svc.checkForUpdates();
+        expect(svc.getStatus()).toMatchObject({
+            status: 'ready',
+            availableVersion: '0.3.0',
+            lastApplyError: undefined,
+        });
+    });
+
+    // A Velopack download that stops reporting progress (a half-open connection,
+    // a laptop that slept) used to hold the updater until a restart.
+    it.each(WINDOWS_MODES)(
+        'applyUpdate (win32 %s): a download that stalls is given up on, and the updater is not wedged',
+        async (installMode) => {
+            using probe = hygieneProbe();
+            const order: string[] = [];
+            using handoff = recordHandoff(order);
+            const { spawnMock } = handoff;
+            const applyFn = vi.fn();
+            let hang = true;
+            // The abandoned call: it reports progress after it was given up on,
+            // then finishes long after.
+            const abandoned = deferred<void>();
+            let lateProgress: ((perc: number) => void) | undefined;
+            const checkFn = vi.fn(async () => fakeUpdateInfo('0.2.0'));
             const svc = windowsApplyService(
                 installMode,
                 false,
                 {
-                    downloadUpdateAsync: async () => {
-                        if (fail) throw new Error('Network error: Http error: http status: 503');
+                    checkForUpdatesAsync: checkFn,
+                    downloadUpdateAsync: async (_u, cb) => {
+                        if (!hang) {
+                            cb?.(100);
+                            return;
+                        }
+                        cb?.(10);
+                        lateProgress = cb;
+                        await abandoned.promise;
                     },
                     waitExitThenApplyUpdate: applyFn,
                 },
-                { reapOwnAdbFn: probe.reapOwnAdbFn },
+                { reapOwnAdbFn: probe.reapOwnAdbFn, downloadStallTimeoutMs: 50 },
             );
             svc.init();
             await settled(svc);
             expect(svc.getStatus().status).toBe('ready');
+            checkFn.mockClear();
 
             await expect(svc.applyUpdate()).rejects.toThrow(
-                'update download failed: Network error: Http error: http status: 503',
+                'update download failed: update download stalled (no progress for 0.05 s)',
             );
-
             expect(spawnMock).not.toHaveBeenCalled();
             expect(applyFn).not.toHaveBeenCalled();
             expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
-            expect(liveStreams.isStopping()).toBe(false);
-            const cfg = Config.getInstance();
-            expect(fs.existsSync(cfg.applyUpdatePendingMarkerPath)).toBe(false);
-            expect(fs.existsSync(cfg.suppressBrowserOpenMarkerPath)).toBe(false);
-            expect(fs.existsSync(cfg.applyUpdateVerifyManifestPath)).toBe(false);
-            // Still on offer, as after a failed Linux download.
+            // Not wedged: the check after the failure runs instead of being skipped.
+            await vi.waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
+            await settled(svc);
             expect(svc.getStatus()).toMatchObject({
                 status: 'ready',
-                availableVersion: '0.2.0',
-                errorMessage: undefined,
+                lastApplyError: 'update download failed: update download stalled (no progress for 0.05 s)',
             });
+            // The abandoned call's progress no longer lands.
+            const before = svc.getStatus().progress;
+            lateProgress!(70);
+            expect(svc.getStatus().progress).toBe(before);
 
-            // Not stuck as "in progress": the retry downloads and installs.
-            fail = false;
+            // A retry starts its own download rather than joining the abandoned one.
+            hang = false;
             await svc.applyUpdate();
             if (installMode === 'user') expect(spawnMock).toHaveBeenCalledTimes(1);
             else expect(applyFn).toHaveBeenCalledTimes(1);
+            abandoned.resolve();
         },
     );
+
+    it('a download that keeps reporting progress is not given up on, however long it takes', async () => {
+        const svc = windowsApplyService(
+            'user-service',
+            false,
+            {
+                downloadUpdateAsync: async (_u, cb) => {
+                    // 8 x 30 ms = 240 ms in all, never 50 ms without progress.
+                    for (let p = 5; p <= 40; p += 5) {
+                        await new Promise((r) => setTimeout(r, 30));
+                        cb?.(p);
+                    }
+                },
+            },
+            { reapOwnAdbFn: async () => 0, downloadStallTimeoutMs: 50 },
+        );
+        svc.init();
+        await settled(svc);
+
+        await svc.applyUpdate();
+        expect(svc.getStatus().lastApplyError).toBeUndefined();
+    });
+
+    it('a check whose auto-download stalls ends in error, and the next check runs', async () => {
+        Config.getInstance().updateAppConfig({ autoUpdate: true, channel: 'stable', githubOwner: 'bilbospocketses' });
+        let hang = true;
+        const abandoned = deferred<void>();
+        const checkFn = vi.fn(async () => fakeUpdateInfo('0.2.0'));
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () =>
+                fakeMgr({
+                    checkForUpdatesAsync: checkFn,
+                    downloadUpdateAsync: async () => {
+                        if (hang) await abandoned.promise;
+                    },
+                }),
+            downloadStallTimeoutMs: 50,
+            ...quietTimers,
+        });
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({
+            status: 'error',
+            errorMessage: 'update download stalled (no progress for 0.05 s)',
+        });
+
+        // Before the watchdog this check joined the hung one forever.
+        hang = false;
+        await svc.checkForUpdates();
+        expect(checkFn).toHaveBeenCalledTimes(2);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', progress: 100 });
+        abandoned.resolve();
+    });
 
     it.each(WINDOWS_MODES)(
         'applyUpdate (win32 %s): a channel change during the download stops the apply before anything is touched',
