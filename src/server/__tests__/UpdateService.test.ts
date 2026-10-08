@@ -1473,8 +1473,61 @@ describe('UpdateService', () => {
 
         assetDownload.reject(new Error('network down'));
         await expect(applying).rejects.toThrow(/network down/);
+        // Nothing changed during the apply, so its failure checks nothing itself.
+        await tick();
+        expect(resolve).not.toHaveBeenCalled();
+        expect(checkFn).not.toHaveBeenCalled();
         await svc.checkForUpdates();
         expect(resolve).toHaveBeenCalledTimes(1);
+        expect(checkFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a channel change during an apply is checked as soon as the apply fails', async () => {
+        // reconfigure() clears the pending update and sets idle, but its own
+        // check is skipped while the apply runs. Without a check when the apply
+        // fails, the new channel waits for the next interval tick (an hour by
+        // default) and the Settings change appears to do nothing.
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'stable',
+            githubOwner: 'bilbospocketses',
+        });
+        const { resolver, resolve } = heldResolver(() => releaseOf('0.2.0', 'linux-stable'));
+        const checkFn = vi.fn(async () => fakeUpdateInfo('0.2.0'));
+        const assetDownload = deferred<Response>();
+        const fetchFn = vi.fn(() => assetDownload.promise) as unknown as typeof fetch;
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: checkFn }),
+            releaseFeedResolver: resolver,
+            fetchFn,
+            ...quietTimers,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-stable.AppImage';
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', availableVersion: '0.2.0' });
+        const stableChannels = resolve.mock.calls.at(-1)![1];
+        resolve.mockClear();
+        checkFn.mockClear();
+
+        const applying = svc.applyUpdate();
+        await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+        await svc.reconfigure('beta', 'bilbospocketses');
+        expect(resolve).not.toHaveBeenCalled();
+        expect(checkFn).not.toHaveBeenCalled();
+        expect(svc.getStatus()).toMatchObject({ status: 'idle', pendingUpdate: undefined });
+
+        assetDownload.reject(new Error('network down'));
+        await expect(applying).rejects.toThrow(/network down/);
+        await settled(svc);
+        expect(resolve).toHaveBeenCalledTimes(1);
+        const betaChannels = resolve.mock.calls[0]![1];
+        expect(betaChannels).not.toEqual(stableChannels);
+        expect(betaChannels).toContain('linux-beta');
         expect(checkFn).toHaveBeenCalledTimes(1);
     });
 

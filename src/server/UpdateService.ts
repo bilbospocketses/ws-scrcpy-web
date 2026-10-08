@@ -508,7 +508,8 @@ export class UpdateService {
             // and a check now could set 'checking' over 'ready', replace or clear
             // the pending update, or start a Velopack download into the packages
             // folder the Windows hand-off is about to read. A failed apply clears
-            // applyInFlight, so checks resume; a successful one ends in exit.
+            // applyInFlight, so checks resume, and checks at once if a
+            // reconfigure() was skipped here; a successful one ends in exit.
             log.info('update check skipped: an update is being applied');
             return Promise.resolve(this.state);
         }
@@ -791,6 +792,9 @@ export class UpdateService {
         // The feed the pending update came from; set with it by every check. The
         // configured channel only covers a state no check produced.
         const pendingChannel = this.state.pendingChannel ?? this.channel;
+        // A reconfigure() during the apply bumps this, and its check is skipped
+        // (runCheck); a failed apply then checks the new channel itself.
+        const generation = this.generation;
         this.streamsStoppedForApply = false;
         try {
             // Before every path's first irreversible step (the machine-wide
@@ -806,6 +810,11 @@ export class UpdateService {
             // before it (a declined pkexec, a failed download, a bad checksum)
             // stopped nothing, so there is nothing to cancel. See liveStreams.ts.
             if (this.streamsStoppedForApply) liveStreams.cancelStop();
+            // The channel changed while the apply ran: reconfigure() cleared the
+            // pending update and set idle, but its check was skipped, so without
+            // this the new channel would wait for the next interval tick. With no
+            // change there is nothing new to check. Never rejects (runCheck).
+            if (this.generation !== generation) void this.checkForUpdates();
             throw err;
         }
     }
