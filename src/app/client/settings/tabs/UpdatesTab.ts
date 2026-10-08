@@ -646,9 +646,21 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
                 failApply(me, `apply failed: ${view.reason}`);
                 return;
             default:
-                // 'gave-up' or 'ended': it did not happen, and nothing says why.
-                failApply(me, me.lost.reason);
+                // 'gave-up' or 'ended': it did not happen.
+                failApply(me, lostApplyEndLine(s, me.lost.reason));
         }
+    }
+
+    /**
+     * Why a lost apply ended, from the status it ended on: the failed install
+     * the server recorded, else the error the status ended in (the check a
+     * failed download starts can itself fail). Only a status that says neither
+     * leaves the apply's own answer ("apply failed (504)").
+     */
+    function lostApplyEndLine(s: UpdatesStatusResponse, fallback: string): string {
+        if (s.lastApplyError) return `apply failed: ${s.lastApplyError}`;
+        if (s.status === 'error' && s.errorMessage) return `apply failed: ${s.errorMessage}`;
+        return fallback;
     }
 
     function followLostApply(me: ApplyRun, reason: string): void {

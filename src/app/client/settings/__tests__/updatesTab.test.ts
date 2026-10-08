@@ -674,6 +674,52 @@ describe('UpdatesTab', () => {
             expect(reload).toHaveBeenCalledTimes(1);
         });
 
+        /** Click apply, lose its answer to a proxy's 504, then end the status on `end`. */
+        async function loseApplyThenEnd(end: UpdatesStatusResponse): Promise<HTMLElement> {
+            const { el } = await mountUpdatesTab(ready);
+            const { server, f } = scriptedServer();
+            vi.stubGlobal('fetch', f);
+
+            applyBtnOf(el).click();
+            await vi.advanceTimersByTimeAsync(0);
+            server.answerApply!({
+                ok: false,
+                status: 504,
+                json: () => Promise.reject(new SyntaxError('Unexpected token <')),
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(actionStatusOf(el).textContent).toBe('installing update…');
+
+            server.status = end;
+            await vi.advanceTimersByTimeAsync(2_000);
+            return el;
+        }
+
+        it('a lost apply that ends in an error says why, not "apply failed (504)"', async () => {
+            const el = await loseApplyThenEnd({ ...ready, status: 'error', errorMessage: 'feed unreachable' });
+
+            const line = actionStatusOf(el);
+            expect(line.textContent).toBe('apply failed: feed unreachable');
+            expect(line.classList.contains('settings-status-error')).toBe(true);
+        });
+
+        it('a lost apply that ends in an error prefers the failed install the server recorded', async () => {
+            const el = await loseApplyThenEnd({
+                ...ready,
+                status: 'error',
+                errorMessage: 'feed unreachable',
+                lastApplyError: 'update download failed: 503',
+            });
+
+            expect(actionStatusOf(el).textContent).toBe('apply failed: update download failed: 503');
+        });
+
+        it('a lost apply that ends with no reason keeps "apply failed (504)"', async () => {
+            const el = await loseApplyThenEnd({ ...ready, status: 'error' });
+
+            expect(actionStatusOf(el).textContent).toBe('apply failed (504)');
+        });
+
         it('a failed install recorded by the server is shown on a tab opened after it', async () => {
             const { el } = await mountUpdatesTab({ ...ready, lastApplyError: 'update download failed: 503' });
 
