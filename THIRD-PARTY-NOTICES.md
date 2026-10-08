@@ -135,6 +135,23 @@ into the production `node_modules`, not compiled into `dist/`, and bring 9 furth
 Copyright 2023 The Sigstore Authors.
 ```
 
+**OpenPGP.js** (`openpgp`) — https://github.com/openpgpjs/openpgpjs
+
+Used at runtime to verify the OpenPGP signatures on the Node.js and scrcpy checksum lists the app
+downloads, against the publisher keys built into the app. Distributed under the **GNU Lesser General
+Public License, version 3 or later** (LGPL-3.0+), which permits use from this GPL-3.0-only program. It is
+installed unmodified into the production `node_modules` as its own package, not compiled into `dist/`
+(the server bundle keeps every package external), so it can be replaced with any compatible build; its
+complete licence text ships as `node_modules/openpgp/LICENSE`. It has no npm dependencies; the
+cryptographic code it bundles carries its own notices inside `node_modules/openpgp/dist/`.
+
+```
+Copyright (C) 2011 Recurity Labs GmbH
+Copyright (C) 2015-2016 Decentral
+Copyright (C) 2018 Proton Technologies AG
+and the OpenPGP.js contributors
+```
+
 `ws`, `@xterm/*`, `node-pty` and `velopack` are distributed under the MIT License:
 
 ```

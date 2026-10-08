@@ -66,10 +66,14 @@ export function mkcertChecksumsUrl(version: string): string {
  *   <base>/index.json                                        the release index
  *   <base>/v<version>/node-v<version>-<platform>-<arch>.<ext> the archive
  *   <base>/v<version>/SHASUMS256.txt                          the archive's checksum
+ *   <base>/v<version>/SHASUMS256.txt.sig                      the list's signature
  *
  * That is all the path reads there. The checksum list moves WITH the archive, and
  * the install still refuses an archive it does not list: the seam moves where the
- * list is read from, never whether it is checked. The node-pty prebuilt
+ * list is read from, never whether it is checked. Nor who must have signed it
+ * (M5): a list read through the seam must still carry a signature by one of
+ * Node's own pinned release keys, so a mirror can serve Node's genuine files
+ * and nothing else. The node-pty prebuilt
  * manifest the lookup also reads is this repo's own release asset, not Node's,
  * and stays where it is. Smoke row 9.12 points it at a fixture so a fast-tier
  * server is offered a Node update, the one update that needs a restart.
@@ -85,6 +89,15 @@ export function nodeDistBase(override: string | undefined = process.env[NODE_DIS
 /** nodejs.org's per-release checksum list, beside the archive under the same base. */
 export function nodeChecksumsUrl(version: string): string {
     return `${nodeDistBase()}/v${version}/SHASUMS256.txt`;
+}
+
+/**
+ * The binary detached signature over that list, beside it. nodejs.org also
+ * publishes `SHASUMS256.txt.asc`, a clearsigned copy; the detached `.sig` is
+ * read instead because it signs the exact bytes the hash is then read from.
+ */
+export function nodeChecksumsSignatureUrl(version: string): string {
+    return `${nodeChecksumsUrl(version)}.sig`;
 }
 
 /**
@@ -131,9 +144,14 @@ export function scrcpyServerAssetName(version: string): string {
     return `scrcpy-server-v${version}`;
 }
 
-/** The release's own `sha256sum` list, published beside the assets (and signed by `.asc`). */
+/** The release's own `sha256sum` list, published beside the assets. */
 export function scrcpyServerChecksumsUrl(version: string): string {
     return `https://github.com/Genymobile/scrcpy/releases/download/v${version}/SHA256SUMS.txt`;
+}
+
+/** The armored detached signature over that list, which every release since v2.0 carries. */
+export function scrcpyServerChecksumsSignatureUrl(version: string): string {
+    return `${scrcpyServerChecksumsUrl(version)}.asc`;
 }
 
 /**

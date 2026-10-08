@@ -9,6 +9,11 @@ import { promisify } from 'util';
 import { SERVER_JAR_SHA256 } from '../common/Constants';
 import type { DependencyInfo, LatestLookup, UpdateResult } from '../common/DependencyTypes';
 import { compareVersions, DependencyStatus } from '../common/DependencyTypes';
+import {
+    type AuthenticodeChecker,
+    defaultAuthenticodeChecker,
+    verifyPlatformToolsAuthenticode,
+} from './adbAuthenticode';
 import type { DependencyDefinition } from './DependencyDefinitions';
 import {
     ADB_REPOSITORY_XML_URL,
@@ -19,27 +24,48 @@ import {
     mkcertChecksumsUrl,
     mkcertExeName,
     NODE_DIST_BASE_ENV,
+    nodeChecksumsSignatureUrl,
     nodeChecksumsUrl,
     nodeDistBase,
     parseAdbArchive,
     scrcpyServerAssetName,
+    scrcpyServerChecksumsSignatureUrl,
     scrcpyServerChecksumsUrl,
 } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { parseSha256Sums } from './linuxUpdateAssets';
 import { liveStreams } from './liveStreams';
 import { defaultMkcertProvenanceDeps, MKCERT_URL_BASE_ENV, verifyMkcertManifestProvenance } from './mkcertProvenance';
+import { NODE_RELEASE_KEYS, SCRCPY_RELEASE_KEYS } from './release-keys/pinnedReleaseKeys';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, rmTreeSyncWithRetry, writeFileAtomicSync } from './util/atomicFile';
 import { fetchWithRetry, HttpStatusError, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
 import { ensureRootOwnedTreeIfRoot } from './util/rootOwnedTree';
 import { tarExtractArgs } from './util/tarExtract';
+import { type ReleaseKeySet, ReleaseSignatureError, verifyDetachedSignature } from './verifyOpenPgp';
 import { verifySha1, verifySha256 } from './verifySha256';
 import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
 const execFileAsync = promisify(execFile);
+
+/** The publisher keys a hash list must be signed by (M5), per dependency that has one. */
+export interface DependencyReleaseKeys {
+    nodejs: ReleaseKeySet;
+    scrcpyServer: ReleaseKeySet;
+}
+
+/**
+ * The keys pinned in this repo. Production has no other: `DependencyManager`'s
+ * `releaseKeys` option is a constructor argument that only tests pass, and no
+ * environment variable or config field reaches it, so a mirror set through
+ * `WS_SCRCPY_NODE_DIST_BASE` must still serve lists Node's own keys signed.
+ */
+export const PINNED_RELEASE_KEYS: DependencyReleaseKeys = {
+    nodejs: { label: 'Node.js', keys: NODE_RELEASE_KEYS },
+    scrcpyServer: { label: 'scrcpy', keys: SCRCPY_RELEASE_KEYS },
+};
 
 /**
  * A test seam: exactly '1' makes the BOOT pass (`checkAll({ boot: true })`)
@@ -114,6 +140,10 @@ export class DependencyManager {
     private readonly inFlightUpdates = new Map<string, Promise<UpdateResult>>();
     /** Throws unless the mkcert checksum manifest is attested -- see `mkcertProvenance.ts`. */
     private readonly verifyMkcertManifest: (manifest: string, tag: string) => Promise<void>;
+    /** Who must have signed Node's and scrcpy's hash lists -- see `PINNED_RELEASE_KEYS`. */
+    private readonly releaseKeys: DependencyReleaseKeys;
+    /** Windows only: the Authenticode check on every downloaded platform-tools binary -- see `adbAuthenticode.ts`. */
+    private readonly checkAuthenticode: AuthenticodeChecker;
 
     constructor(
         private readonly depsPath: string,
@@ -121,10 +151,21 @@ export class DependencyManager {
             restartMarkerPath?: string;
             /** A seam for tests; production always takes the default. */
             verifyMkcertManifest?: (manifest: string, tag: string) => Promise<void>;
+            /**
+             * A seam for tests, which sign their fixture lists with a throwaway
+             * key; production always takes `PINNED_RELEASE_KEYS`.
+             * `getDependencyManager` never passes it, and nothing a user can set
+             * reaches it.
+             */
+            releaseKeys?: DependencyReleaseKeys;
+            /** A seam for tests; production always takes `defaultAuthenticodeChecker`. */
+            checkAuthenticode?: AuthenticodeChecker;
             /** Config.dockerMode: leave out the definitions the image provides itself. */
             inContainer?: boolean;
         } = {},
     ) {
+        this.releaseKeys = opts.releaseKeys ?? PINNED_RELEASE_KEYS;
+        this.checkAuthenticode = opts.checkAuthenticode ?? defaultAuthenticodeChecker;
         // Default to <depsPath>/.restart preserves pre-Phase-1 behavior for
         // tests that don't care about the marker location. Production code
         // (index.ts) passes the explicit Config.restartMarkerPath so the
@@ -663,14 +704,19 @@ export class DependencyManager {
      * `installMkcert` against its provenance-attested manifest. Each source is
      * the publisher's own list, fetched from the same host as the download:
      *
-     *   nodejs         SHASUMS256.txt beside the archive (under nodeDistBase)
-     *   scrcpy-server  the release's SHA256SUMS.txt, cross-checked against the
+     *   nodejs         SHASUMS256.txt beside the archive (under nodeDistBase),
+     *                  signed (SHASUMS256.txt.sig) by a pinned Node.js release key
+     *   scrcpy-server  the release's SHA256SUMS.txt, signed (SHA256SUMS.txt.asc)
+     *                  by scrcpy's pinned key, and cross-checked against the
      *                  repo's own SERVER_JAR_SHA256 when it pins this version
-     *   adb            size + SHA-1 from repository2-3.xml
+     *   adb            size + SHA-1 from repository2-3.xml, which nothing signs;
+     *                  on Windows every extracted .exe and .dll's Authenticode
+     *                  signature is checked too, in installAdb before anything
+     *                  is stopped
      *
      * There is deliberately no way to skip or weaken any of these: a URL seam
      * (WS_SCRCPY_NODE_DIST_BASE) moves where the list is read from, never
-     * whether it is checked.
+     * whether it is checked or whose signature it needs.
      */
     private async verifyDownload(
         name: string,
@@ -711,8 +757,69 @@ export class DependencyManager {
         return res.text();
     }
 
+    /**
+     * M5: a hash list and its detached signature, the signature checked
+     * against `keySet` BEFORE the list is parsed or any hash compared, so a
+     * list nothing pinned vouches for is never read for a hash at all. The
+     * signature covers the list's exact bytes, which is why they are fetched
+     * as bytes and decoded only after.
+     *
+     * A signature file the server does not have (404) is `missing-signature`;
+     * any other non-OK answer is a fetch failure. Both refuse the install.
+     */
+    private async fetchSignedChecksumList(args: {
+        label: string;
+        listName: string;
+        version: string;
+        url: string;
+        signatureUrl: string;
+        keySet: ReleaseKeySet;
+    }): Promise<string> {
+        const { label, listName, version, url, signatureUrl, keySet } = args;
+        const fetchBytes = async (what: string, from: string): Promise<Response> =>
+            fetchWithRetry(from, {
+                ...VERSION_CHECK_POLICY,
+                onRetry: (n) => log.warn(`${label} ${what} fetch ${n.attempt}/${n.attempts}: ${n.reason}`),
+            });
+
+        const listRes = await fetchBytes('checksum list', url);
+        if (!listRes.ok) {
+            throw new Error(`${label} checksum list fetch failed: HTTP ${listRes.status} from ${url}`);
+        }
+        const list = new Uint8Array(await listRes.arrayBuffer());
+
+        const what = `${label} ${listName} for v${version}`;
+        const sigRes = await fetchBytes('checksum signature', signatureUrl);
+        if (sigRes.status === 404) {
+            throw new ReleaseSignatureError(
+                'missing-signature',
+                `${what} has no signature (HTTP 404 from ${signatureUrl}) -- refusing to install an unsigned list`,
+            );
+        }
+        if (!sigRes.ok) {
+            throw new Error(`${label} checksum signature fetch failed: HTTP ${sigRes.status} from ${signatureUrl}`);
+        }
+        const signature = new Uint8Array(await sigRes.arrayBuffer());
+
+        const signer = await verifyDetachedSignature({ what, data: list, signature, keySet });
+        log.info(
+            `${what} signed by ${signer.fingerprint} (${signer.owner}) on ${signer.created.toISOString()}` +
+                (signer.signingKeyFingerprint !== signer.fingerprint
+                    ? ` with subkey ${signer.signingKeyFingerprint}`
+                    : ''),
+        );
+        return new TextDecoder().decode(list);
+    }
+
     private async verifyNodeArchive(version: string, assetName: string, downloadPath: string): Promise<void> {
-        const sums = await this.fetchChecksumList('Node.js', nodeChecksumsUrl(version));
+        const sums = await this.fetchSignedChecksumList({
+            label: 'Node.js',
+            listName: 'SHASUMS256.txt',
+            version,
+            url: nodeChecksumsUrl(version),
+            signatureUrl: nodeChecksumsSignatureUrl(version),
+            keySet: this.releaseKeys.nodejs,
+        });
         const expected = parseSha256Sums(sums, assetName);
         if (!expected) {
             throw new Error(
@@ -732,7 +839,14 @@ export class DependencyManager {
      */
     private async verifyScrcpyServer(version: string, downloadPath: string): Promise<void> {
         const assetName = scrcpyServerAssetName(version);
-        const sums = await this.fetchChecksumList('scrcpy-server', scrcpyServerChecksumsUrl(version));
+        const sums = await this.fetchSignedChecksumList({
+            label: 'scrcpy-server',
+            listName: 'SHA256SUMS.txt',
+            version,
+            url: scrcpyServerChecksumsUrl(version),
+            signatureUrl: scrcpyServerChecksumsSignatureUrl(version),
+            keySet: this.releaseKeys.scrcpyServer,
+        });
         const expected = parseSha256Sums(sums, assetName);
         if (!expected) {
             throw new Error(
@@ -946,24 +1060,35 @@ export class DependencyManager {
     private async installAdb(downloadPath: string, tmpDir: string, platform: 'win32' | 'linux'): Promise<void> {
         const destDir = path.join(this.depsPath, 'adb');
         fs.mkdirSync(destDir, { recursive: true });
-
-        // Stop ADB server before replacing files
         const ext = platform === 'win32' ? '.exe' : '';
         const adbExe = path.join(destDir, `adb${ext}`);
+
+        // 1. Non-destructive: extract to tmpDir. Before kill-server, so a
+        // binary the checks below refuse never stops a working daemon.
+        await this.extractZip(downloadPath, tmpDir);
+
+        const platformToolsDir = path.join(tmpDir, 'platform-tools');
+        if (!fs.existsSync(platformToolsDir)) {
+            throw new Error('Could not find platform-tools directory in extracted archive');
+        }
+
+        // M5: on Windows every binary in the folder carries Google's
+        // Authenticode signature, the one publisher signature platform-tools
+        // has (the index it was checked against is unsigned). All of them are
+        // checked, not just adb.exe: the whole folder is installed, and adb.exe
+        // loads AdbWinApi.dll from beside itself first. Linux has no
+        // equivalent, so there the size + SHA-1 check is all of it.
+        if (platform === 'win32') {
+            await verifyPlatformToolsAuthenticode(platformToolsDir, this.checkAuthenticode);
+        }
+
+        // Stop ADB server before replacing files
         if (fs.existsSync(adbExe)) {
             try {
                 await execFileAsync(adbExe, ['kill-server'], { timeout: 5000 });
             } catch {
                 // ADB may not be running
             }
-        }
-
-        // 1. Non-destructive: extract to tmpDir.
-        await this.extractZip(downloadPath, tmpDir);
-
-        const platformToolsDir = path.join(tmpDir, 'platform-tools');
-        if (!fs.existsSync(platformToolsDir)) {
-            throw new Error('Could not find platform-tools directory in extracted archive');
         }
 
         // 2. Destructive (Windows only): rename + copy with rollback.

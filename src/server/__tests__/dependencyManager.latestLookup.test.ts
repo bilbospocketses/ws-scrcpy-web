@@ -3,11 +3,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVER_JAR_SHA256, SERVER_VERSION } from '../../common/Constants';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyManager, SKIP_BOOT_LATEST_ENV } from '../DependencyManager';
 import { Logger } from '../Logger';
+import { bytesResponse, makeTestReleaseKeys } from './helpers/releaseSigning';
 
 /**
  * `latestLookup` (2026-10-06, smoke 9.4).
@@ -40,6 +41,16 @@ function isGitHubApi(url: string): boolean {
 function isChecksumList(url: string): boolean {
     return new URL(url).pathname.endsWith('/SHA256SUMS.txt');
 }
+
+/** Its signature, which must be by a pinned key (M5): here the throwaway one in `keys`. */
+function isChecksumSignature(url: string): boolean {
+    return new URL(url).pathname.endsWith('/SHA256SUMS.txt.asc');
+}
+
+let keys: Awaited<ReturnType<typeof makeTestReleaseKeys>>;
+beforeAll(async () => {
+    keys = await makeTestReleaseKeys();
+});
 
 const sha256 = (data: string) => createHash('sha256').update(data).digest('hex');
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -146,6 +157,8 @@ describe('DependencyManager records each latest-version lookup', () => {
     });
 
     it('records the lookup inside update(), numbered after the earlier ones', async () => {
+        const sums = `${sha256('fake-v4.0-jar-bytes')}  scrcpy-server-v4.0\n`;
+        const sig = await keys.scrcpy.sign(sums, { armored: true });
         let refuse = true;
         fetchSpy = stubFetch((url) => {
             if (isGitHubApi(url)) {
@@ -153,12 +166,11 @@ describe('DependencyManager records each latest-version lookup', () => {
                     ? new Response('{}', { status: 403 })
                     : new Response(JSON.stringify({ tag_name: 'v4.0' }), { status: 200 });
             }
-            if (isChecksumList(url)) {
-                return new Response(`${sha256('fake-v4.0-jar-bytes')}  scrcpy-server-v4.0\n`, { status: 200 });
-            }
+            if (isChecksumList(url)) return new Response(sums, { status: 200 });
+            if (isChecksumSignature(url)) return bytesResponse(sig);
             return new Response('fake-v4.0-jar-bytes', { status: 200 });
         });
-        const mgr = new DependencyManager(tmpDir);
+        const mgr = new DependencyManager(tmpDir, { releaseKeys: keys.releaseKeys });
         const dep = mgr.getByName('scrcpy-server')!;
         dep.installedVersion = '3.3.4';
 
@@ -176,14 +188,15 @@ describe('DependencyManager records each latest-version lookup', () => {
         // The bundled version is the one SERVER_JAR_SHA256 pins, so the download
         // must be the vendored jar itself, listed under its real hash.
         const jar = new Uint8Array(fs.readFileSync(path.join(REPO_ROOT, 'assets', 'scrcpy-server')));
+        const sums = `${SERVER_JAR_SHA256[SERVER_VERSION]}  scrcpy-server-v${SERVER_VERSION}\n`;
+        const sig = await keys.scrcpy.sign(sums, { armored: true });
         fetchSpy = stubFetch((url) => {
             if (isGitHubApi(url)) return new Response('{}', { status: 403 });
-            if (isChecksumList(url)) {
-                return new Response(`${SERVER_JAR_SHA256[SERVER_VERSION]}  scrcpy-server-v${SERVER_VERSION}\n`);
-            }
+            if (isChecksumList(url)) return new Response(sums);
+            if (isChecksumSignature(url)) return bytesResponse(sig);
             return new Response(jar, { status: 200 });
         });
-        const mgr = new DependencyManager(tmpDir);
+        const mgr = new DependencyManager(tmpDir, { releaseKeys: keys.releaseKeys });
 
         const result = await mgr.update('scrcpy-server');
 
