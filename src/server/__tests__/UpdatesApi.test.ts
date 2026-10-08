@@ -240,6 +240,18 @@ describe('UpdatesApi', () => {
         expect(body.updateCheckIntervalMinutes).toBe(30);
     });
 
+    it('GET /status carries why the last install of the offered update failed', async () => {
+        const svc = fakeService({
+            status: 'ready',
+            availableVersion: '0.2.0',
+            lastApplyError: 'update download failed: Network error',
+        });
+        const api = new UpdatesApi(svc);
+        const { req, res } = makeReqRes('/api/updates/status');
+        await api.handle(req, res);
+        expect(JSON.parse((res as any).getBody()).lastApplyError).toBe('update download failed: Network error');
+    });
+
     it('GET /status in dev mode returns isInstalled=false', async () => {
         const svc = fakeService({ isInstalled: false, currentVersion: '', status: 'idle' });
         const api = new UpdatesApi(svc);

@@ -33,6 +33,12 @@ export interface UpdatesStatusResponse {
     progress?: number;
     /** Last error message when status='error'. */
     errorMessage?: string;
+    /**
+     * Why the last install of the offered update failed, while that update is
+     * still on offer (status='ready'). Cleared by the next install, a channel
+     * change, or a check that offers another version or none.
+     */
+    lastApplyError?: string;
     /** Last successful check timestamp (ISO string). */
     lastCheckedAt?: string;
     /** Mirrored from config.json for UI convenience. */

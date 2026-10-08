@@ -16,7 +16,12 @@ import {
     releaseAssetUrl,
 } from './linuxUpdateAssets';
 import { liveStreams } from './liveStreams';
-import { buildMachineWideUpdateScript, runPkexec, STAGED_SYSTEM_DIR } from './service/SystemdClient';
+import {
+    buildMachineWideUpdateScript,
+    PkexecDeclinedError,
+    runPkexec,
+    STAGED_SYSTEM_DIR,
+} from './service/SystemdClient';
 import { stageSystemHelper } from './service/systemHelper';
 import { buildDetachedSpawn } from './service/systemTools';
 import { GithubReleaseFeedResolver, type ReleaseFeedResolver, releaseFeedUrl } from './updateFeedResolver';
@@ -31,9 +36,30 @@ const log = Logger.for('UpdateService');
  * (`lib/types.d.ts`): after a laptop sleep or on a half-open connection the
  * call can wait forever, and since checks are serialised (runCheck) every
  * later check would join it. The release lookup before it is already bounded
- * (fetchWithRetry). The download is NOT given a deadline: it is ~60 MB.
+ * (fetchWithRetry). The download is not given a deadline (it is ~60 MB), but
+ * one that stops making progress is given up on ({@link DOWNLOAD_STALL_TIMEOUT_MS}).
  */
 export const VELOPACK_CHECK_TIMEOUT_MS = 60_000;
+
+/**
+ * How long a Velopack download (`downloadUpdateAsync`) may go without reporting
+ * progress before it is given up on as stalled. It has no deadline of its own
+ * (see {@link VELOPACK_CHECK_TIMEOUT_MS}), and a hung one wedged the updater
+ * until a restart: the apply never answered and stayed in progress, so every
+ * check was skipped and every apply refused; and a check's own download, being
+ * joined by every later check, blocked them all the same way.
+ *
+ * Velopack reports progress in 5 % steps (velopack 1.2.161 `download.rs:71-74`),
+ * about 3 MB of the ~60 MB package, so 120 s without one is under 25 KB/s; the
+ * window also covers connecting, which reports nothing. A package already on
+ * disk returns at once. If deltas are ever published this must be revisited:
+ * a delta downloads without progress, and applying the deltas reports none
+ * (`manager.rs:498-532`); today's releases are full packages only.
+ */
+export const DOWNLOAD_STALL_TIMEOUT_MS = 120_000;
+
+/** An apply stopped because the download it starts with failed; the update stays on offer. */
+class ApplyDownloadError extends Error {}
 
 /**
  * Minimal subset of {@link UpdateManager} that UpdateService actually uses.
@@ -108,6 +134,8 @@ export interface UpdateServiceOptions {
     reapOwnAdbFn?: (adbPath: string) => Promise<number>;
     /** Override {@link VELOPACK_CHECK_TIMEOUT_MS} for tests. */
     velopackCheckTimeoutMs?: number;
+    /** Override {@link DOWNLOAD_STALL_TIMEOUT_MS} for tests. */
+    downloadStallTimeoutMs?: number;
 }
 
 export interface UpdateServiceState {
@@ -117,6 +145,15 @@ export interface UpdateServiceState {
     progress?: number | undefined;
     availableVersion?: string | undefined;
     errorMessage?: string | undefined;
+    /**
+     * Why the last install of the update on offer failed, kept beside `ready`
+     * so a page loaded later, or one whose apply request got no answer (a proxy
+     * timing out the long Windows download), can still say why. Cleared when an
+     * install starts, when the channel changes, and when a check offers another
+     * version or none; a check offering the same version keeps it, so the check
+     * a failed install starts cannot wipe it before anyone has read it.
+     */
+    lastApplyError?: string | undefined;
     lastCheckedAt?: Date | undefined;
     /** Internal: the UpdateInfo we got from checkForUpdatesAsync, kept until apply. */
     pendingUpdate?: UpdateInfo | undefined;
@@ -188,6 +225,8 @@ export class UpdateService {
      * in process exit, so it stays set.
      */
     private applyInFlight = false;
+    /** The version `state.lastApplyError` is about; set and cleared with it. */
+    private lastApplyErrorVersion: string | undefined;
     private readonly installRoot: string;
     private readonly platform: NodeJS.Platform;
     private readonly locator: VelopackLocatorConfig | undefined;
@@ -200,6 +239,7 @@ export class UpdateService {
     private readonly runPkexecFn: (shellCmd: string, label: string) => Promise<string>;
     private readonly reapOwnAdbFn: (adbPath: string) => Promise<number>;
     private readonly velopackCheckTimeoutMs: number;
+    private readonly downloadStallTimeoutMs: number;
 
     constructor(opts: UpdateServiceOptions = {}) {
         this.platform = opts.platform ?? process.platform;
@@ -300,6 +340,7 @@ export class UpdateService {
         this.runPkexecFn = opts.runPkexecFn ?? runPkexec;
         this.reapOwnAdbFn = opts.reapOwnAdbFn ?? ((adbPath) => reapOwnAdbOnWindows(adbPath));
         this.velopackCheckTimeoutMs = opts.velopackCheckTimeoutMs ?? VELOPACK_CHECK_TIMEOUT_MS;
+        this.downloadStallTimeoutMs = opts.downloadStallTimeoutMs ?? DOWNLOAD_STALL_TIMEOUT_MS;
         this.state = { isInstalled: false, currentVersion: '', status: 'idle' };
     }
 
@@ -382,8 +423,10 @@ export class UpdateService {
      */
     public init(): void {
         // Every path below replaces `this.state` wholesale, which drops the
-        // pending update; its manager goes with it (see pendingMgr).
+        // pending update; its manager goes with it (see pendingMgr), and so does
+        // any failed install of it (lastApplyError).
         this.pendingMgr = null;
+        this.lastApplyErrorVersion = undefined;
         // v0.1.17: detect Velopack install via Update.exe (Windows) instead
         // of sq.version. sq.version is Squirrel.Windows naming (Velopack's
         // predecessor); Velopack drops Update.exe at the install root next
@@ -471,6 +514,7 @@ export class UpdateService {
         this.channel = channel;
         this.githubOwner = githubOwner;
         this.clearPending();
+        this.clearApplyError();
         this.state.availableVersion = undefined;
         this.state.errorMessage = undefined;
         this.state.status = 'idle';
@@ -573,6 +617,7 @@ export class UpdateService {
                 this.state.status = 'idle';
                 this.state.availableVersion = undefined;
                 this.clearPending();
+                this.clearApplyError();
                 return this.state;
             }
 
@@ -609,9 +654,13 @@ export class UpdateService {
                 this.state.status = 'idle';
                 this.state.availableVersion = undefined;
                 this.clearPending();
+                this.clearApplyError();
                 return this.state;
             }
 
+            // A failed install is kept only while the version it was about is
+            // still the one on offer (see lastApplyError).
+            if (info.TargetFullRelease.Version !== this.lastApplyErrorVersion) this.clearApplyError();
             this.state.availableVersion = info.TargetFullRelease.Version;
             this.setPending(info, feedChannel, mgr);
 
@@ -619,7 +668,9 @@ export class UpdateService {
             // On Linux our apply downloads the published AppImage directly, so the
             // Velopack nupkg is never used — never pre-download it (saves ~60 MB per
             // check). On Windows, keep the autoUpdate pre-download. autoUpdate=false
-            // also lands in the else. Availability is surfaced via status='ready'.
+            // also lands in the else. Availability is surfaced via status='ready';
+            // on Windows the apply then downloads the package itself first
+            // (downloadBeforeApply).
             if (cfg.autoUpdate && this.platform !== 'linux') {
                 await this.downloadIfNeeded();
             } else {
@@ -721,13 +772,52 @@ export class UpdateService {
         this.pendingMgr = null;
     }
 
-    /** One Velopack download; never rejects. See {@link downloadIfNeeded}. */
+    private clearApplyError(): void {
+        this.state.lastApplyError = undefined;
+        this.lastApplyErrorVersion = undefined;
+    }
+
+    /**
+     * One Velopack download; never rejects. See {@link downloadIfNeeded}.
+     *
+     * Given up on as `error` once {@link DOWNLOAD_STALL_TIMEOUT_MS} passes with
+     * no progress, for the check's download and the apply's alike: both wait on
+     * it, and a hung one held the updater until a restart. The Velopack call
+     * cannot be cancelled. Once given up on it is cut loose: its later progress
+     * is ignored, and settling this promise drops it from `download`, so no
+     * later download joins or waits on it. While it still runs it holds
+     * Velopack's exclusive update lock (velopack 1.2.161 `manager.rs:406`,
+     * `try_get_exclusive_lock`), so a new download fails at once with Velopack's
+     * own error, an ordinary failure, until it ends.
+     */
     private async runDownload(mgr: UpdateManagerLike, update: UpdateInfo, generation: number): Promise<void> {
+        const ms = this.downloadStallTimeoutMs;
+        // Set when this attempt is over, so the abandoned call's progress cannot land.
+        let over = false;
+        let timer: NodeJS.Timeout | undefined;
+        let rearm = (): void => undefined;
+        const stalled = new Promise<never>((_resolve, reject) => {
+            rearm = () => {
+                clearTimeout(timer);
+                timer = setTimeout(() => {
+                    over = true;
+                    reject(new Error(`update download stalled (no progress for ${ms / 1000} s)`));
+                }, ms);
+                // A stalled download must not keep a stopping server alive.
+                timer.unref?.();
+            };
+            rearm();
+        });
         try {
-            await mgr.downloadUpdateAsync(update, (perc: number) => {
-                if (generation !== this.generation) return;
-                this.state.progress = Math.min(100, Math.max(0, Math.round(perc)));
-            });
+            await Promise.race([
+                mgr.downloadUpdateAsync(update, (perc: number) => {
+                    if (over) return;
+                    rearm();
+                    if (generation !== this.generation) return;
+                    this.state.progress = Math.min(100, Math.max(0, Math.round(perc)));
+                }),
+                stalled,
+            ]);
             if (generation !== this.generation) {
                 log.info(
                     `discarding the finished download of v${update.TargetFullRelease.Version}: the channel changed`,
@@ -744,6 +834,9 @@ export class UpdateService {
             this.state.status = 'error';
             this.state.errorMessage = (err as Error).message ?? 'download failed';
             log.warn(`download failed: ${this.state.errorMessage}`);
+        } finally {
+            over = true;
+            clearTimeout(timer);
         }
     }
 
@@ -766,15 +859,21 @@ export class UpdateService {
      * point of no return ({@link enterPointOfNoReturn}), not at the top: an apply
      * that stops before it (a declined pkexec, a failed download, a bad
      * checksum) leaves adb, the open streams and the markers as they were.
+     *
+     * Every path downloads before that point: Linux its AppImage, Windows the
+     * Velopack package ({@link downloadBeforeApply}), so on Windows this can run
+     * as long as a download.
      */
     public async applyUpdate(): Promise<{ redirectPort: number | null }> {
+        // First: a running Windows apply shows `downloading` while it downloads,
+        // and a second apply is refused for being one, not for that status.
+        if (this.applyInFlight) {
+            throw new Error('apply already in progress');
+        }
         if (!this.pendingMgr || !this.state.pendingUpdate || this.state.status !== 'ready') {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
-        if (this.applyInFlight) {
-            throw new Error('apply already in progress');
-        }
         this.applyInFlight = true;
         // The manager, update and channel one check produced together.
         //
@@ -795,12 +894,22 @@ export class UpdateService {
         // A reconfigure() during the apply bumps this, and its check is skipped
         // (runCheck); a failed apply then checks the new channel itself.
         const generation = this.generation;
+        const version = pendingUpdate.TargetFullRelease.Version;
         this.streamsStoppedForApply = false;
+        // This attempt's outcome replaces the last one's.
+        this.clearApplyError();
         try {
-            // Before every path's first irreversible step (the machine-wide
-            // pkexec swap, each point of no return): the new version must boot
-            // on the channel this one is configured with.
-            this.keepChannelAcrossApply(pendingUpdate.TargetFullRelease.Version);
+            // Windows hands the swap to Velopack or the operation-server, and
+            // both read the package from the packages folder; neither downloads.
+            // Linux downloads its AppImage inside applyByPath.
+            if (this.platform === 'win32') {
+                await this.downloadBeforeApply(mgr, pendingUpdate, generation);
+                // After the download, so a failed one leaves nothing recorded;
+                // before every Windows point of no return: the new version must
+                // boot on the channel this one is configured with. Linux records
+                // it after its own download (applyByPath).
+                this.keepChannelAcrossApply(version);
+            }
             return await this.applyByPath(mgr, pendingUpdate, pendingChannel);
         } catch (err) {
             this.applyInFlight = false;
@@ -810,11 +919,29 @@ export class UpdateService {
             // before it (a declined pkexec, a failed download, a bad checksum)
             // stopped nothing, so there is nothing to cancel. See liveStreams.ts.
             if (this.streamsStoppedForApply) liveStreams.cancelStop();
-            // The channel changed while the apply ran: reconfigure() cleared the
-            // pending update and set idle, but its check was skipped, so without
-            // this the new channel would wait for the next interval tick. With no
-            // change there is nothing new to check. Never rejects (runCheck).
-            if (this.generation !== generation) void this.checkForUpdates();
+            const sameUpdate = this.generation === generation;
+            // Kept in the status beside `ready`, so the reason can be shown even
+            // to a page that never got this apply's answer. Not for a declined
+            // password prompt (the user's own choice, answered 403 uac-declined)
+            // nor after a channel change (the update it was about is gone).
+            if (sameUpdate && !(err instanceof PkexecDeclinedError)) {
+                this.state.lastApplyError = (err as Error).message;
+                this.lastApplyErrorVersion = version;
+            }
+            const downloadFailed = err instanceof ApplyDownloadError;
+            // As a failed check does: the release may have been deleted or
+            // replaced, so the next lookup must not be answered from cache.
+            if (downloadFailed) this.resolver.forget?.();
+            // Check again at once:
+            //  - after a failed download, so a retry installs from a fresh
+            //    pairing of update, manager and release instead of the one that
+            //    just failed. It offers the same version, so lastApplyError
+            //    survives it (performCheck);
+            //  - after a channel change: reconfigure() cleared the pending update
+            //    and set idle, but its check was skipped, so without this the new
+            //    channel would wait for the next interval tick.
+            // One call covers both. Never rejects (runCheck).
+            if (!sameUpdate || downloadFailed) void this.checkForUpdates();
             throw err;
         }
     }
@@ -841,8 +968,13 @@ export class UpdateService {
      *
      * A failed write refuses the apply. Going ahead would silently move the
      * install to the other channel; refusing happens before anything has been
-     * touched (no download, no swap, no stopped streams), so the update stays
-     * `ready` and can be retried.
+     * touched (no swap, no stopped streams), so the update stays `ready` and can
+     * be retried.
+     *
+     * Called after each path's download and before its first irreversible step
+     * (the machine-wide pkexec swap, each point of no return), so a download that
+     * fails records nothing: before 2026-10-08 it ran first, and a failed
+     * download still left the channel row written.
      */
     private keepChannelAcrossApply(targetVersion: string): void {
         const config = Config.getInstance();
@@ -857,6 +989,51 @@ export class UpdateService {
             throw new Error(`apply: ${msg}`);
         }
         log.info(`applyUpdate: recorded the ${channel} channel so v${targetVersion} keeps it`);
+    }
+
+    /**
+     * Windows: put the pending update's package in the packages folder before
+     * anything irreversible, the way the Linux apply downloads its AppImage
+     * first. Neither Windows hand-off downloads: Velopack's
+     * `waitExitThenApplyUpdate` fails with "File does not exist" (velopack
+     * 1.2.161 `manager.rs:602-634`), and the operation-server fails with
+     * "nupkg named by manifest not found" (`operation_server.rs`
+     * find_and_extract_nupkg) after the app has gone down. With
+     * autoUpdate off the check never downloads, so before 2026-10-08 every
+     * install on that setting failed (service mode after closing every stream,
+     * local mode with the app shut down for good).
+     *
+     * With autoUpdate on, the check has already downloaded it, and this costs a
+     * stat: Velopack skips a package already on disk (`manager.rs:414-415`),
+     * without re-hashing it. The status shows `downloading` with progress
+     * meanwhile; no check can overwrite that, since checks are skipped while an
+     * apply runs (runCheck).
+     *
+     * downloadIfNeeded never rejects, so its outcome is read from the state. A
+     * reconfigure() during the download changes the generation and clears the
+     * pending update: the apply stops, rather than install a release the user
+     * has just switched away from. A failed download leaves the update `ready`,
+     * as a failed Linux download does, so the install can simply be retried;
+     * the reason goes back to the caller in the error and stays in the status
+     * as `lastApplyError`, and applyUpdate checks again at once. A download that
+     * stops making progress fails the same way (runDownload).
+     */
+    private async downloadBeforeApply(
+        mgr: UpdateManagerLike,
+        pendingUpdate: UpdateInfo,
+        generation: number,
+    ): Promise<void> {
+        await this.downloadIfNeeded();
+        if (this.generation !== generation || this.state.pendingUpdate !== pendingUpdate || this.pendingMgr !== mgr) {
+            throw new Error('update changed during download; nothing was installed');
+        }
+        if (this.state.status !== 'ready') {
+            const reason = this.state.errorMessage ?? `the download ended in state ${this.state.status}`;
+            this.state.status = 'ready';
+            this.state.errorMessage = undefined;
+            log.warn(`applyUpdate: download of v${pendingUpdate.TargetFullRelease.Version} failed: ${reason}`);
+            throw new ApplyDownloadError(`update download failed: ${reason}`);
+        }
     }
 
     /**
@@ -929,6 +1106,16 @@ export class UpdateService {
                 destPath: stagedPath,
                 fetchFn: this.fetchFn,
             });
+            // Downloaded and verified, and before the first irreversible step
+            // (the machine-wide pkexec swap, else the point of no return), as on
+            // Windows: a failed download records nothing. A refusal drops the
+            // download, as a declined pkexec does below.
+            try {
+                this.keepChannelAcrossApply(version);
+            } catch (err) {
+                await fs.promises.rm(stagedPath, { force: true }).catch(() => undefined);
+                throw err;
+            }
 
             const homeAppImage = process.env['APPIMAGE'] ?? '';
             // The launcher stages this helper copy (named *.exe even on Linux) to

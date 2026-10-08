@@ -123,6 +123,7 @@ export class UpdatesApi {
         if (s.availableVersion !== undefined) out.availableVersion = s.availableVersion;
         if (s.progress !== undefined) out.progress = s.progress;
         if (s.errorMessage !== undefined) out.errorMessage = s.errorMessage;
+        if (s.lastApplyError !== undefined) out.lastApplyError = s.lastApplyError;
         if (s.lastCheckedAt) out.lastCheckedAt = s.lastCheckedAt.toISOString();
         return out;
     }
