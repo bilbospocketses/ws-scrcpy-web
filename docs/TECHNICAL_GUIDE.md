@@ -1267,7 +1267,7 @@ To add a new dependency to the updater:
 
 The home page (`http://localhost:8000`) is a single-page view with three sections on one scrollable page. No navigation system -- everything is visible at a glance.
 
-**Page layout:** All content is wrapped in a centered `.page-container` with `max-width: 1800px` (fits up to 5 device cards on 4K monitors). Page structure is created in `src/app/index.ts` in fixed order before `HostTracker.start()` to prevent race conditions across browsers.
+**Page layout:** All content is wrapped in a `.page-container` that fills the window at every width inside a 24px side gutter (`padding: 56px 24px 0`), so the section borders never touch the window edge; device cards wrap into as many columns as fit. Page structure is created in `src/app/index.ts` in fixed order before `HostTracker.start()` to prevent race conditions across browsers.
 
 **Theme toggle:** A sun/moon button in the top-right corner switches between dark (default) and light themes. First paint follows the OS `prefers-color-scheme`; once the settings cache warms (after the localStorage→SQLite migration runs in `onload`), the stored theme applies and the DB is authoritative. The preference persists per-user in the SQLite store via `SettingsApi` (`user_settings['theme']`), not localStorage. Themes use the `data-theme` attribute on `<html>` with CSS custom properties. Colors match the Control Menu project palette.
 
