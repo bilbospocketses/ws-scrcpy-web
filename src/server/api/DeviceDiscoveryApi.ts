@@ -1,10 +1,10 @@
-import { lookup as dnsLookup } from 'dns/promises';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { AdbClient, parseSerialFromMdnsName } from '../AdbClient';
 import { resolveUserId } from '../auth/currentUser';
 import { Config } from '../Config';
 import { parseScreenState, SCREEN_STATE_COMMAND } from '../deviceScreenState';
 import { Logger } from '../Logger';
+import { lookupIpv4 } from '../network/lookupIpv4';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
 import { hostOf, isProbeAddressSerial, scanAddressFor } from '../network/scanIdentity';
@@ -17,12 +17,6 @@ import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalEr
 const log = Logger.for('DeviceDiscoveryApi');
 
 export type DisconnectOutcome = { status: number; success: boolean; message: string };
-
-/** A scan probes IPv4 literals, so a hostname connect is recorded at its IPv4. */
-async function lookupIpv4(hostname: string): Promise<string | null> {
-    const { address } = await dnsLookup(hostname, { family: 4 });
-    return address;
-}
 
 /**
  * adb prints `disconnected <addr>` when it tore a connection down, and

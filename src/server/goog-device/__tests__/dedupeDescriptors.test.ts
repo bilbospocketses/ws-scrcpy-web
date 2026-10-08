@@ -72,6 +72,17 @@ describe('dedupeByHardwareSerial', () => {
         expect(out).toHaveLength(2);
     });
 
+    it.each(['0123456789ABCDEF', 'unknown', 'EMULATOR37X1X11X0'])(
+        'never merges two devices on the strength of a shared placeholder serial (%s; M11 fix 1, m4)',
+        (placeholder) => {
+            const out = dedupeByHardwareSerial([
+                descriptor('192.168.86.43:5555', placeholder),
+                descriptor('192.168.86.159:5555', placeholder),
+            ]);
+            expect(out.map((d) => d.udid)).toEqual(['192.168.86.43:5555', '192.168.86.159:5555']);
+        },
+    );
+
     it('leaves a single-transport device untouched', () => {
         const out = dedupeByHardwareSerial([descriptor(MDNS, SERIAL)]);
         expect(out.map((d) => d.udid)).toEqual([MDNS]);

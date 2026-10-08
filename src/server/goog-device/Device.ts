@@ -4,12 +4,13 @@ import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
 import { inContainer } from '../api/containerGuard';
-import { upsertObservedDevices } from '../api/deviceObserved';
-import { applyPendingLabels, forgetPendingLabels } from '../api/pendingLabels';
+import { recordTrackerSighting } from '../api/deviceObserved';
+import { applyPendingLabels, forgetPendingLabels, forgetSerialReadOn } from '../api/pendingLabels';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
+import { lookupIpv4 } from '../network/lookupIpv4';
 import { resolveMac } from '../network/MacResolver';
-import { hostOf } from '../network/scanIdentity';
+import { hostOf, scanAddressFor } from '../network/scanIdentity';
 import { shArg } from '../security/deviceInput';
 import { classifyDeviceKind } from './deviceKind';
 import { Properties } from './Properties';
@@ -40,6 +41,20 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private updateCount = 0;
     private throttleTimeoutId?: Timeout | undefined;
     private lastEmit = 0;
+    /**
+     * True once the tracker has read this transport's properties and recorded
+     * what it read, since the transport last became a `device` (M11 fix 1).
+     * Until then nobody knows which device answers here, so `SettingsApi` waits
+     * for it (`whenSighted`) rather than file settings under the transport.
+     */
+    private sighted = false;
+    private readonly sightingWaiters = new Set<(sighted: boolean) => void>();
+    /**
+     * Bumped on every `setState` (M11 fix 2). A property read captures it when
+     * it starts; one that finishes after the transport changed state may have
+     * read another device (DHCP reuse, a swapped cable), so it is discarded.
+     */
+    private stateGeneration = 0;
     public readonly TAG: string;
     public readonly descriptor: GoogDeviceDescriptor;
 
@@ -69,6 +84,8 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     public setState(state: string): void {
+        this.stateGeneration++;
+        this.sighted = false;
         if (state === 'device') {
             this.connected = true;
             this.properties = undefined;
@@ -76,6 +93,13 @@ export class Device extends TypedEmitter<DeviceEvents> {
         } else {
             this.connected = false;
             this.descriptor.pid = -1;
+            // Whatever answers on this transport when it is a device again may
+            // be another device (DHCP reuse, a swapped cable), so the serial read
+            // on it goes: the client must not bind the card's settings to it and
+            // `SettingsApi` must not resolve the transport to it (M11 fix 1, m5).
+            this.descriptor['ro.serialno'] = '';
+            forgetSerialReadOn(this.udid);
+            this.settleSightingWaiters(false);
             // The transport is gone: a name still waiting on it must not land
             // on whatever device answers at this address next.
             if (state === DeviceState.DISCONNECTED) forgetPendingLabels(this.udid);
@@ -87,6 +111,31 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     public isConnected(): boolean {
         return this.connected;
+    }
+
+    /**
+     * Resolves true once the tracker has read and recorded this transport's
+     * properties (M11 fix 1), at once if it already has; false if the transport
+     * is not a `device`, stops being one, or `timeoutMs` passes first. After
+     * true, `serialReadOn(udid)` holds the device's serial, or nothing when it
+     * reported none that names one device (`isUniqueSerial`).
+     */
+    public whenSighted(timeoutMs: number): Promise<boolean> {
+        if (this.sighted) return Promise.resolve(true);
+        if (!this.connected) return Promise.resolve(false);
+        return new Promise((resolve) => {
+            const settle = (sighted: boolean): void => {
+                clearTimeout(timer);
+                this.sightingWaiters.delete(settle);
+                resolve(sighted);
+            };
+            const timer = setTimeout(() => settle(false), timeoutMs);
+            this.sightingWaiters.add(settle);
+        });
+    }
+
+    private settleSightingWaiters(sighted: boolean): void {
+        for (const settle of [...this.sightingWaiters]) settle(sighted);
     }
 
     public async getPidOf(processName: string): Promise<number[] | undefined> {
@@ -138,7 +187,12 @@ export class Device extends TypedEmitter<DeviceEvents> {
         if (!this.connected) {
             return;
         }
-        this.properties = await this.adbClient.getProperties(this.udid);
+        const generation = this.stateGeneration;
+        const properties = await this.adbClient.getProperties(this.udid);
+        // The transport changed state while the read was out: what it read may
+        // be the previous device, so it must not become the cache (M11 fix 2).
+        if (generation !== this.stateGeneration) return;
+        this.properties = properties;
         return this.properties;
     }
 
@@ -306,7 +360,12 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     private fetchDeviceInfo = (): void => {
         if (this.connected) {
+            // A read that finishes after `setState` ran again belongs to the
+            // transport's previous state, maybe to another device: it records
+            // nothing (M11 fix 2).
+            const generation = this.stateGeneration;
             const propsPromise = this.getProperties().then((props) => {
+                if (generation !== this.stateGeneration) return false;
                 if (!props) return false;
                 let changed = false;
                 Properties.forEach((propName: keyof GoogDeviceDescriptor) => {
@@ -316,24 +375,28 @@ export class Device extends TypedEmitter<DeviceEvents> {
                     }
                 });
                 // Record observed metadata (manufacturer/model) in the shared
-                // devices table — best-effort; never break device tracking.
+                // devices table under the device's real serial, never the
+                // transport id (M11) — best-effort; never break device tracking.
                 try {
-                    upsertObservedDevices(Config.getInstance().db, [
-                        {
-                            serial: this.udid,
-                            manufacturer: this.descriptor['ro.product.manufacturer'] || null,
-                            model: this.descriptor['ro.product.model'] || null,
-                            lastSeenAt: Date.now(),
-                        },
-                    ]);
+                    const serial = this.descriptor['ro.serialno'];
+                    const bySerial = recordTrackerSighting(Config.getInstance().db, {
+                        udid: this.udid,
+                        serial,
+                        manufacturer: this.descriptor['ro.product.manufacturer'] || null,
+                        model: this.descriptor['ro.product.model'] || null,
+                        at: Date.now(),
+                    });
                     // A name typed at connect before this serial could be read
                     // is filed under it now, ahead of the update that makes the
-                    // card fetch labels (row 19.5 follow-up).
-                    const serial = this.descriptor['ro.serialno'];
-                    if (serial) {
+                    // card fetch labels (row 19.5 follow-up). A placeholder
+                    // serial many devices share keys nothing (M11 fix 1, m4).
+                    if (bySerial) {
                         applyPendingLabels(Config.getInstance().db, this.udid, serial);
                         this.backfillMac(serial);
+                        this.claimTransportAddress(serial);
                     }
+                    this.sighted = true;
+                    this.settleSightingWaiters(true);
                 } catch {
                     /* best-effort */
                 }
@@ -343,8 +406,11 @@ export class Device extends TypedEmitter<DeviceEvents> {
             const netIntPromise = this.updateInterfaces().then((interfaces) => {
                 return !!interfaces.length;
             });
+            // The retry bookkeeping is the newer state's to keep: a stale pass
+            // neither reschedules nor resets its timers (M11 fix 2).
             Promise.all([propsPromise, netIntPromise])
                 .then((results) => {
+                    if (generation !== this.stateGeneration) return;
                     this.updateTimeoutId = undefined;
                     const failedCount = results.filter((result) => !result).length;
                     if (!failedCount) {
@@ -355,6 +421,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                     }
                 })
                 .catch(() => {
+                    if (generation !== this.stateGeneration) return;
                     this.updateTimeoutId = undefined;
                     this.scheduleInfoUpdate();
                 });
@@ -379,6 +446,28 @@ export class Device extends TypedEmitter<DeviceEvents> {
         resolveMac(hostOf(this.udid))
             .then((mac) => {
                 if (mac && !db.devices.getMac(serial)) db.devices.recordMac(serial, mac);
+            })
+            .catch(() => {
+                /* best-effort */
+            });
+    }
+
+    /**
+     * Record the address a TCP transport answers at against the device's serial,
+     * in the form a scan hit carries, as a connect does (M11): a hostname is
+     * resolved to its IPv4, an IPv4 or bracketed IPv6 literal is kept as it is
+     * (`scanAddressFor`). A rescan joins its hit to the device by this address,
+     * which is how it finds the remembered model. A USB transport has no
+     * address. Best-effort, and skipped if the transport went away meanwhile
+     * or now answers with another device's serial (M11 fix 1, m3).
+     */
+    private claimTransportAddress(serial: string): void {
+        if (!/:\d+$/.test(this.udid)) return;
+        scanAddressFor(this.udid, lookupIpv4)
+            .then((address) => {
+                if (this.connected && this.descriptor['ro.serialno'] === serial) {
+                    Config.getInstance().db.devices.claimAddress(serial, address, Date.now());
+                }
             })
             .catch(() => {
                 /* best-effort */

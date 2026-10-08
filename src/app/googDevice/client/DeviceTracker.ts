@@ -14,6 +14,7 @@ import { insecureOriginNotice } from '../../secureContext';
 import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
+import { bindDeviceSettings } from './deviceSettingsBinding';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
 
 // ---------- capability gating ----------
@@ -180,6 +181,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             context && typeof context === 'object' ? (context as Record<string, string>) : {};
         const fullName = `${this.id}_${Util.escapeUdid(device.udid)}`;
         const isActive = device.state === DeviceState.DEVICE;
+        // Stream settings follow the device, not the transport (M11).
+        bindDeviceSettings(settingsService, device);
         const deviceName = device['ro.product.model']?.startsWith(device['ro.product.manufacturer'])
             ? device['ro.product.model']
             : `${device['ro.product.manufacturer']} ${device['ro.product.model']}`;
@@ -415,6 +418,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 // Hydrate the per-device cache before reading audio prefs.
                 // hydrateDevice covers both audio and video scopes so Task 4c's
                 // video reads (line ~455) also benefit from this single call.
+                // Keyed by the device's serial through the binding above (M11).
                 await settingsService.hydrateDevice(device.udid);
 
                 // Apply audio prefs: saved-from-ConfigureScrcpy if present,
