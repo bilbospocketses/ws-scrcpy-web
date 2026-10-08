@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.201] - 2026-10-08
+
 ### Fixed
 - **The home page has side margins again, and fills wide windows.** In any window narrower than 1800 pixels, the Connected Devices and Available Network Devices sections ran flush against the left and right edges of the window, and on wider windows the page stopped at 1800 pixels and left empty bands at the sides. The page now spans the whole window at every width, with a 24-pixel margin on each side.
 
