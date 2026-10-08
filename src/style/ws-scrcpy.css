@@ -2,9 +2,20 @@
  *
  * This file is also loaded standalone by embed.html (which does NOT link app.css),
  * so it must self-contain every theme variable the stream/toolbar styling depends on.
- * Home-page callers (app.css) re-define the same variables — identical values, so
- * the cascade harmless. Light-mode auto-detection uses prefers-color-scheme, but
- * an explicit data-theme="light"/"dark" attribute on <html> wins.
+ * Light-mode auto-detection uses prefers-color-scheme, but an explicit
+ * data-theme="light"/"dark" attribute on <html> wins.
+ *
+ * Two groups of tokens:
+ * - The stream tokens (--control-buttons-bg-color, --svg-button-fill,
+ *   --svg-checkbox-bg-color) are defined ONLY here; app.css imports this file
+ *   and does not repeat them.
+ * - The overlay tokens (--controls-bg-color, --text-color, --warning-color,
+ *   --info-color, --button-text-color, --button-border-color) are app-wide and
+ *   canonically live in app.css. They are copied here, with app.css's values,
+ *   because the locked notice and the clipboard prompt over the video use them
+ *   and embed.html has no app.css to supply them. On app.css pages its own
+ *   definitions come later with the same values, so nothing changes there.
+ *   design-tokens.test.ts holds the two copies equal in both themes.
  */
 
 :root,
@@ -12,6 +23,13 @@
     --control-buttons-bg-color: #2d3741;
     --svg-button-fill: #ffffff;
     --svg-checkbox-bg-color: #10b981;
+    /* Overlay tokens: copies of app.css's dark values. */
+    --controls-bg-color: rgba(45, 55, 65, 0.8);
+    --text-color: #e0e0e0;
+    --warning-color: #fb923c;
+    --info-color: #60a5fa;
+    --button-text-color: hsl(214, 82%, 76%);
+    --button-border-color: #444444;
 }
 
 @media (prefers-color-scheme: light) {
@@ -19,6 +37,13 @@
         --control-buttons-bg-color: #f8f9fa;
         --svg-button-fill: #495057;
         --svg-checkbox-bg-color: #198754;
+        /* Overlay tokens: copies of app.css's light values. */
+        --controls-bg-color: rgba(248, 249, 250, 0.8);
+        --text-color: #212529;
+        --warning-color: #b45309;
+        --info-color: #0969da;
+        --button-text-color: #0d6efd;
+        --button-border-color: #c0c6cc;
     }
 }
 
@@ -26,6 +51,13 @@
     --control-buttons-bg-color: #f8f9fa;
     --svg-button-fill: #495057;
     --svg-checkbox-bg-color: #198754;
+    /* Overlay tokens: copies of app.css's light values. */
+    --controls-bg-color: rgba(248, 249, 250, 0.8);
+    --text-color: #212529;
+    --warning-color: #b45309;
+    --info-color: #0969da;
+    --button-text-color: #0d6efd;
+    --button-border-color: #c0c6cc;
 }
 
 /* Stream layout: device-view is a flex row (video | toolbar). Video cell uses

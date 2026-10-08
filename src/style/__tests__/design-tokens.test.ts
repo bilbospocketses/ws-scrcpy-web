@@ -158,3 +158,90 @@ describe('theme-token ownership (no app/ws-scrcpy duplication)', () => {
         }
     });
 });
+
+/** Strip CSS comments, so a token named in prose is neither a use nor a definition. */
+function stripComments(css: string): string {
+    return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+/** The custom-property declarations of the first rule whose selector starts at `selectorAt`. */
+function declarationsAt(css: string, selectorAt: number): Map<string, string> {
+    expect(selectorAt, 'selector not found').toBeGreaterThanOrEqual(0);
+    const open = css.indexOf('{', selectorAt);
+    const close = css.indexOf('}', open);
+    const body = css.slice(open + 1, close);
+    const out = new Map<string, string>();
+    for (const m of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+        out.set(m[1] as string, (m[2] as string).replace(/\s+/g, ' ').trim());
+    }
+    return out;
+}
+
+/** A theme's custom properties, keyed by where they are declared. */
+interface ThemeBlocks {
+    dark: Map<string, string>;
+    light: Map<string, string>;
+    /** ws-scrcpy.css only: the prefers-color-scheme light block for pages with no data-theme. */
+    autoLight?: Map<string, string>;
+}
+
+function themeBlocks(name: string): ThemeBlocks {
+    const css = stripComments(readStyle(name));
+    const blocks: ThemeBlocks = {
+        dark: declarationsAt(css, css.indexOf('[data-theme="dark"]')),
+        light: declarationsAt(css, css.search(/(^|\n)\[data-theme="light"\]\s*\{/)),
+    };
+    const media = css.indexOf('@media (prefers-color-scheme: light)');
+    if (media >= 0) blocks.autoLight = declarationsAt(css, css.indexOf(':root:not([data-theme="dark"])', media));
+    return blocks;
+}
+
+describe('ws-scrcpy.css is self-contained (embed.html loads it without app.css)', () => {
+    // embed.html links ws-scrcpy.css alone. A var() it cannot resolve falls back
+    // to the property's initial value — a transparent background and border —
+    // which is how the clipboard prompt and the locked notice once rendered as
+    // bare text over the video on the embed page.
+    const ws = stripComments(readStyle('ws-scrcpy.css'));
+    /** Every var(--x) with no fallback. A fallback is self-contained by definition. */
+    const usedTokens = [...new Set([...ws.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)].map((m) => m[1] as string))];
+
+    it('uses at least the overlay tokens (control: the scan finds uses)', () => {
+        expect(usedTokens).toEqual(
+            expect.arrayContaining(['--controls-bg-color', '--text-color', '--info-color', '--warning-color']),
+        );
+    });
+
+    it('defines every token it uses in each of its three theme blocks', () => {
+        const blocks = themeBlocks('ws-scrcpy.css');
+        for (const token of usedTokens) {
+            expect(blocks.dark.has(token), `${token} missing from the dark block`).toBe(true);
+            expect(blocks.light.has(token), `${token} missing from [data-theme="light"]`).toBe(true);
+            expect(blocks.autoLight?.has(token), `${token} missing from the prefers-color-scheme light block`).toBe(
+                true,
+            );
+        }
+    });
+
+    it('gives the prefers-color-scheme light block the same values as [data-theme="light"]', () => {
+        const blocks = themeBlocks('ws-scrcpy.css');
+        expect(Object.fromEntries(blocks.autoLight ?? [])).toEqual(Object.fromEntries(blocks.light));
+    });
+
+    it('copies app.css values exactly for every token both files define, in both themes', () => {
+        // app.css pages get both definitions; equal values keep them looking
+        // exactly as they did before the copies existed.
+        const ws = themeBlocks('ws-scrcpy.css');
+        const app = themeBlocks('app.css');
+        let shared = 0;
+        for (const theme of ['dark', 'light'] as const) {
+            for (const [token, value] of ws[theme]) {
+                if (!app[theme].has(token)) continue;
+                shared++;
+                expect(value, `${token} (${theme}) differs between ws-scrcpy.css and app.css`).toBe(
+                    app[theme].get(token),
+                );
+            }
+        }
+        expect(shared, 'the overlay tokens should be shared in both themes').toBeGreaterThanOrEqual(12);
+    });
+});
