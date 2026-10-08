@@ -14,6 +14,9 @@ import {
     signPacketUnchecked,
 } from './helpers/releaseSigning';
 
+/** Escape every regex metacharacter, so text becomes a literal pattern. */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
  * M5: verifyDetachedSignature over a hash list's exact bytes. The throwaway-key
  * cases pin each refusal; the real-fixture cases run the files nodejs.org and
@@ -317,7 +320,7 @@ describe('verifyDetachedSignature with a throwaway key', () => {
         expect(err.reason).toBe('key-not-valid');
         expect(err.message).toMatch(
             new RegExp(
-                `^${what.replace(/\./g, '\\.')} was signed on 2020-03-01T00:00:00\\.000Z by ${signer.fingerprint} ` +
+                `^${escapeRegExp(what)} was signed on 2020-03-01T00:00:00\\.000Z by ${signer.fingerprint} ` +
                     '\\(Node\\.js test signer\\), a key that was not valid then \\(.+\\) -- refusing to install$',
             ),
         );

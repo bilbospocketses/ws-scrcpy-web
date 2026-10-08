@@ -11,6 +11,9 @@ import { DependencyManager } from '../DependencyManager';
 import { parseSha256Sums } from '../linuxUpdateAssets';
 import { bytesResponse, makeTestReleaseKeys, makeTestSigner, type TestSigner } from './helpers/releaseSigning';
 
+/** Escape every regex metacharacter, so text becomes a literal pattern. */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
  * M5: Node's SHASUMS256.txt and scrcpy's SHA256SUMS.txt must be signed by a key
  * pinned for that publisher before the list is read for a hash. Every refusal
@@ -155,7 +158,7 @@ describe('DependencyManager.update("nodejs") — SHASUMS256.txt.sig by a pinned 
         expect(result.success).toBe(false);
         expect(result.errorMessage).toMatch(
             new RegExp(
-                `^Node\\.js SHASUMS256\\.txt for v${version.replace(/\./g, '\\.')}: signature does not verify \\(.+\\) -- refusing to install$`,
+                `^Node\\.js SHASUMS256\\.txt for v${escapeRegExp(version)}: signature does not verify \\(.+\\) -- refusing to install$`,
             ),
         );
         expect(install).not.toHaveBeenCalled();

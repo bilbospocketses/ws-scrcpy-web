@@ -18,6 +18,9 @@ import {
 } from './support/privateServer';
 import { logOffset, logSince, readServerLog } from './support/serverLog';
 
+/** Escape every regex metacharacter, so text becomes a literal pattern. */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
  * Smoke row 9.12, Settings → Dependencies → Restart Now. Fast tier.
  *
@@ -197,7 +200,7 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
     };
     const listed = release.shasums
         .toString('utf8')
-        .match(new RegExp(`^([0-9a-f]{64})  ${ARCHIVE_NAME.replace(/\./g, '\\.')}$`, 'm'));
+        .match(new RegExp(`^([0-9a-f]{64})  ${escapeRegExp(ARCHIVE_NAME)}$`, 'm'));
     expect(listed?.[1], `SHASUMS256.txt lists ${ARCHIVE_NAME}`).toBe(
         createHash('sha256').update(release.archive).digest('hex'),
     );
