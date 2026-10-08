@@ -134,6 +134,11 @@ if (__ssArgs) {
         restartMarkerPath: config.restartMarkerPath,
         inContainer: config.dockerMode === true,
     });
+    // Synchronously, before any service starts and so before any probe or
+    // stream reads the scrcpy-server version: give a jar an earlier build
+    // seed-promoted without a `.version` marker the version it really is. See
+    // the method's own comment.
+    depManager.repairScrcpyServerVersionMarker();
     const depApi = new DependencyApi(depManager);
     HttpServer.addApiHandler(depApi);
 
