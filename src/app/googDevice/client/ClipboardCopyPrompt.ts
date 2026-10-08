@@ -146,9 +146,14 @@ export class ClipboardCopyPrompt {
     };
 }
 
-/** The pre-Clipboard-API copy: select a hidden textarea's text and run the copy command. */
+/**
+ * The pre-Clipboard-API copy: select a hidden textarea's text and run the copy command.
+ * Selecting the textarea focuses it, and removing it leaves focus on the body, so
+ * whatever had focus before gets it back afterwards.
+ */
 function copyWithExecCommand(text: string): boolean {
     if (typeof document.execCommand !== 'function') return false;
+    const previousFocus = document.activeElement;
     const area = document.createElement('textarea');
     area.value = text;
     area.setAttribute('readonly', '');
@@ -166,5 +171,8 @@ function copyWithExecCommand(text: string): boolean {
         return false;
     } finally {
         area.remove();
+        if (previousFocus instanceof HTMLElement && previousFocus !== document.body && previousFocus.isConnected) {
+            previousFocus.focus({ preventScroll: true });
+        }
     }
 }

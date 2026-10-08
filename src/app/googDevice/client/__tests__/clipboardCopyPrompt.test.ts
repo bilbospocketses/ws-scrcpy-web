@@ -312,6 +312,53 @@ describe('ClipboardCopyPrompt — the click', () => {
             expect(style?.opacity).toBe('0');
         });
     });
+
+    describe('the copy command gives focus back', () => {
+        /**
+         * A browser's `select()` focuses the textarea, and removing it leaves
+         * focus on the body; jsdom's `select()` does not focus, so the spy
+         * restores that half of the browser's behaviour.
+         */
+        function selectFocuses() {
+            const select = HTMLTextAreaElement.prototype.select;
+            vi.spyOn(HTMLTextAreaElement.prototype, 'select').mockImplementation(function (this: HTMLTextAreaElement) {
+                this.focus();
+                select.call(this);
+            });
+        }
+
+        const outcomes: Array<[string, () => boolean]> = [
+            ['it succeeds', () => true],
+            [
+                'it throws',
+                () => {
+                    throw new Error('SecurityError');
+                },
+            ],
+        ];
+        for (const [when, impl] of outcomes) {
+            it(`to the element that had it, when ${when}`, async () => {
+                const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+                const prompt = await shownPrompt('focus', writeText);
+                const input = document.createElement('input');
+                document.body.append(input, prompt.element);
+                input.focus();
+                selectFocuses();
+                let focusedDuring: Element | null = null;
+                stubExecCommand(() => {
+                    focusedDuring = document.activeElement;
+                    return impl();
+                });
+
+                copyButton(prompt).click();
+
+                expect(focusedDuring, 'precondition: the textarea took focus').toBeInstanceOf(HTMLTextAreaElement);
+                expect(document.querySelector('textarea')).toBeNull();
+                expect(document.activeElement).toBe(input);
+                await settle();
+            });
+        }
+    });
 });
 
 describe('ClipboardCopyPrompt — dismissal and lifetime', () => {
