@@ -25,6 +25,17 @@ import { reapOwnAdbOnWindows } from './util/reapOwnAdb';
 const log = Logger.for('UpdateService');
 
 /**
+ * How long one Velopack check (`checkForUpdatesAsync`) may run before the update
+ * check gives up on it. Velopack's HttpSource is built with no HttpOptions, and
+ * velopack 1.2.161's `TimeoutMilliseconds` defaults to 0, "never times out"
+ * (`lib/types.d.ts`): after a laptop sleep or on a half-open connection the
+ * call can wait forever, and since checks are serialised (runCheck) every
+ * later check would join it. The release lookup before it is already bounded
+ * (fetchWithRetry). The download is NOT given a deadline: it is ~60 MB.
+ */
+export const VELOPACK_CHECK_TIMEOUT_MS = 60_000;
+
+/**
  * Minimal subset of {@link UpdateManager} that UpdateService actually uses.
  * Lets unit tests inject a fake without dragging in the velopack native addon.
  */
@@ -95,6 +106,8 @@ export interface UpdateServiceOptions {
      * returns how many processes it killed. Default: {@link reapOwnAdbOnWindows}.
      */
     reapOwnAdbFn?: (adbPath: string) => Promise<number>;
+    /** Override {@link VELOPACK_CHECK_TIMEOUT_MS} for tests. */
+    velopackCheckTimeoutMs?: number;
 }
 
 export interface UpdateServiceState {
@@ -186,6 +199,7 @@ export class UpdateService {
     private readonly fetchFn: typeof fetch;
     private readonly runPkexecFn: (shellCmd: string, label: string) => Promise<string>;
     private readonly reapOwnAdbFn: (adbPath: string) => Promise<number>;
+    private readonly velopackCheckTimeoutMs: number;
 
     constructor(opts: UpdateServiceOptions = {}) {
         this.platform = opts.platform ?? process.platform;
@@ -285,6 +299,7 @@ export class UpdateService {
         this.fetchFn = opts.fetchFn ?? fetch;
         this.runPkexecFn = opts.runPkexecFn ?? runPkexec;
         this.reapOwnAdbFn = opts.reapOwnAdbFn ?? ((adbPath) => reapOwnAdbOnWindows(adbPath));
+        this.velopackCheckTimeoutMs = opts.velopackCheckTimeoutMs ?? VELOPACK_CHECK_TIMEOUT_MS;
         this.state = { isInstalled: false, currentVersion: '', status: 'idle' };
     }
 
@@ -480,6 +495,9 @@ export class UpdateService {
      * A check for an OLDER generation is not joined: reconfigure() bumps the
      * generation and must get a check of the new channel, and the old check
      * discards its own answer when it lands.
+     *
+     * Joining means a check that never ends would block every later one, so the
+     * Velopack step has a deadline ({@link VELOPACK_CHECK_TIMEOUT_MS}).
      */
     private runCheck(buildFailurePrefix: string): Promise<UpdateServiceState> {
         const generation = this.generation;
@@ -571,7 +589,7 @@ export class UpdateService {
 
             // The manager this check asks is the one its answer is kept with.
             const mgr = this.mgr;
-            const info = await mgr.checkForUpdatesAsync();
+            const info = await this.velopackCheck(mgr);
             if (generation !== this.generation) return this.state;
             this.state.lastCheckedAt = new Date();
             if (info === null) {
@@ -604,6 +622,27 @@ export class UpdateService {
             log.warn(`check failed: ${this.state.errorMessage}`);
         }
         return this.state;
+    }
+
+    /**
+     * `mgr.checkForUpdatesAsync()`, given up on after {@link VELOPACK_CHECK_TIMEOUT_MS}
+     * with an error, so the check ends as `error` and the next one runs. The
+     * abandoned call cannot be cancelled; whatever it answers later is dropped,
+     * because only the race's result is read and the race has already settled.
+     */
+    private async velopackCheck(mgr: UpdateManagerLike): Promise<UpdateInfo | null> {
+        const ms = this.velopackCheckTimeoutMs;
+        let timer: NodeJS.Timeout | undefined;
+        const deadline = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error(`update check timed out after ${ms / 1000} s`)), ms);
+            // A hung call must not keep a stopping server alive for the rest of the minute.
+            timer.unref?.();
+        });
+        try {
+            return await Promise.race([mgr.checkForUpdatesAsync(), deadline]);
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     /**

@@ -1171,10 +1171,12 @@ describe('UpdateService', () => {
 
     function deferred<T>() {
         let resolve!: (value: T) => void;
-        const promise = new Promise<T>((r) => {
-            resolve = r;
+        let reject!: (err: Error) => void;
+        const promise = new Promise<T>((res, rej) => {
+            resolve = res;
+            reject = rej;
         });
-        return { promise, resolve };
+        return { promise, resolve, reject };
     }
 
     /**
@@ -1382,6 +1384,48 @@ describe('UpdateService', () => {
         await settled(svc);
         await svc.checkForUpdates();
         expect(resolve).toHaveBeenCalledTimes(4);
+    });
+
+    it('a Velopack check that never answers gives up at its deadline, the next check runs, and its late answer is dropped', async () => {
+        // Velopack's HttpSource has no timeout: after a sleep or on a half-open
+        // connection checkForUpdatesAsync can wait forever, and every later check
+        // in the generation would join it.
+        Config.getInstance().updateAppConfig({ channel: 'stable', githubOwner: 'bilbospocketses', autoUpdate: false });
+        const { resolver, resolve } = heldResolver(() => releaseOf('0.2.0'));
+        const hung = deferred<UpdateInfo | null>();
+        let hang = false;
+        const checkFn = vi.fn(() => (hang ? hung.promise : Promise.resolve(null)));
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: checkFn }),
+            releaseFeedResolver: resolver,
+            velopackCheckTimeoutMs: 50,
+            ...quietTimers,
+        });
+        svc.init();
+        await settled(svc);
+        resolve.mockClear();
+        checkFn.mockClear();
+
+        hang = true;
+        const stuck = svc.checkForUpdates();
+        await vi.waitFor(() => expect(svc.getStatus().status).toBe('error'));
+        await stuck;
+        expect(svc.getStatus().errorMessage).toBe('update check timed out after 0.05 s');
+
+        hang = false;
+        await svc.checkForUpdates();
+        expect(resolve).toHaveBeenCalledTimes(2);
+        expect(checkFn).toHaveBeenCalledTimes(2);
+        expect(svc.getStatus()).toMatchObject({ status: 'idle', availableVersion: undefined });
+
+        // The abandoned call finally answers: nothing it says reaches the state.
+        hung.resolve(fakeUpdateInfo('0.2.0'));
+        await tick();
+        const s = svc.getStatus();
+        expect(s).toMatchObject({ status: 'idle', availableVersion: undefined, pendingUpdate: undefined });
     });
 
     // ── VelopackLocator strategy (platform-split) ──────────────────────────
