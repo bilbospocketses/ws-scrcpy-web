@@ -6,7 +6,13 @@ import { describe, expect, it } from 'vitest';
 import { PINNED_RELEASE_KEYS } from '../DependencyManager';
 import { NODE_RELEASE_KEYS, SCRCPY_RELEASE_KEYS } from '../release-keys/pinnedReleaseKeys';
 import { type ReleaseKeySet, ReleaseSignatureError, verifyDetachedSignature } from '../verifyOpenPgp';
-import { makeTestSigner, signPacketUnchecked } from './helpers/releaseSigning';
+import {
+    type HandBuiltSignerOptions,
+    makeHandBuiltSigner,
+    makeTestSigner,
+    type SelfSignatureSpec,
+    signPacketUnchecked,
+} from './helpers/releaseSigning';
 
 /**
  * M5: verifyDetachedSignature over a hash list's exact bytes. The throwaway-key
@@ -592,6 +598,215 @@ describe('verifyDetachedSignature under the key-renewal policy', () => {
         expect(err.message).toContain('RSA keys shorter than 2047 bits are considered too weak');
     });
 
+    const DAY = 24 * 3600;
+    const LATER = new Date('2020-04-01T00:00:00Z');
+    const { certifyKeys, encryptCommunication } = openpgp.enums.keyFlags;
+
+    /** Verifies LIST signed at SIGNED by a hand-built key; null when it passes, else the refusal. */
+    async function verdict(opts: HandBuiltSignerOptions): Promise<ReleaseSignatureError | null> {
+        const signer = await makeHandBuiltSigner('Node.js', opts);
+        const signature = await signer.sign(LIST, SIGNED);
+        return verifyDetachedSignature({ what, data: enc(LIST), signature, keySet: signer.keySet }).then(
+            (result) => {
+                expect(result.fingerprint).toBe(signer.fingerprint);
+                return null;
+            },
+            (e: unknown) => {
+                expect(e).toBeInstanceOf(ReleaseSignatureError);
+                return e as ReleaseSignatureError;
+            },
+        );
+    }
+    const why = (err: ReleaseSignatureError | null) =>
+        err
+            ? `${err.reason}: ${/a key that was not valid then \((.+)\) -- /.exec(err.message)?.[1] ?? err.message}`
+            : 'passed';
+
+    describe('a self-signature made by the signing time decides, even when it had expired and a renewal followed', () => {
+        // The adversarial review's probe: openpgp counts a self-signature's (or
+        // binding's) OWN expiry as the key's, so a key whose only self-signature
+        // made by then had lapsed was not valid then, renewal or not.
+        it('refuses a primary key whose self-signature had expired by the signing time, renewed after it', async () => {
+            const err = await verdict({
+                created: KEY_CREATED,
+                selfSignatures: [{ date: KEY_CREATED, signatureExpiresAfterSeconds: 15 * DAY }, { date: RENEWED }],
+            });
+            expect(why(err)).toBe('key-not-valid: its self-signature had expired by then, or its user ID was revoked');
+        });
+
+        it('refuses a signing subkey whose binding had expired by the signing time, re-bound after it', async () => {
+            const err = await verdict({
+                created: KEY_CREATED,
+                selfSignatures: [{ date: KEY_CREATED }],
+                subkey: {
+                    bindings: [{ date: KEY_CREATED, signatureExpiresAfterSeconds: 15 * DAY }, { date: RENEWED }],
+                },
+            });
+            expect(why(err)).toBe('key-not-valid: its subkey binding signature had expired by then');
+        });
+
+        it('counts only a self-signature or binding that verifies: a damaged one made by then is ignored', async () => {
+            const results = await Promise.all([
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: KEY_CREATED, corrupt: true }, { date: RENEWED }],
+                }),
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: KEY_CREATED }],
+                    subkey: { bindings: [{ date: KEY_CREATED, corrupt: true }, { date: RENEWED }] },
+                }),
+            ]);
+            expect(results.map(why)).toEqual(['passed', 'passed']);
+        });
+
+        it('controls: the same keys with a KEY expiry are refused, and with a self-signature still valid then pass', async () => {
+            const results = await Promise.all([
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: KEY_CREATED, keyExpiresAfterSeconds: 15 * DAY }, { date: RENEWED }],
+                }),
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: KEY_CREATED }],
+                    subkey: { bindings: [{ date: KEY_CREATED, keyExpiresAfterSeconds: 15 * DAY }, { date: RENEWED }] },
+                }),
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: KEY_CREATED, signatureExpiresAfterSeconds: 60 * DAY }, { date: RENEWED }],
+                }),
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: KEY_CREATED }],
+                    subkey: {
+                        bindings: [{ date: KEY_CREATED, signatureExpiresAfterSeconds: 60 * DAY }, { date: RENEWED }],
+                    },
+                }),
+            ]);
+            expect(results.map(why)).toEqual([
+                'key-not-valid: the key had expired by then',
+                'key-not-valid: the signing subkey had expired by then',
+                'passed',
+                'passed',
+            ]);
+        });
+    });
+
+    it('refuses a signing subkey created after the signature, though its primary key is older', async () => {
+        const subkeyCreated = new Date('2020-02-15T00:00:00Z');
+        const results = await Promise.all([
+            verdict({
+                created: KEY_CREATED,
+                selfSignatures: [{ date: KEY_CREATED }],
+                subkey: { created: subkeyCreated, bindings: [{ date: subkeyCreated }] },
+            }),
+            // Control: the same binding, after the signature, of a subkey that already existed.
+            verdict({
+                created: KEY_CREATED,
+                selfSignatures: [{ date: KEY_CREATED }],
+                subkey: { bindings: [{ date: subkeyCreated }] },
+            }),
+        ]);
+        expect(results.map(why)).toEqual(['key-not-valid: the key did not exist yet', 'passed']);
+    });
+
+    describe('judged from a self-signature made only AFTER the signature, every check still applies', () => {
+        // Each row: the post-dated self-signatures / bindings that should pass,
+        // and the same with the one property the check guards changed.
+        const primaryOnly = (spec: Partial<SelfSignatureSpec>) => ({
+            created: KEY_CREATED,
+            selfSignatures: [{ date: RENEWED, ...spec }],
+        });
+        const subkeyBound = (spec: Partial<SelfSignatureSpec>): HandBuiltSignerOptions => ({
+            created: KEY_CREATED,
+            selfSignatures: [{ date: RENEWED }],
+            subkey: { bindings: [{ date: RENEWED, ...spec }] },
+        });
+        const rows: { name: string; good: HandBuiltSignerOptions; bad: HandBuiltSignerOptions; reason: string }[] = [
+            {
+                name: 'the primary self-signature must grant signing',
+                good: primaryOnly({}),
+                bad: primaryOnly({ flags: certifyKeys }),
+                reason: 'its self-signature does not allow signing',
+            },
+            {
+                name: 'the primary key must not have expired by the signing time',
+                good: primaryOnly({ keyExpiresAfterSeconds: 45 * DAY }),
+                bad: primaryOnly({ keyExpiresAfterSeconds: 15 * DAY }),
+                reason: 'the key had expired by then',
+            },
+            {
+                name: 'the subkey binding must grant signing',
+                good: subkeyBound({}),
+                bad: subkeyBound({ flags: encryptCommunication }),
+                reason: 'its subkey binding signature does not allow signing',
+            },
+            {
+                name: 'the subkey binding must carry a back-signature',
+                good: subkeyBound({}),
+                bad: subkeyBound({ backSignature: false }),
+                reason: 'its subkey binding signature has no valid back-signature',
+            },
+            {
+                name: 'the subkey must not have expired by the signing time',
+                good: subkeyBound({ keyExpiresAfterSeconds: 45 * DAY }),
+                bad: subkeyBound({ keyExpiresAfterSeconds: 15 * DAY }),
+                reason: 'the signing subkey had expired by then',
+            },
+            {
+                name: "the key must meet openpgp's requirements",
+                good: primaryOnly({}),
+                bad: { ...primaryOnly({}), algorithm: 'rsa1024' },
+                reason: 'RSA keys shorter than 2047 bits are considered too weak',
+            },
+        ];
+        for (const { name, good, bad, reason } of rows) {
+            it(name, async () => {
+                const [passed, refused] = await Promise.all([verdict(good), verdict(bad)]);
+                expect([why(passed), why(refused)]).toEqual(['passed', `key-not-valid: ${reason}`]);
+            });
+        }
+
+        it('of two post-dated self-signatures or bindings that disagree, the NEWEST decides, as in GnuPG', async () => {
+            // GnuPG 2.4.9, measured on these shapes: a key whose newer
+            // post-dated self-signature (or binding) drops the signing flag is
+            // not used to verify (NO_PUBKEY); one whose newer one restores it
+            // verifies (GOODSIG).
+            const results = await Promise.all([
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: RENEWED }, { date: LATER, flags: certifyKeys }],
+                }),
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: RENEWED, flags: certifyKeys }, { date: LATER }],
+                }),
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: RENEWED }],
+                    subkey: { bindings: [{ date: RENEWED }, { date: LATER, flags: encryptCommunication }] },
+                }),
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: RENEWED }],
+                    subkey: { bindings: [{ date: RENEWED, flags: encryptCommunication }, { date: LATER }] },
+                }),
+                // The order the packets are listed in is not what decides.
+                verdict({
+                    created: KEY_CREATED,
+                    selfSignatures: [{ date: LATER }, { date: RENEWED, flags: certifyKeys }],
+                }),
+            ]);
+            expect(results.map(why)).toEqual([
+                'key-not-valid: its self-signature does not allow signing',
+                'passed',
+                'key-not-valid: its subkey binding signature does not allow signing',
+                'passed',
+                'passed',
+            ]);
+        });
+    });
+
     it('refuses a renewed key whose signature does not verify over these bytes, as a bad signature', async () => {
         const signer = await makeTestSigner('Node.js', { created: KEY_CREATED, renewedAt: RENEWED });
         const signature = await signer.sign(LIST, { date: SIGNED });
@@ -626,6 +841,31 @@ describe('verifyDetachedSignature against the real published files and the pinne
         expect(SCRCPY_RELEASE_KEYS.map((k) => k.fingerprint)).toEqual(['456958E85A185DD5C2D1E4E80C822B298461FA03']);
         expect(PINNED_RELEASE_KEYS.nodejs.keys).toBe(NODE_RELEASE_KEYS);
         expect(PINNED_RELEASE_KEYS.scrcpyServer.keys).toBe(SCRCPY_RELEASE_KEYS);
+    });
+
+    it('pins every key with all the self-signatures and bindings recorded beside it', async () => {
+        // The keys are stored verbatim, and the refresh refuses to drop a
+        // self-signature: the old ones are what lets a signature made while a
+        // key had lapsed be refused. A hand-minimised armored block fails here.
+        const counted = await Promise.all(
+            [...NODE_RELEASE_KEYS, ...SCRCPY_RELEASE_KEYS].map(async (k) => {
+                const key = await openpgp.readKey({ armoredKey: k.armored });
+                return {
+                    fingerprint: k.fingerprint,
+                    selfSignatures: key.users.reduce((n, u) => n + u.selfCertifications.length, 0),
+                    subkeyBindings: key.subkeys.reduce((n, s) => n + s.bindingSignatures.length, 0),
+                };
+            }),
+        );
+        expect(counted).toEqual(
+            [...NODE_RELEASE_KEYS, ...SCRCPY_RELEASE_KEYS].map(({ fingerprint, selfSignatures, subkeyBindings }) => ({
+                fingerprint,
+                selfSignatures,
+                subkeyBindings,
+            })),
+        );
+        // Some keys carry their history: at least one holds several self-signatures.
+        expect(Math.max(...counted.map((c) => c.selfSignatures))).toBeGreaterThan(1);
     });
 
     it("verifies Node v24.21.0's SHASUMS256.txt.sig (Ed25519) by Antoine du Hamel's key", async () => {

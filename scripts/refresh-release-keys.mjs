@@ -25,6 +25,20 @@
 //   scrcpy   https://blog.rom1v.com/keys/rom1v.asc, whose primary fingerprint
 //            must appear in Genymobile/scrcpy doc/verify-release.md.
 //
+// Every armored key is stored VERBATIM, as published: no minimising, no
+// cleaning, every self-signature and subkey binding kept. verifyOpenPgp refuses
+// a signature made while the key, or the self-signature it then carried, had
+// expired -- and it can only see that lapse while the pinned copy still holds
+// the old self-signature. So a refresh refuses to drop one: if a fetched key
+// lacks any self-signature or subkey binding the currently pinned copy has (in
+// particular, if it has fewer), the script fails, unless run with
+//
+//   node scripts/refresh-release-keys.mjs --allow-dropped-self-signatures
+//
+// which pins the fetched copy anyway and lists what it drops. The counts of
+// each pinned key's self-signatures and bindings are recorded beside it, and
+// verifyOpenPgp.test.ts checks the armored blocks still carry them.
+//
 // Writes only the generated module. Exit 1 on any check that fails, with
 // nothing written.
 
@@ -87,7 +101,60 @@ async function readPublicKey(armored, expected, label) {
     return key;
 }
 
-async function nodeKeys() {
+/** How many self-signatures (all user IDs) and subkey binding signatures (all subkeys) a key carries. */
+export function signatureCounts(key) {
+    return {
+        selfSignatures: key.users.reduce((n, u) => n + u.selfCertifications.length, 0),
+        subkeyBindings: key.subkeys.reduce((n, s) => n + s.bindingSignatures.length, 0),
+    };
+}
+
+const packetHex = (signature) => Buffer.from(signature.write()).toString('hex');
+
+/** Every self-signature and subkey binding of `key`: identity (what it signs + exact bytes) -> description. */
+function selfSignaturesOf(key) {
+    const out = new Map();
+    for (const u of key.users) {
+        const what = u.userID ? `self-signature on user ID "${u.userID.userID}"` : 'self-signature on a user attribute';
+        for (const s of u.selfCertifications) {
+            out.set(`${what}:${packetHex(s)}`, `${what} made ${s.created?.toISOString()}`);
+        }
+    }
+    for (const sub of key.subkeys) {
+        const what = `binding of subkey ${sub.getFingerprint().toUpperCase()}`;
+        for (const s of sub.bindingSignatures) {
+            out.set(`${what}:${packetHex(s)}`, `${what} made ${s.created?.toISOString()}`);
+        }
+    }
+    return out;
+}
+
+/** The self-signatures and subkey bindings `pinned` carries that `fetched` does not, described. */
+export function droppedSelfSignatures(pinned, fetched) {
+    const kept = selfSignaturesOf(fetched);
+    return [...selfSignaturesOf(pinned)].filter(([id]) => !kept.has(id)).map(([, described]) => described);
+}
+
+/**
+ * Fails on (or, with `allowDropped`, warns about) a fetched key that lacks a
+ * self-signature or binding the pinned copy of the same key has.
+ */
+async function checkNothingDropped(label, fingerprint, fetched, options) {
+    const pinnedArmored = options.previous.get(fingerprint);
+    if (!pinnedArmored) return;
+    const dropped = droppedSelfSignatures(await openpgp.readKey({ armoredKey: pinnedArmored }), fetched);
+    if (!dropped.length) return;
+    const message = `${label} as fetched lacks ${dropped.length} self-signature(s) or binding(s) the pinned copy has: ${dropped.join('; ')}`;
+    if (!options.allowDropped) {
+        fail(
+            `${message}. The old ones are what lets a signature made while the key had lapsed be refused; ` +
+                'rerun with --allow-dropped-self-signatures only after reviewing why the publisher dropped them',
+        );
+    }
+    console.warn('warning: --allow-dropped-self-signatures: %s', message);
+}
+
+async function nodeKeys(options) {
     const readme = await fetchText(`${NODE_RAW}/README.md`);
     const active = parseReadmeSection(readme, '<!-- Active releasers keys -->', '<!-- /Active releasers keys -->');
     const retired = parseReadmeSection(readme, '<!-- Retired keys -->', '<!-- /Retired keys -->');
@@ -120,14 +187,21 @@ async function nodeKeys() {
     for (const k of listed) {
         const source = `${NODE_RAW}/keys/${k.fingerprint}.asc`;
         const armored = await fetchText(source);
-        await readPublicKey(armored, k.fingerprint, `Node.js key ${k.fingerprint}`);
+        const key = await readPublicKey(armored, k.fingerprint, `Node.js key ${k.fingerprint}`);
         assertTemplateSafe(armored, k.fingerprint);
-        out.push({ ...k, source, fetched: today, armored: armored.endsWith('\n') ? armored : `${armored}\n` });
+        await checkNothingDropped(`Node.js key ${k.fingerprint}`, k.fingerprint, key, options);
+        out.push({
+            ...k,
+            source,
+            fetched: today,
+            ...signatureCounts(key),
+            armored: armored.endsWith('\n') ? armored : `${armored}\n`,
+        });
     }
     return out.sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
 }
 
-async function scrcpyKeys() {
+async function scrcpyKeys(options) {
     const armored = await fetchText(ROM1V_KEY_URL);
     const key = await readPublicKey(armored, null, 'rom1v.asc');
     const fingerprint = key.getFingerprint().toUpperCase();
@@ -136,6 +210,7 @@ async function scrcpyKeys() {
         fail(`rom1v.asc's fingerprint ${fingerprint} is not in scrcpy's doc/verify-release.md`);
     }
     assertTemplateSafe(armored, 'rom1v.asc');
+    await checkNothingDropped('rom1v.asc', fingerprint, key, options);
     const uid = key.users.map((u) => u.userID?.userID).find(Boolean) ?? 'Romain Vimont';
     return [
         {
@@ -144,9 +219,19 @@ async function scrcpyKeys() {
             status: 'active',
             source: ROM1V_KEY_URL,
             fetched: today,
+            ...signatureCounts(key),
             armored: armored.endsWith('\n') ? armored : `${armored}\n`,
         },
     ];
+}
+
+/** The armored keys the module at `out` pins now, by fingerprint. */
+function previousArmored(out) {
+    const pinned = new Map();
+    if (!fs.existsSync(out)) return pinned;
+    const src = fs.readFileSync(out, 'utf8');
+    for (const m of src.matchAll(/fingerprint: '([0-9A-F]{40})',[^`]*?armored: `([^`]*)`/g)) pinned.set(m[1], m[2]);
+    return pinned;
 }
 
 function previousFingerprints(out) {
@@ -183,15 +268,22 @@ function entry(k) {
         `        status: ${q(k.status)},`,
         `        source: ${q(k.source)},`,
         `        fetched: ${q(k.fetched)},`,
+        `        selfSignatures: ${k.selfSignatures},`,
+        `        subkeyBindings: ${k.subkeyBindings},`,
         `        armored: \`${k.armored}\`,`,
         '    },',
     ].join('\n');
 }
 
-/** Fetches and checks every key, then returns the module text and the fingerprints it pins. */
-export async function buildPinnedKeysModule() {
-    const node = await nodeKeys();
-    const scrcpy = await scrcpyKeys();
+/**
+ * Fetches and checks every key, then returns the module text and the
+ * fingerprints it pins. `previous` holds the armored keys pinned now, by
+ * fingerprint, so a key that drops a self-signature fails (see the top).
+ */
+export async function buildPinnedKeysModule({ previous = new Map(), allowDropped = false } = {}) {
+    const options = { previous, allowDropped };
+    const node = await nodeKeys(options);
+    const scrcpy = await scrcpyKeys(options);
     const module = `// GENERATED by scripts/refresh-release-keys.mjs -- do not edit by hand; run the script.
 //
 // The OpenPGP keys the dependency updater accepts (M5). A hash list signed by any
@@ -214,6 +306,14 @@ export interface PinnedReleaseKey extends PinnedKey {
     readonly source: string;
     /** When (UTC date). */
     readonly fetched: string;
+    /**
+     * How many self-signatures (all user IDs) and subkey binding signatures
+     * (all subkeys) the armored key, stored verbatim, carried when fetched. A
+     * refresh refuses to drop any: the old ones are what lets a signature made
+     * while the key had lapsed be refused.
+     */
+    readonly selfSignatures: number;
+    readonly subkeyBindings: number;
 }
 
 export const NODE_RELEASE_KEYS: readonly PinnedReleaseKey[] = [
@@ -228,9 +328,9 @@ ${scrcpy.map(entry).join('\n')}
 }
 
 /** Writes `out` (the pinned module by default) and prints what changed against what it held. */
-export async function refresh(out = OUT) {
+export async function refresh(out = OUT, { allowDropped = false } = {}) {
     const before = previousFingerprints(out);
-    const built = await buildPinnedKeysModule();
+    const built = await buildPinnedKeysModule({ previous: previousArmored(out), allowDropped });
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, built.module);
     console.log('wrote %s', path.relative(REPO_ROOT, out));
@@ -239,5 +339,8 @@ export async function refresh(out = OUT) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-    await refresh();
+    const args = process.argv.slice(2);
+    const unknown = args.filter((a) => a !== '--allow-dropped-self-signatures');
+    if (unknown.length) fail(`unknown argument(s): ${unknown.join(' ')}`);
+    await refresh(OUT, { allowDropped: args.includes('--allow-dropped-self-signatures') });
 }

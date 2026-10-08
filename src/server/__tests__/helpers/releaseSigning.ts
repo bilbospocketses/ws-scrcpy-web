@@ -179,6 +179,127 @@ export async function makeTestSigner(label: string, opts: TestSignerOptions = {}
     };
 }
 
+/** One self-signature, or subkey binding signature, of a `makeHandBuiltSigner` key. */
+export interface SelfSignatureSpec {
+    date: Date;
+    /** Key flags. Default: certify + sign for a self-signature, sign for a binding. */
+    flags?: number;
+    keyExpiresAfterSeconds?: number;
+    /** The self-signature's OWN expiry, which openpgp also counts as the key's. */
+    signatureExpiresAfterSeconds?: number;
+    /** Bindings only: embed the subkey's back-signature. Default true. */
+    backSignature?: boolean;
+    /** Damage it so it no longer verifies (it still parses, and still names its date). */
+    corrupt?: boolean;
+}
+
+export interface HandBuiltSignerOptions {
+    created: Date;
+    /** Default Ed25519 (legacy); `rsa1024` is a key openpgp's requirements call too weak. */
+    algorithm?: 'ed25519' | 'rsa1024';
+    /** The primary user ID's self-signatures, exactly these, in this order. */
+    selfSignatures: readonly SelfSignatureSpec[];
+    /** Sign with a subkey created `created` (default: the primary's), bound by exactly these. */
+    subkey?: { created?: Date; bindings: readonly SelfSignatureSpec[] };
+}
+
+export interface HandBuiltSigner {
+    fingerprint: string;
+    keySet: ReleaseKeySet;
+    /** A binary detached signature at `date`, unchecked (see `signPacketUnchecked`). */
+    sign(data: string | Uint8Array, date: Date): Promise<Uint8Array>;
+}
+
+async function signSelfSignature(
+    type: openpgp.enums.signature,
+    signer: openpgp.SecretKeyPacket | openpgp.SecretSubkeyPacket,
+    data: object,
+    spec: Pick<SelfSignatureSpec, 'date' | 'keyExpiresAfterSeconds' | 'signatureExpiresAfterSeconds' | 'corrupt'> & {
+        flags?: number;
+        embeddedSignature?: openpgp.SignaturePacket | undefined;
+    },
+): Promise<openpgp.SignaturePacket> {
+    const packet = new openpgp.SignaturePacket();
+    packet.signatureType = type;
+    packet.hashAlgorithm = openpgp.enums.hash.sha512;
+    packet.publicKeyAlgorithm = signer.algorithm;
+    if (spec.flags !== undefined) packet.keyFlags = new Uint8Array([spec.flags]);
+    if (spec.keyExpiresAfterSeconds !== undefined) {
+        packet.keyExpirationTime = spec.keyExpiresAfterSeconds;
+        packet.keyNeverExpires = false;
+    }
+    if (spec.signatureExpiresAfterSeconds !== undefined) {
+        packet.signatureExpirationTime = spec.signatureExpiresAfterSeconds;
+        packet.signatureNeverExpires = false;
+    }
+    if (spec.embeddedSignature) packet.embeddedSignature = spec.embeddedSignature;
+    // SignaturePacket.sign's typings omit the config argument.
+    await (packet as any).sign(signer, data, spec.date, false, openpgp.config);
+    // The two digest octets the packet carries no longer match what it signs.
+    if (spec.corrupt) packet.signedHashValue![0]! ^= 0xff;
+    return packet;
+}
+
+/**
+ * A key whose self-signatures and subkey bindings are exactly the ones listed,
+ * each made at its own date: for judging a key from a self-signature made
+ * before, or after, the signature it is asked about.
+ */
+export async function makeHandBuiltSigner(label: string, opts: HandBuiltSignerOptions): Promise<HandBuiltSigner> {
+    const { enums } = openpgp;
+    const rsa = opts.algorithm === 'rsa1024';
+    const { privateKey } = await openpgp.generateKey({
+        ...(rsa ? { type: 'rsa' as const, rsaBits: 1024 } : { type: 'ecc' as const, curve: 'ed25519Legacy' as const }),
+        userIDs: [{ name: `${label} hand-built signer` }],
+        date: opts.created,
+        subkeys: opts.subkey ? [{ sign: true, date: opts.subkey.created ?? opts.created }] : [],
+        format: 'object',
+        ...(rsa ? { config: { minRSABits: 1024 } } : {}),
+    });
+    const primary = privateKey.keyPacket as openpgp.SecretKeyPacket;
+    const pinnedObject = privateKey.toPublic();
+    const user = pinnedObject.users[0]!;
+    user.selfCertifications = [];
+    for (const spec of opts.selfSignatures) {
+        user.selfCertifications.push(
+            await signSelfSignature(
+                enums.signature.certGeneric,
+                primary,
+                { userID: user.userID, key: primary },
+                { ...spec, flags: spec.flags ?? enums.keyFlags.certifyKeys | enums.keyFlags.signData },
+            ),
+        );
+    }
+    let signer: openpgp.SecretKeyPacket | openpgp.SecretSubkeyPacket = primary;
+    if (opts.subkey) {
+        const sub = privateKey.subkeys[0]!.keyPacket as openpgp.SecretSubkeyPacket;
+        const bound = { key: primary, bind: sub };
+        pinnedObject.subkeys[0]!.bindingSignatures = [];
+        for (const spec of opts.subkey.bindings) {
+            const embeddedSignature =
+                spec.backSignature === false
+                    ? undefined
+                    : await signSelfSignature(enums.signature.keyBinding, sub, bound, { date: spec.date });
+            pinnedObject.subkeys[0]!.bindingSignatures.push(
+                await signSelfSignature(enums.signature.subkeyBinding, primary, bound, {
+                    ...spec,
+                    flags: spec.flags ?? enums.keyFlags.signData,
+                    embeddedSignature,
+                }),
+            );
+        }
+        signer = sub;
+    }
+    // Round-trip, so the pinned key is exactly what its armor parses to.
+    const pinned = await openpgp.readKey({ armoredKey: pinnedObject.armor() });
+    const fingerprint = pinned.getFingerprint().toUpperCase();
+    return {
+        fingerprint,
+        keySet: { label, keys: [{ fingerprint, owner: user.userID!.name, armored: pinned.armor() }] },
+        sign: (data, date) => signPacketUnchecked(signer, data, date),
+    };
+}
+
 /** One throwaway signer per publisher, and the `releaseKeys` option that pins them. */
 export async function makeTestReleaseKeys(): Promise<{
     releaseKeys: DependencyReleaseKeys;

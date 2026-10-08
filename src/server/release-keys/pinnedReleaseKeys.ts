@@ -20,6 +20,14 @@ export interface PinnedReleaseKey extends PinnedKey {
     readonly source: string;
     /** When (UTC date). */
     readonly fetched: string;
+    /**
+     * How many self-signatures (all user IDs) and subkey binding signatures
+     * (all subkeys) the armored key, stored verbatim, carried when fetched. A
+     * refresh refuses to drop any: the old ones are what lets a signature made
+     * while the key had lapsed be refused.
+     */
+    readonly selfSignatures: number;
+    readonly subkeyBindings: number;
 }
 
 export const NODE_RELEASE_KEYS: readonly PinnedReleaseKey[] = [
@@ -28,7 +36,9 @@ export const NODE_RELEASE_KEYS: readonly PinnedReleaseKey[] = [
         owner: 'Ruy Adorno <ruyadorno@hotmail.com>',
         status: 'active',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/108F52B48DB57BB0CC439B2997B01419BD92F80A.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFltAggBEADHYmcgBOWwJTVRJCnqEpC8IvOber468ikSgNolQHFbyUkJy/kd
@@ -87,7 +97,9 @@ AI4=
         owner: 'Julien Gilli <jgilli@fastmail.fm>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/114F43EE0176B71C7BC219DD50A3051F888C628D.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFSvCTEBEADIa8J6pku+vT9RZ/cU4wKmC441OVghEZ8Cuct4AynkZQZ8Hpra
@@ -146,7 +158,9 @@ USXWhEefc3s6beE=
         owner: 'Bryan English <bryan@bryanenglish.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/141F07595B7B3FFE74309A937405533BE57C7D57.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 2,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBGHo9TgBEADbSK0AjEvbVkjrvHk3HG1InM3H0kqEjXxenzTukSHQOl8ytLUD
@@ -240,7 +254,9 @@ AdTumtl+mDJRFlYwC0LHorFIhLjym1o4FbcdU440P6xC
         owner: 'Danielle Adams <adamzdanielle@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/1C050899334244A8AF75E53792EF661D867B9DFA.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 2,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQENBFtYnJsBCACdDOWJYl/Zd38Mt6kg3j+ooN7sl1bR+SBPEv4yS+lK0cLenv3F
@@ -286,7 +302,9 @@ HiCpJpIGZQQfnMzE+CsMSu3u2gwUnWHBVHzof7wbgs94u+xEgNBjQ6QkbbY=
         owner: 'Beth Griggs <bethanyngriggs@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/4ED778F539E3634C779C87C6D7062848A1AB005C.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 9,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQENBFq44CwBCADNRnp3EGOqifmbqOgRb64hkObYdNAClPy/aQfxyWvrZBuVw8OF
@@ -383,7 +401,9 @@ MH8=
         owner: 'Italo A. Casas <me@italoacasas.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/56730D5401028683275BD23C23EFEFE93C4CFFFE.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFiGktYBEADoBPdUkwVA9dNViz2wxb+e3XiaQaesSHvRReDpOpWQ7yuw2yLd
@@ -442,7 +462,9 @@ OweTnxa0BqWTj1O87/SvSKdOd9ZI5GIp
         owner: 'Antoine du Hamel <duhamelantoine1995@gmail.com>',
         status: 'active',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/5BE8A3F6C8A5C01D106C0AD820B1A390B168D356.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 2,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mDMEaGA63BYJKwYBBAHaRw8BAQdAo/yU+MutacFmmn0CEX495goNrBxR24235XLM
@@ -467,7 +489,9 @@ o0y6UIZGBMSQlF80wAD/d34LqtVIVe9oe5NO3xA75+6Ew8tGeAjUq/ovagr5dAU=
         owner: 'Juan José Arboleda <soyjuanarbol@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/61FC681DFB92A079F1685E77973F295594EC4689.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBF5MceABEADFVslAVcrIyj7pcWEPeYgnr+psd6CNKlqOslf0+WUFSf0RVl45
@@ -527,7 +551,9 @@ I24uLT/RC+8e8xwGqvcPc5HZ5POrQJLknW+xnSDoAQNcjwcyD3oX9nH3dfPAV6LP
         owner: 'Stewart X Addison <sxa@ibm.com>',
         status: 'active',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/655F3B5C1FB3FA8D1A0CA6BDE4A7D232B936D2FD.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mDMEakIjcxYJKwYBBAHaRw8BAQdAYRFWvBCAd9dDjKTePuAvvzAWxhvojAXco0m4
@@ -548,7 +574,9 @@ AhsMBQkDwmcAAAoJEOSn0jK5NtL9EzYA/Arr4hbKLaU6OUjAVbH7HGLEl0HSvxE8
         owner: 'James M Snell <jasnell@keybase.io>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/71DCFD284A79C3B38668286BC97EC7A07EDE3FC1.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 7,
+        subkeyBindings: 2,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFRgAMsBEAC1SlN8Db9p/+pQcrlXM0xtbVDOZksBQynOzUV+Y/NBTmeBnYMo
@@ -701,7 +729,9 @@ ntI6COSRy17o3GzXm9d4V70=
         owner: 'Danielle Adams <adamzdanielle@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/74F12602B6F1C4E913FAA37AD3A89613643B6201.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 7,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBF/qTWsBEADlnzvN5W//gwj5oOpnyPQLjjguiXi0NPe9o0LcQgOmccD8a76R
@@ -838,7 +868,9 @@ ni5lUGYmUmXIuRub
         owner: 'Gibson Fahnestock <gibfahn@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/77984A986EBC2AA786BC0F66B01FBB92821C587A.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFf3hmYBEAC6YQyQighf1meU1gG8OyjlfRp7KMJJHmxtBjtH5fWtM8IWCdmZ
@@ -897,7 +929,9 @@ KoZmFSI=
         owner: 'Timothy J Fontaine <tjfontaine@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/7937DFD2AB06298B2293C3187D33FF9D0246406D.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 14,
+        subkeyBindings: 2,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQGiBEPOjg4RBAC2iPU+EHukOrmApMnhYym03gV/VbdPDydVVj+fc7TyjULlKWP7
@@ -979,7 +1013,9 @@ Uhw2iju+XrCVJ/AXUtwH
         owner: 'Rafael Gonzaga <rafael.nunu@hotmail.com>',
         status: 'active',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/890C08DB8579162FEE0DF9DB8BEAB4DFCF555EF4.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQGNBGKD3OQBDAC3ESxNd7dHfM7Hl3sE7Xn2osS4UZkJtmXA7hdbfybzf164wCbL
@@ -1028,7 +1064,9 @@ kyhCnmG3aood+dXxtUzOGMIzRSJmgHQi5S2d
         owner: 'Michaël Zasso <targos@protonmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 2,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFcGZx4BEACa92SjEniMQIBdb0btnZRu8vzOGNe+ndzXIWPyu2h+p0xZ/2JN
@@ -1104,7 +1142,9 @@ R/5R
         owner: 'Isaac Z. Schlueter <i@izs.me>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/93C7E9E91B49E432C2F75674B0A78B0A6C481CF6.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQENBEx8nbMBCACjmblSAGggunFHAWRGZLWLKltA2PG6rIM0bOokJFWtGwRqBCAa
@@ -1141,7 +1181,9 @@ pYtVXNkSmiSUWMmh7QfVNFrWDqlP8vUi3BIEV3FtjXblPkbKbow=
         owner: 'Colin Ihrig <cjihrig@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/94AE36675C464D64BAFA68DD7434390BDBE9B9C5.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFWujE4BEAC8YwRvCMbhE0CV0F7U3Swr96hLPerVWEVmFoVshq9acXc8x+NL
@@ -1200,7 +1242,9 @@ mMJZL+1dR71q
         owner: 'Chris Dickinson <christopher.s.dickinson@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/9554F04D7259F04124DE6B476D5A82AC7E37093B.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQENBFTROWUBCACslqx8p2znj3CwEqWK+bEgyfxykVC1iFEABB6UCQ5UrlAiYTjI
@@ -1238,7 +1282,9 @@ xr5u2jsokh8=
         owner: 'Ulises Gascón <ulisesgascongonzalez@gmail.com>',
         status: 'active',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/A363A499291CBBC940DD62E41F10027AF002F8B0.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 4,
+        subkeyBindings: 4,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 Comment: A363 A499 291C BBC9 40DD  62E4 1F10 027A F002 F8B0
 Comment: ulises Gascon <ulisesgascongonzalez@gmail.com>
@@ -1431,7 +1477,9 @@ iYmSNsSq9FUzTw==
         owner: 'Ruben Bridgewater <ruben@bridgewater.de>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/A48C2BEE680E841632CD4E44F07496B3EB3C1762.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFhJehkBEADNX8qrO9msK8u1znGaBG+Fr0FS5qzMxpC9oStGZV8abX/rrLkN
@@ -1490,7 +1538,9 @@ fyCIa9sx6lcYB+gDJgESL0Nt
         owner: 'Evan Lucas <evanlucas@me.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/B9AE9905FFD7803F25714661B63B535A4C206CA9.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 3,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFZypZgBEADeIdm42LaylSWw5CosOAte2m6S9DgAGEBrg/yHSFTZWz341EZr
@@ -1573,7 +1623,9 @@ pkatHhJZAsqY8KUjSXqFfVjPHglxLyP/8ywgi/MBlwSnTTtbHyKmqDyts1PP
         owner: 'Shelley Vohr <shelley.vohr@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/B9E2F5981AA6E0CD28160D9FF13993A75599653C.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFl60g4BEAChHPOjxooUAUjigTKIERl8uYyOTA0JL9nICb7Azbl2J3ygmku6
@@ -1632,7 +1684,9 @@ d83bmcM7vvf4bBddioM4BiiydSKXAYoFDZzs7xXuce3LpCleYnUISVBF5g3KVLSE
         owner: 'Antoine du Hamel <duhamelantoine1995@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/C0D6248439F1D5604AAFFB4021D900FFDB233756.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBGHwIyoBEADN55NGkn1hvOjFotJVr8aeU6/xGZF3gPLi7q2qaX5CXtVMGS2B
@@ -1692,7 +1746,9 @@ Th80Z8v5rFX5xNw+zn0Ee+yr
         owner: 'Myles Borins <myles.borins@gmail.com>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/C4F0DFFF4E8C1A8236409D08E73BC641CC11F4C8.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 9,
+        subkeyBindings: 3,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFaVjpQBEADt/ZC4FsskPNkAgLq240K+CjPJzq/0cuEyABJeAVeYWJFUJRcb
@@ -1928,7 +1984,9 @@ Ku9xqajxZHvDBZ9cNCnpq3PQIWLai1YFCGDmsEDc7nF/g89NnfQRoTvbTm2v+iYt
         owner: 'Richard Lau <richard.lau@ibm.com>',
         status: 'active',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/C82FA3AE1CBEDC6BE46B9360C43CEC45C17AB93C.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 3,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBF222c0BEAC/wIiI7EYmA7yprNa/0en2leF+CrF09BlCItTHH5IgjSLGq2tI
@@ -2026,7 +2084,9 @@ NBG2Fw==
         owner: 'Marco Ippolito <marcoippolito54@gmail.com>',
         status: 'active',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/CC68F5A3106FF448322E48ED27F5E38D5B0A215F.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBGYFoj0BEACm4UKYcykICb5oxZQQxSZRYwzkSngpeFcrruHVHfg2jcQ+VmRV
@@ -2086,7 +2146,9 @@ ZWf0a3VP6Gco5bmDPhvGoLEs9Vw5
         owner: 'Juan José Arboleda <soyjuanarbol@gmail.com>',
         status: 'active',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/DD792F5973C6DE52C432CBDAC77ABFA00DDBF2B7.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mDMEZAFttBYJKwYBBAHaRw8BAQdA9UUQNclFp0rIrgtQnNw6BgjDINkFPoVbuS4H
@@ -2107,7 +2169,9 @@ twUCZAFttAIbDAAKCRDHer+gDdvytzxaAQDvYX4o1Y6R30bYwIXemGgbO8GlCkgk
         owner: 'Rod Vagg <rod@vagg.org>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/DD8F2338BAE7501E3DD5AC78C273792F7D83545D.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 2,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQENBFKKodABCADiE7Ex8GXnQNgipqbTADO5+BfufYFeq9YLEKkuOUfnjAZ8Wzle
@@ -2151,7 +2215,9 @@ Zpiqs673aIg0MoZPCyTTO6Atfsv2Li8EossDZpvJuroJFZw5zvIEy7AiDAcCZjMj
         owner: 'Jeremiah Senkpiel <fishrock@keybase.io>',
         status: 'retired',
         source: 'https://raw.githubusercontent.com/nodejs/release-keys/main/keys/FD3A5288F042B6850C66B31F09FE44734EB7990E.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 5,
+        subkeyBindings: 1,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBFM7JpoBEACmf7uB5P5QJ8X38ARQn+dr+/O+6/wzkKzUcoFvRArwZTcpdEO/
@@ -2273,7 +2339,9 @@ export const SCRCPY_RELEASE_KEYS: readonly PinnedReleaseKey[] = [
         owner: 'Romain Vimont <rom@rom1v.com>',
         status: 'active',
         source: 'https://blog.rom1v.com/keys/rom1v.asc',
-        fetched: '2026-10-07',
+        fetched: '2026-10-08',
+        selfSignatures: 1,
+        subkeyBindings: 6,
         armored: `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBGBPQn8BEADfeO626945hEk7riU2W9aCID+IeczKcoB/43jtykWj9dR6EL2B

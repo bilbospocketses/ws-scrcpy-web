@@ -156,26 +156,67 @@ function pinnedSignerOf(keys: readonly ParsedKey[], packet: OpenPgp.SignaturePac
 }
 
 /**
- * The value `valueAt` yields at the time NEAREST `created` at which it yields
- * one: at `created` itself if it can, else at the earliest of `later` (the
- * creation times of the signatures it judges) after `created`.
+ * `SignaturePacket.verify` with no date runs every check except the two about
+ * time (made in the future, expired); its typings do not admit the `null`.
  */
-async function nearestValid<T>(
+const AT_NO_PARTICULAR_TIME = null as unknown as Date;
+
+/** The creation times of those `checks` (one per signature) that pass. */
+async function madeAt(checks: readonly { signature: OpenPgp.SignaturePacket; check: () => Promise<void> }[]) {
+    const times = await Promise.all(
+        checks.map(({ signature, check }) =>
+            check().then(
+                () => signature.created,
+                () => null,
+            ),
+        ),
+    );
+    return times.filter((d): d is Date => d instanceof Date);
+}
+
+/**
+ * How `valueAt` judged a key that signed at `created`:
+ *   - `then`     at `created`: a self-signature (or binding) that verifies was
+ *                made at or before the signature, so the key is judged as it
+ *                stood then, exactly as openpgp judges it;
+ *   - `expired`  likewise, but nothing was valid at `created` -- what was made
+ *                by then had expired by then (or, for a self-signature, its
+ *                user ID was revoked). It is NOT judged again from a later
+ *                one: a renewal does not reach back over a lapse;
+ *   - `renewed`  every one that verifies was made AFTER the signature, so the
+ *                key is judged from the NEWEST of them that is valid when it
+ *                was made, the way GnuPG judges a key by its newest
+ *                self-signature;
+ *   - `none`     nothing verifies at all.
+ */
+type Judged<T> =
+    | { how: 'then'; at: Date; value: T }
+    | { how: 'renewed'; at: Date; value: T }
+    | { how: 'expired' }
+    | { how: 'none' };
+
+async function judgedAtSigning<T>(
     created: Date,
-    later: readonly (Date | null)[],
+    made: readonly Date[],
     valueAt: (at: Date) => Promise<T>,
-): Promise<T | undefined> {
-    const times = [
-        ...new Set(later.filter((d): d is Date => d instanceof Date && d > created).map((d) => d.getTime())),
-    ].sort((a, b) => a - b);
-    for (const at of [created.getTime(), ...times]) {
+): Promise<Judged<T>> {
+    if (made.some((d) => d <= created)) {
         try {
-            return await valueAt(new Date(at));
+            return { how: 'then', at: created, value: await valueAt(created) };
         } catch {
-            // Not valid at that time; try the next.
+            return { how: 'expired' };
         }
     }
-    return undefined;
+    const newestFirst = [...new Set(made.map((d) => d.getTime()))].sort((a, b) => b - a);
+    for (const time of newestFirst) {
+        const at = new Date(time);
+        try {
+            return { how: 'renewed', at, value: await valueAt(at) };
+        } catch {
+            // Not valid when it was made (a revoked user ID, say); try the next newest.
+        }
+    }
+    return { how: 'none' };
 }
 
 /** The newest of `signatures` that `check` accepts, as openpgp picks a self-signature or binding. */
@@ -256,11 +297,20 @@ function weakKey(openpgp: OpenPgpModule, keyPacket: OpenPgp.AnyKeyPacket): strin
  * that was 53 of the 163 Node.js releases from v20.0.0 on.
  *
  * This runs only after openpgp's strict check refused and the packet has
- * verified over the exact bytes on its own. It judges the key from the
- * self-signature (and, for a subkey, the binding) NEAREST the signing time:
- * the newest one already made by then -- exactly what openpgp judged by -- or,
- * when there is none, the oldest one made after it, the first thing the key
- * holder said about the key after signing. Every check below must pass:
+ * verified over the exact bytes on its own. Which self-signature (and, for a
+ * subkey, which binding) it judges the key from:
+ *   - when one that verifies was made at or before the signature, the key is
+ *     judged at the signing time and ONLY then, from the newest one valid then
+ *     -- exactly what openpgp judges by. If none is valid then (it had expired:
+ *     openpgp counts a self-signature's own expiry as the key's), the
+ *     signature is refused, however the key was renewed later;
+ *   - only when every one that verifies was made AFTER the signature -- a
+ *     renewed key published with nothing but its new self-signatures -- is it
+ *     judged from the NEWEST of them, as GnuPG judges a key by its newest
+ *     self-signature and binding. (Measured with GnuPG 2.4.9 on keys whose
+ *     two post-dated self-signatures, or bindings, disagree on the signing
+ *     flag or the key expiry: it followed the newer one every time.)
+ * Every check below must pass:
  *   - existed     the primary key, and the signing subkey, were created at or
  *                 before the signature;
  *   - not revoked no revocation of the primary key or the subkey was in force
@@ -303,28 +353,52 @@ async function whyKeyWasNotValidAt(
     if (primary.version !== 4 || ((key as { directSignatures?: unknown[] }).directSignatures ?? []).length > 0) {
         return 'renewal is judged only for v4 keys without direct-key signatures';
     }
-    const selfSignature = await nearestValid(
+    // Only the user IDs getPrimaryUser considers (a user attribute has no user ID).
+    const selfCertified = await madeAt(
+        key.users.flatMap((u) =>
+            u.userID
+                ? u.selfCertifications.map((signature) => ({
+                      signature,
+                      check: () =>
+                          signature.verify(
+                              primary,
+                              enums.signature.certGeneric,
+                              { userID: u.userID, key: primary },
+                              AT_NO_PARTICULAR_TIME,
+                              undefined,
+                              config,
+                          ),
+                  }))
+                : [],
+        ),
+    );
+    const self = await judgedAtSigning(
         created,
-        key.users.flatMap((u) => u.selfCertifications.map((s) => s.created)),
+        selfCertified,
         async (at) => (await key.getPrimaryUser(at, undefined, config)).selfCertification,
     );
-    if (!selfSignature) return 'it carries no valid self-signature';
+    if (self.how === 'none') return 'it carries no valid self-signature';
+    if (self.how === 'expired') return 'its self-signature had expired by then, or its user ID was revoked';
+    const selfSignature = self.value;
     if (expiredBy(primary, selfSignature, created)) return 'the key had expired by then';
 
     if (subkey) {
         const bound = { key: primary, bind: subkey.keyPacket };
-        const found = await nearestValid(
+        const verifyBinding = (s: OpenPgp.SignaturePacket, at: Date) =>
+            s.verify(primary, enums.signature.subkeyBinding, bound, at, undefined, config);
+        const found = await judgedAtSigning(
             created,
-            subkey.bindingSignatures.map((s) => s.created),
-            async (at) => ({
-                at,
-                binding: await latestValid(subkey.bindingSignatures, (s) =>
-                    s.verify(primary, enums.signature.subkeyBinding, bound, at, undefined, config),
-                ),
-            }),
+            await madeAt(
+                subkey.bindingSignatures.map((signature) => ({
+                    signature,
+                    check: () => verifyBinding(signature, AT_NO_PARTICULAR_TIME),
+                })),
+            ),
+            (at) => latestValid(subkey.bindingSignatures, (s) => verifyBinding(s, at)),
         );
-        if (!found) return 'it carries no valid subkey binding signature';
-        const { at, binding } = found;
+        if (found.how === 'none') return 'it carries no valid subkey binding signature';
+        if (found.how === 'expired') return 'its subkey binding signature had expired by then';
+        const { at, value: binding } = found;
         if (!maySign(openpgp, subkey.keyPacket, binding)) return 'its subkey binding signature does not allow signing';
         // The subkey's own back-signature, so a subkey cannot be claimed by a primary key it never agreed to.
         const back = binding.embeddedSignature;
