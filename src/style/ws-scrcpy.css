@@ -129,18 +129,20 @@
 }
 
 /* Offered when the browser refuses to put the device's clipboard on this
- * computer's clipboard by itself (Safari and Firefox only allow it from a
- * click). Same look as the locked notice, but it takes clicks, so it sits at
- * the bottom edge rather than over the middle of the picture. */
+ * computer's clipboard by itself (Safari and Firefox may only allow it from a
+ * click, and an iframe embed without clipboard-write refuses it outright). Same
+ * look as the locked notice, but it takes clicks, so it sits at the top edge:
+ * not over the middle of the picture, and not over the device's navigation bar
+ * or keyboard at the bottom, which the user may need while it is showing. */
 .stream-clipboard-prompt {
     grid-area: 1 / 1;
-    align-self: end;
+    align-self: start;
     justify-self: center;
     z-index: 2;
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    margin-bottom: 0.75rem;
+    margin-top: 0.75rem;
     padding: 0.4rem 0.6rem;
     border: 1px solid var(--info-color);
     border-radius: 4px;
@@ -152,6 +154,17 @@
 /* The class's `display: flex` would otherwise outrank the UA's [hidden] rule. */
 .stream-clipboard-prompt[hidden] {
     display: none;
+}
+
+/* Both can show at once (the device locks while a copy is on offer). Centred,
+ * the notice would run into the top-edge prompt on a short stream, so while the
+ * prompt shows the notice moves to the bottom edge instead. It ignores the
+ * pointer, so taps on the navigation bar under it still reach the device.
+ * StreamClientScrcpy puts the prompt before the notice in the DOM so this
+ * sibling rule can match. */
+.stream-clipboard-prompt:not([hidden]) ~ .stream-locked-notice {
+    align-self: end;
+    margin-bottom: 0.75rem;
 }
 
 .stream-clipboard-prompt > button {

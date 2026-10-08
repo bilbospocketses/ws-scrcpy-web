@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -55,6 +57,7 @@ import { settingsService } from '../../../client/SettingsService';
 import type { PlayerClass } from '../../../player/BasePlayer';
 import VideoSettings from '../../../VideoSettings';
 import DeviceMessage from '../../DeviceMessage';
+import { ClipboardCopyPrompt } from '../ClipboardCopyPrompt';
 import { StreamClientScrcpy } from '../StreamClientScrcpy';
 
 class FakePlayer {
@@ -112,11 +115,23 @@ function clipboardMessage(text: string): Uint8Array {
 }
 
 async function startedStream(): Promise<HTMLElement> {
+    return (await startedStreamWithStop()).container;
+}
+
+async function startedStreamWithStop(): Promise<{ container: HTMLElement; stop: () => void }> {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    StreamClientScrcpy.start(params, undefined, true, videoSettings(), container);
+    const { stop } = StreamClientScrcpy.start(params, undefined, true, videoSettings(), container);
     await vi.waitFor(() => expect(h.deviceMessage).toBeDefined());
-    return container;
+    return { container, stop };
+}
+
+/** The declaration block of the first rule with exactly this selector in ws-scrcpy.css. */
+function cssRule(selector: string): string {
+    const css = fs.readFileSync(path.resolve('src', 'style', 'ws-scrcpy.css'), 'utf8');
+    const at = css.indexOf(`\n${selector} {`);
+    expect(at, `${selector} rule should exist`).toBeGreaterThanOrEqual(0);
+    return css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at));
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -167,5 +182,34 @@ describe('device clipboard in the stream view', () => {
         expect(writeText).toHaveBeenLastCalledWith('blocked by Safari');
         await settle();
         expect(prompt.hidden).toBe(true);
+    });
+
+    it('stopping the stream disposes of the prompt', async () => {
+        const dispose = vi.spyOn(ClipboardCopyPrompt.prototype, 'dispose');
+        const { stop } = await startedStreamWithStop();
+        expect(dispose).not.toHaveBeenCalled();
+
+        stop();
+
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('where the prompt sits over the video', () => {
+    it('at the top edge, clear of the device navigation bar and keyboard at the bottom', () => {
+        const rule = cssRule('.stream-clipboard-prompt');
+        expect(rule).toMatch(/align-self:\s*start;/);
+        expect(rule).not.toMatch(/align-self:\s*end;/);
+    });
+
+    it('before the locked notice in the DOM, so the CSS can move the notice out of its way', async () => {
+        const container = await startedStream();
+        const video = container.querySelector<HTMLElement>('.video')!;
+        const order = Array.from(video.children).map((el) => el.className);
+        expect(order.indexOf('stream-clipboard-prompt')).toBeGreaterThanOrEqual(0);
+        expect(order.indexOf('stream-clipboard-prompt')).toBeLessThan(order.indexOf('stream-locked-notice'));
+        // ...and the rule that does the moving: the notice drops to the bottom
+        // edge while the prompt holds the top one.
+        expect(cssRule('.stream-clipboard-prompt:not([hidden]) ~ .stream-locked-notice')).toMatch(/align-self:\s*end;/);
     });
 });

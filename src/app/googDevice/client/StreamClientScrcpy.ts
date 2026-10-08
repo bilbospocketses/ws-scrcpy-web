@@ -496,8 +496,10 @@ export class StreamClientScrcpy
         this.lockedNotice.className = 'stream-locked-notice';
         this.lockedNotice.hidden = true;
         this.lockedNotice.textContent = 'device is locked — unlock it to see the screen';
-        video.appendChild(this.lockedNotice);
+        // The prompt goes first: ws-scrcpy.css moves the notice out of its way
+        // with a `prompt ~ notice` sibling rule, which only looks forward.
         video.appendChild(this.clipboardPrompt.element);
+        video.appendChild(this.lockedNotice);
         deviceView.appendChild(video);
         player.setParent(video);
         player.pause();
