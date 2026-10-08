@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.203] - 2026-10-08
+
 ### Fixed
 - **The toolbar's clipboard button now copies the device's selection to this computer's clipboard.** It did nothing before: it asked the device for its clipboard in a way the device only answers when clipboard syncing is off, and the app keeps syncing on. The button, now labelled "copy device selection to host clipboard", does what the copy shortcut (MOD+c) does in scrcpy's own app: the device copies whatever is selected on its screen, and that text arrives on this computer's clipboard. It needs Android 7 or later and something selected; on Android 5 and 6, or with nothing selected, it still does nothing. Text you copy on the device yourself still arrives on its own, as before.
 - **Long clipboard text from the device is no longer cut off, and back-to-back messages from the device are no longer lost.** The device's messages reached the browser in the pieces the network happened to deliver, and the browser read each piece as one whole message, so a clipboard text longer than one piece was cut short and a second message that shared a piece with the first was dropped. The browser now puts the pieces back together and reads each message whole. If the device ever sends a kind of message the browser does not recognise, it stops reading the device's messages for the rest of that stream rather than guess where the next one starts, as scrcpy's own app does.
