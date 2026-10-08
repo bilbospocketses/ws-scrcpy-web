@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A beta installed over a data folder kept from an earlier install now starts on the beta channel.** Settings → Updates showed `stable` instead, because the channel stored by that earlier install was read as if someone had picked it, and the beta build never offered a beta update. The app now records when the channel is picked on the Updates tab (or kept by the app itself while installing an update), and a stored `stable` that was never picked is ignored: the channel follows the build, beta on a beta build and stable on a stable one. A channel you pick on the Updates tab is still kept across restarts, reinstalls and updates, and a stored `beta` is still honoured. One case changes once: an install where someone deliberately chose `stable` on a beta build before this release has no record of that choice, so it moves to `beta` after updating; pick `stable` on the Updates tab again and it is kept from then on (`src/server/Config.ts`, `src/server/UpdateService.ts`, `src/server/db/constants.ts`, `src/common/ConfigEvents.ts`).
+
 ## [0.5.0] - 2026-10-08
 
 ### Changed

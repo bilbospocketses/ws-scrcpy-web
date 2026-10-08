@@ -1026,6 +1026,98 @@ describe('UpdateService', () => {
         expect(channelAfterRestartAs('0.1.30-beta.31')).toBe('beta');
     });
 
+    // ── The channel it stores is marked as picked (2026-10-08) ──
+    //
+    // A stored channel overrides a build's default only when CHANNEL_PICKED_KEY
+    // sits beside it (an unmarked `stable` is ignored at load), so what
+    // keepChannelAcrossApply writes must carry the marker too.
+
+    /** The app_settings marker row (undefined when none is stored). */
+    function storedMarker(): unknown {
+        return Config.getInstance().db.appSettings.get('channelPickedByUser');
+    }
+
+    it('beta install with no stored channel: taking a stable release stores beta WITH the picked marker', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const svc = betaInstallService('win32', STABLE);
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', pendingChannel: 'stable' });
+        expect(storedMarker()).toBeUndefined();
+
+        await svc.applyUpdate();
+
+        expect(storedChannel()).toBe('beta');
+        expect(storedMarker()).toBe(true);
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('a beta row stored before the marker existed gets the marker when a stable release is taken', async () => {
+        // v0.5.0's keepChannelAcrossApply wrote `beta` with no marker. The row
+        // already matches, which used to return early -- it must now still
+        // write, so the marker lands beside it.
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().db.appSettings.set('channel', 'beta');
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const svc = betaInstallService('win32', STABLE);
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+        expect(storedMarker()).toBeUndefined();
+
+        await svc.applyUpdate();
+
+        expect(storedChannel()).toBe('beta');
+        expect(storedMarker()).toBe(true);
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('a beta row already marked as picked is not written again', async () => {
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().updateAppConfig({ channel: 'beta', autoUpdate: false });
+        expect(storedMarker()).toBe(true);
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const svc = betaInstallService('win32', STABLE);
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+        const write = vi.spyOn(Config.getInstance(), 'updateAppConfig');
+
+        try {
+            await svc.applyUpdate();
+            expect(write.mock.calls.filter(([partial]) => 'channel' in partial)).toEqual([]);
+        } finally {
+            write.mockRestore();
+        }
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
+    it('a beta build on an unmarked stable row left by an earlier install keeps beta across a stable release', async () => {
+        // The 2026-10-08 report: the row reads `stable` but was never picked, so
+        // the beta build is on beta. Taking a stable release must store beta,
+        // marked, or the stable version would boot on the leftover row.
+        betaBuildWithNoStoredChannel();
+        Config.getInstance().db.appSettings.set('channel', 'stable');
+        vi.mocked(getAppVersion).mockReturnValue(BETA_BUILD);
+        Config._resetForTest();
+        expect(Config.getInstance().getAppConfig().channel).toBe('beta');
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const svc = betaInstallService('win32', STABLE);
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', pendingChannel: 'stable' });
+
+        await svc.applyUpdate();
+
+        expect(storedChannel()).toBe('beta');
+        expect(storedMarker()).toBe(true);
+        expect(channelAfterRestartAs(STABLE)).toBe('beta');
+    });
+
     it('applying stores the channel the user has NOW, not the one the service last checked with', async () => {
         // The radio moves to stable after the check offered the stable release
         // (in the app the PATCH then reconfigures; this is the moment before).

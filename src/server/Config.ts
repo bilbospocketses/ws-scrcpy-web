@@ -16,7 +16,7 @@ import {
 import type { ServerItem } from '../types/Configuration';
 import { getAppVersion } from './appVersion';
 import { resolveDataRoot } from './dataRoot';
-import { GLOBAL_KEYS } from './db/constants';
+import { CHANNEL_PICKED_KEY, GLOBAL_KEYS } from './db/constants';
 import { Db, dbDir } from './db/Db';
 import { EnvName } from './EnvName';
 import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
@@ -529,9 +529,53 @@ function composeAppConfig(
     globals: Record<string, unknown>,
     warn: (msg: string) => void,
 ): AppConfig {
-    const out = sanitizeAppConfig(fileConfig, warn);
-    overlayStore(out, globals, GLOBAL_KEYS, warn);
+    const defaultChannel = defaultChannelForVersion(getAppVersion());
+    const out = sanitizeAppConfig(fileConfig, warn, defaultChannel);
+    overlayStore(
+        out,
+        globals,
+        GLOBAL_KEYS.filter((k) => k !== 'channel'),
+        warn,
+    );
+    overlayStoredChannel(out, globals, defaultChannel, warn);
     return out;
+}
+
+/**
+ * Overlay the stored `channel` row, honouring it only when it was picked.
+ *
+ * - row + `CHANNEL_PICKED_KEY` true: the row, whatever the build.
+ * - row `beta`, unmarked: `beta`. Only a deliberate pick or
+ *   `UpdateService.keepChannelAcrossApply` ever wrote `beta`, and before the
+ *   marker existed (v0.5.0 and earlier) neither wrote one -- a beta install
+ *   that took v0.5.0 must stay on beta.
+ * - row `stable`, unmarked: IGNORED; the channel follows the build. Such a row
+ *   cannot be told from one left by an earlier install whose data folder was
+ *   kept -- measured 2026-10-08, v0.1.30-beta.205 installed over a kept data
+ *   folder came up on stable from exactly that row.
+ * - no row (or an invalid one): untouched, so config.json's `channel` (the MSI
+ *   skeleton writes one) or the build's default stands, as before.
+ *
+ * Applied on read; the row is never rewritten at boot.
+ */
+function overlayStoredChannel(
+    out: AppConfig,
+    globals: Record<string, unknown>,
+    defaultChannel: UpdateChannel,
+    warn: (msg: string) => void,
+): void {
+    const stored = globals['channel'];
+    if (stored === undefined) return;
+    const r = validateField('channel', stored);
+    if (!r.ok) {
+        warn(`stored channel: ${r.error}; ignoring`);
+        return;
+    }
+    if (globals[CHANNEL_PICKED_KEY] === true || r.value === 'beta') {
+        out.channel = r.value;
+        return;
+    }
+    out.channel = defaultChannel;
 }
 
 /**
@@ -1421,6 +1465,12 @@ export class Config {
      * Apply a partial AppConfig. Validates each provided field; on failure throws
      * a ConfigValidationError that ConfigApi turns into a 400 response. On success,
      * writes config.json synchronously and returns the merged config.
+     *
+     * Writing `channel` also writes `CHANNEL_PICKED_KEY` (see constants.ts): a
+     * channel named in a write is treated as picked, even when it equals the
+     * current one. The Settings dialog never sends an unchanged channel (its
+     * staged store drops a field whose value matches the loaded one), so from
+     * the UI the marker follows an actual radio change.
      */
     public updateAppConfig(partial: Partial<AppConfig>): { config: AppConfig; restartRequired: boolean } {
         const merged: AppConfig = { ...this._appConfig };
@@ -1450,6 +1500,13 @@ export class Config {
                 // persisted by saveToDisk()
             } else if ((GLOBAL_KEYS as readonly string[]).includes(k)) {
                 this._db.appSettings.set(k, r.value);
+                // A channel written here was picked -- by the Updates tab's
+                // Save (whose staged store sends `channel` only when the radio
+                // differs from the channel the tab loaded), PATCH /api/config,
+                // PATCH /api/updates/config, or keepChannelAcrossApply. Record
+                // that, or the next boot cannot tell this `stable` from one an
+                // earlier install left behind (overlayStoredChannel).
+                if (k === 'channel') this._db.appSettings.set(CHANNEL_PICKED_KEY, true);
             }
         }
         const restartRequired = merged.webPort !== this._appConfig.webPort;

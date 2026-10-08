@@ -8,6 +8,7 @@ import type { UpdateState } from '../common/UpdateEvents';
 import { AdbClient } from './AdbClient';
 import { getAppVersion } from './appVersion';
 import { Config } from './Config';
+import { CHANNEL_PICKED_KEY } from './db/constants';
 import { Logger } from './Logger';
 import {
     downloadVerifiedAsset,
@@ -949,22 +950,29 @@ export class UpdateService {
     /**
      * Make the configured channel survive the update to `targetVersion`.
      *
-     * The channel a version boots with is the `app_settings` row, else
-     * config.json's `channel`, else the version's own default
-     * (`defaultChannelForVersion`, Config.ts). Only a change on the Updates tab
-     * writes the row, and `Config.saveToDisk` never writes `channel` into
-     * config.json (the Windows MSI's skeleton value is dropped by the first
-     * save). So a beta install whose user never touched the radio is on beta
-     * only by its version's default -- and the beta channel also offers stable
-     * releases (feedChannels), so taking one would boot it on stable, never to
-     * be offered a beta again (review 2026-10-07, finding 1).
+     * The channel a version boots with is the `app_settings` row when it was
+     * picked (`CHANNEL_PICKED_KEY`) or says `beta`; an unmarked `stable` row is
+     * ignored. Without a row it is config.json's `channel`, else the version's
+     * own default (`defaultChannelForVersion`; Config.ts overlayStoredChannel).
+     * Only a channel write through `Config.updateAppConfig` -- the Updates
+     * tab's Save, or this method -- writes the row and its marker, and
+     * `Config.saveToDisk` never writes `channel` into config.json (the Windows
+     * MSI's skeleton value is dropped by the first save). So a beta install
+     * whose user never touched the radio is on beta only by its version's
+     * default -- and the beta channel also offers stable releases
+     * (feedChannels), so taking one would boot it on stable, never to be
+     * offered a beta again (review 2026-10-07, finding 1).
      *
      * Written only when the target's default differs from the configured
-     * channel and the row does not already say it: a beta install taking a beta
-     * release, or a stable install taking a stable one, writes nothing, as
-     * before. The channel is read from Config now, not from `this.channel`, so
-     * this writes the value the user has at this moment and cannot undo a
-     * later radio change; the read and the write are one synchronous step.
+     * channel and the row does not already say it WITH the marker: a beta
+     * install taking a beta release, or a stable install taking a stable one,
+     * writes nothing, as before. A row that already matches but carries no
+     * marker (a `beta` this method wrote before the marker existed) is written
+     * again, so the marker lands beside it. The write goes through
+     * `updateAppConfig`, which writes row and marker together. The channel is
+     * read from Config now, not from `this.channel`, so this writes the value
+     * the user has at this moment and cannot undo a later radio change; the
+     * read and the write are one synchronous step.
      *
      * A failed write refuses the apply. Going ahead would silently move the
      * install to the other channel; refusing happens before anything has been
@@ -981,7 +989,8 @@ export class UpdateService {
         const channel = config.getAppConfig().channel;
         if (defaultChannelForVersion(targetVersion) === channel) return;
         try {
-            if (config.db.appSettings.get('channel') === channel) return;
+            const settings = config.db.appSettings;
+            if (settings.get('channel') === channel && settings.get(CHANNEL_PICKED_KEY) === true) return;
             config.updateAppConfig({ channel });
         } catch (err) {
             const msg = `could not record the ${channel} channel before installing v${targetVersion}: ${(err as Error).message}`;

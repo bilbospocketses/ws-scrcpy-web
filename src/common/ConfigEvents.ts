@@ -150,9 +150,19 @@ export const VALID_CHANNELS: ReadonlyArray<UpdateChannel> = ['stable', 'beta'];
  * Arc 3 as `status: error … 404` against a beta-only feed. The MSI install hook
  * (`launcher/src/hooks.rs::default_channel_for_version`) derives the same answer
  * from the version Velopack hands it, so the skeleton config and the runtime
- * agree. Existing configs are NOT migrated: a written `stable` cannot be told
- * apart from a user's choice. `APP_CONFIG_DEFAULTS.channel` stays `stable` as
- * the schema default; `Config` substitutes this at load time.
+ * agree. `APP_CONFIG_DEFAULTS.channel` stays `stable` as the schema default;
+ * `Config` substitutes this at load time.
+ *
+ * A stored channel overrides this only when it was picked. Since 2026-10-08 a
+ * channel written through `Config.updateAppConfig` (the Updates tab, or
+ * `UpdateService.keepChannelAcrossApply`) records `channelPickedByUser` beside
+ * it. At load, a marked row wins; an unmarked `beta` row is honoured (only a
+ * pick or keepChannelAcrossApply ever wrote one); an unmarked `stable` row is
+ * ignored and the build's default applies -- it cannot be told apart from one
+ * left by an earlier install whose data folder was kept, which is how a beta
+ * build came up on stable (v0.1.30-beta.205, 2026-10-08). Rows are not
+ * rewritten at boot; the rule is applied on read (Config.ts
+ * `overlayStoredChannel`).
  */
 export function defaultChannelForVersion(version: string): UpdateChannel {
     return /-beta(?:[.\-+]|$)/i.test(version) ? 'beta' : 'stable';
