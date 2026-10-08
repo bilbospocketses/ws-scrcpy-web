@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.202] - 2026-10-08
+
 ### Changed
 - **The bundled scrcpy-server is now v5.0.** Streaming works as before, since the server speaks the same protocol as v4.1; the difference you may notice is that capturing a device's playback audio now picks up more kinds of sound. Settings → Dependencies offers v5.0 to any install still on v4.1. In Docker, where Settings cannot update dependencies, pulling the new image replaces the v4.1 server on the `/data` volume with v5.0 at startup.
 - **docs: smoke row 8.32 checks audio by ear on a real Android 13+ device.** Rows 8.3 and 8.29 prove that audio connects and that the controls follow the Android version, but no automated run can hear: headless Chromium cannot assert sound, and redroid has no real audio hardware. The new manual row walks each audio source and codec on a real phone, including the notification sounds that scrcpy-server 5.0's playback capture now picks up, and the audio-off connect.
