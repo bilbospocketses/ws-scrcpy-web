@@ -1,6 +1,7 @@
 // src/app/ScrcpyDemuxer.ts
 import { ChannelId } from '../common/ChannelId';
 import type { ControlMessage } from './controlMessage/ControlMessage';
+import { DeviceMessageFramer } from './googDevice/DeviceMessageFramer';
 
 const FRAME_HEADER_SIZE = 12; // 8 (PTS) + 4 (size)
 const PTS_FLAG_CONFIG = 0x8000000000000000n;
@@ -32,6 +33,7 @@ export interface SessionChange {
     height: number;
 }
 
+/** Called with exactly one whole device message (type byte first). */
 export type DeviceMessageCallback = (data: Uint8Array) => void;
 export type MetadataCallback = (meta: SessionMetadata) => void;
 export type SessionChangeCallback = (change: SessionChange) => void;
@@ -46,6 +48,13 @@ export class ScrcpyDemuxer {
     private sessionChangeCallback?: SessionChangeCallback;
     private disconnectCallback?: DisconnectCallback;
     private pendingControl: Uint8Array[] = [];
+    /**
+     * DEVICE_MSG frames are TCP chunks, not messages (the server relays the
+     * control socket's bytes as they arrive), so they are reassembled here.
+     * Per demuxer, and so per connection: a refresh builds a new demuxer and
+     * starts from an empty buffer.
+     */
+    private readonly deviceMessages = new DeviceMessageFramer((message) => this.deviceMsgCallback?.(message));
 
     constructor(url: string) {
         this.ws = new WebSocket(url);
@@ -121,7 +130,7 @@ export class ScrcpyDemuxer {
                 this.handleMediaFrame(payload, false);
                 break;
             case ChannelId.DEVICE_MSG:
-                this.deviceMsgCallback?.(payload);
+                this.deviceMessages.push(payload);
                 break;
             case ChannelId.METADATA:
                 this.handleMetadata(payload);
