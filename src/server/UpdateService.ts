@@ -619,7 +619,9 @@ export class UpdateService {
             // On Linux our apply downloads the published AppImage directly, so the
             // Velopack nupkg is never used — never pre-download it (saves ~60 MB per
             // check). On Windows, keep the autoUpdate pre-download. autoUpdate=false
-            // also lands in the else. Availability is surfaced via status='ready'.
+            // also lands in the else. Availability is surfaced via status='ready';
+            // on Windows the apply then downloads the package itself first
+            // (downloadBeforeApply).
             if (cfg.autoUpdate && this.platform !== 'linux') {
                 await this.downloadIfNeeded();
             } else {
@@ -766,15 +768,21 @@ export class UpdateService {
      * point of no return ({@link enterPointOfNoReturn}), not at the top: an apply
      * that stops before it (a declined pkexec, a failed download, a bad
      * checksum) leaves adb, the open streams and the markers as they were.
+     *
+     * Every path downloads before that point: Linux its AppImage, Windows the
+     * Velopack package ({@link downloadBeforeApply}), so on Windows this can run
+     * as long as a download.
      */
     public async applyUpdate(): Promise<{ redirectPort: number | null }> {
+        // First: a running Windows apply shows `downloading` while it downloads,
+        // and a second apply is refused for being one, not for that status.
+        if (this.applyInFlight) {
+            throw new Error('apply already in progress');
+        }
         if (!this.pendingMgr || !this.state.pendingUpdate || this.state.status !== 'ready') {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
-        if (this.applyInFlight) {
-            throw new Error('apply already in progress');
-        }
         this.applyInFlight = true;
         // The manager, update and channel one check produced together.
         //
@@ -801,6 +809,12 @@ export class UpdateService {
             // pkexec swap, each point of no return): the new version must boot
             // on the channel this one is configured with.
             this.keepChannelAcrossApply(pendingUpdate.TargetFullRelease.Version);
+            // Windows hands the swap to Velopack or the operation-server, and
+            // both read the package from the packages folder; neither downloads.
+            // Linux downloads its AppImage inside applyByPath.
+            if (this.platform === 'win32') {
+                await this.downloadBeforeApply(mgr, pendingUpdate, generation);
+            }
             return await this.applyByPath(mgr, pendingUpdate, pendingChannel);
         } catch (err) {
             this.applyInFlight = false;
@@ -857,6 +871,49 @@ export class UpdateService {
             throw new Error(`apply: ${msg}`);
         }
         log.info(`applyUpdate: recorded the ${channel} channel so v${targetVersion} keeps it`);
+    }
+
+    /**
+     * Windows: put the pending update's package in the packages folder before
+     * anything irreversible, the way the Linux apply downloads its AppImage
+     * first. Neither Windows hand-off downloads: Velopack's
+     * `waitExitThenApplyUpdate` fails with "File does not exist" (velopack
+     * 1.2.161 `manager.rs:602-634`), and the operation-server fails with
+     * "nupkg named by manifest not found" (`operation_server.rs`
+     * find_and_extract_nupkg) after the app has gone down. With
+     * autoUpdate off the check never downloads, so before 2026-10-08 every
+     * install on that setting failed (service mode after closing every stream,
+     * local mode with the app shut down for good).
+     *
+     * With autoUpdate on, the check has already downloaded it, and this costs a
+     * stat: Velopack skips a package already on disk (`manager.rs:414-415`),
+     * without re-hashing it. The status shows `downloading` with progress
+     * meanwhile; no check can overwrite that, since checks are skipped while an
+     * apply runs (runCheck).
+     *
+     * downloadIfNeeded never rejects, so its outcome is read from the state. A
+     * reconfigure() during the download changes the generation and clears the
+     * pending update: the apply stops, rather than install a release the user
+     * has just switched away from. A failed download leaves the update `ready`,
+     * as a failed Linux download does, so the install can simply be retried;
+     * the reason goes back to the caller in the error.
+     */
+    private async downloadBeforeApply(
+        mgr: UpdateManagerLike,
+        pendingUpdate: UpdateInfo,
+        generation: number,
+    ): Promise<void> {
+        await this.downloadIfNeeded();
+        if (this.generation !== generation || this.state.pendingUpdate !== pendingUpdate || this.pendingMgr !== mgr) {
+            throw new Error('update changed during download; nothing was installed');
+        }
+        if (this.state.status !== 'ready') {
+            const reason = this.state.errorMessage ?? `the download ended in state ${this.state.status}`;
+            this.state.status = 'ready';
+            this.state.errorMessage = undefined;
+            log.warn(`applyUpdate: download of v${pendingUpdate.TargetFullRelease.Version} failed: ${reason}`);
+            throw new Error(`update download failed: ${reason}`);
+        }
     }
 
     /**
