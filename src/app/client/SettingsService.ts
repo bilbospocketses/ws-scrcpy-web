@@ -21,8 +21,30 @@ export class SettingsService {
     // Deduplicates concurrent hydrateDevice() calls for the same udid so only
     // one GET is issued even if multiple callers race before the first resolves.
     private readonly pendingHydrations = new Map<string, Promise<void>>();
+    // adb transport udid -> the device's real serial (M11). Stream settings are
+    // keyed by the serial, so one device keeps one set across USB, Wi-Fi and IP
+    // changes; every device accessor below maps its udid through `keyFor`.
+    private readonly serialByUdid = new Map<string, string>();
 
-    // ── existing async surface (UNCHANGED) ──
+    /**
+     * Record that the device on transport `udid` has serial `serial`, so its
+     * settings are read and written under the serial. The device list calls
+     * this for every descriptor. An empty serial (not read yet) drops the
+     * binding, so a transport address DHCP has handed to another device never
+     * reads the previous device's settings. An unbound udid is used as it is:
+     * the server resolves a transport it has read a serial on (a stream opened
+     * from a direct link).
+     */
+    bindSerial(udid: string, serial: string): void {
+        if (serial) this.serialByUdid.set(udid, serial);
+        else this.serialByUdid.delete(udid);
+    }
+
+    private keyFor(udid: string): string {
+        return this.serialByUdid.get(udid) ?? udid;
+    }
+
+    // ── existing async surface (keys mapped through keyFor since M11) ──
 
     async loadGlobal(): Promise<Record<string, unknown>> {
         if (!this.globalCache) {
@@ -44,13 +66,21 @@ export class SettingsService {
     }
 
     async getDevice(udid: string): Promise<Record<string, unknown>> {
-        const res = await ok(await fetch(`/api/settings/device?udid=${encodeURIComponent(udid)}`));
-        return (await res.json()) as Record<string, unknown>;
+        return this.fetchDevice(this.keyFor(udid));
     }
 
     async patchDevice(udid: string, patch: Record<string, unknown>): Promise<void> {
+        return this.sendDevicePatch(this.keyFor(udid), patch);
+    }
+
+    private async fetchDevice(key: string): Promise<Record<string, unknown>> {
+        const res = await ok(await fetch(`/api/settings/device?udid=${encodeURIComponent(key)}`));
+        return (await res.json()) as Record<string, unknown>;
+    }
+
+    private async sendDevicePatch(key: string, patch: Record<string, unknown>): Promise<void> {
         await ok(
-            await fetch(`/api/settings/device?udid=${encodeURIComponent(udid)}`, {
+            await fetch(`/api/settings/device?udid=${encodeURIComponent(key)}`, {
                 method: 'PATCH',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify(patch),
@@ -79,17 +109,18 @@ export class SettingsService {
      * same udid share one in-flight GET rather than issuing duplicates.
      */
     async hydrateDevice(udid: string): Promise<void> {
-        if (this.deviceCache.has(udid)) return; // once-guard: first hydrate wins
-        const inflight = this.pendingHydrations.get(udid);
+        const key = this.keyFor(udid);
+        if (this.deviceCache.has(key)) return; // once-guard: first hydrate wins
+        const inflight = this.pendingHydrations.get(key);
         if (inflight) return inflight; // concurrent caller — share the same GET
-        const p = this.getDevice(udid)
+        const p = this.fetchDevice(key)
             .then((v) => {
-                this.deviceCache.set(udid, v);
+                this.deviceCache.set(key, v);
             })
             .finally(() => {
-                this.pendingHydrations.delete(udid);
+                this.pendingHydrations.delete(key);
             });
-        this.pendingHydrations.set(udid, p);
+        this.pendingHydrations.set(key, p);
         return p;
     }
 
@@ -100,7 +131,7 @@ export class SettingsService {
      * and fall back to their existing default path.
      */
     getDeviceVideo(udid: string): StoredVideo | undefined {
-        return this.deviceCache.get(udid)?.['video'] as StoredVideo | undefined;
+        return this.deviceCache.get(this.keyFor(udid))?.['video'] as StoredVideo | undefined;
     }
 
     /**
@@ -109,7 +140,7 @@ export class SettingsService {
      * the shape via isValidStored before use.
      */
     getDeviceAudio(udid: string): Record<string, unknown> | undefined {
-        return this.deviceCache.get(udid)?.['audio'] as Record<string, unknown> | undefined;
+        return this.deviceCache.get(this.keyFor(udid))?.['audio'] as Record<string, unknown> | undefined;
     }
 
     /**
@@ -119,10 +150,11 @@ export class SettingsService {
      * thrown (callers are sync/void).
      */
     setDeviceVideo(udid: string, video: StoredVideo): void {
-        const cur = this.deviceCache.get(udid) ?? {};
+        const key = this.keyFor(udid);
+        const cur = this.deviceCache.get(key) ?? {};
         cur['video'] = video;
-        this.deviceCache.set(udid, cur);
-        void this.patchDevice(udid, { video }).catch((e) =>
+        this.deviceCache.set(key, cur);
+        void this.sendDevicePatch(key, { video }).catch((e) =>
             console.error('[SettingsService] setDeviceVideo PATCH failed', e),
         );
     }
@@ -134,10 +166,11 @@ export class SettingsService {
      * thrown (callers are sync/void).
      */
     setDeviceAudio(udid: string, audio: Record<string, unknown>): void {
-        const cur = this.deviceCache.get(udid) ?? {};
+        const key = this.keyFor(udid);
+        const cur = this.deviceCache.get(key) ?? {};
         cur['audio'] = audio;
-        this.deviceCache.set(udid, cur);
-        void this.patchDevice(udid, { audio }).catch((e) =>
+        this.deviceCache.set(key, cur);
+        void this.sendDevicePatch(key, { audio }).catch((e) =>
             console.error('[SettingsService] setDeviceAudio PATCH failed', e),
         );
     }

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { resolveUserId } from '../auth/currentUser';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
+import { serialReadOn } from './pendingLabels';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('SettingsApi');
@@ -11,7 +12,8 @@ const log = Logger.for('SettingsApi');
  * reads/writes here. Everything is keyed by `resolveUserId(req)` (the implicit
  * admin in open mode; the session user once auth lands in Phase 4).
  *   GET/PATCH  /api/settings              → global `user_settings`
- *   GET/PATCH  /api/settings/device?udid= → per-device `device_settings`
+ *   GET/PATCH  /api/settings/device?udid= → per-device `device_settings`,
+ *                                            keyed by the device's serial (M11)
  *   POST       /api/settings/reset        → clear the caller's settings + labels
  *
  * Storage is intentionally schema-less: PATCH bodies are persisted as opaque
@@ -63,12 +65,19 @@ export class SettingsApi {
             }
 
             if (pathname === '/api/settings/device') {
-                const udid = new URL(url, 'http://localhost').searchParams.get('udid');
-                if (!udid) {
+                const requested = new URL(url, 'http://localhost').searchParams.get('udid');
+                if (!requested) {
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'udid is required' }));
                     return true;
                 }
+                // Settings are keyed by the device's real serial (M11), so one
+                // device keeps one set across USB, Wi-Fi and IP changes. The
+                // device list asks by serial; a stream opened from a direct link
+                // knows only the adb transport, which resolves to the serial
+                // the tracker read on it. A key it has not read a serial on is
+                // used as it is.
+                const udid = serialReadOn(requested) ?? requested;
                 if (req.method === 'GET') {
                     res.writeHead(200);
                     res.end(JSON.stringify(db.devices.getDeviceSettings(userId, udid)));

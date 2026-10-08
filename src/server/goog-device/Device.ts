@@ -4,12 +4,13 @@ import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
 import { inContainer } from '../api/containerGuard';
-import { upsertObservedDevices } from '../api/deviceObserved';
+import { recordTrackerSighting } from '../api/deviceObserved';
 import { applyPendingLabels, forgetPendingLabels } from '../api/pendingLabels';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
+import { lookupIpv4 } from '../network/lookupIpv4';
 import { resolveMac } from '../network/MacResolver';
-import { hostOf } from '../network/scanIdentity';
+import { hostOf, scanAddressFor } from '../network/scanIdentity';
 import { shArg } from '../security/deviceInput';
 import { classifyDeviceKind } from './deviceKind';
 import { Properties } from './Properties';
@@ -316,23 +317,24 @@ export class Device extends TypedEmitter<DeviceEvents> {
                     }
                 });
                 // Record observed metadata (manufacturer/model) in the shared
-                // devices table — best-effort; never break device tracking.
+                // devices table under the device's real serial, never the
+                // transport id (M11) — best-effort; never break device tracking.
                 try {
-                    upsertObservedDevices(Config.getInstance().db, [
-                        {
-                            serial: this.udid,
-                            manufacturer: this.descriptor['ro.product.manufacturer'] || null,
-                            model: this.descriptor['ro.product.model'] || null,
-                            lastSeenAt: Date.now(),
-                        },
-                    ]);
+                    const serial = this.descriptor['ro.serialno'];
+                    recordTrackerSighting(Config.getInstance().db, {
+                        udid: this.udid,
+                        serial,
+                        manufacturer: this.descriptor['ro.product.manufacturer'] || null,
+                        model: this.descriptor['ro.product.model'] || null,
+                        at: Date.now(),
+                    });
                     // A name typed at connect before this serial could be read
                     // is filed under it now, ahead of the update that makes the
                     // card fetch labels (row 19.5 follow-up).
-                    const serial = this.descriptor['ro.serialno'];
                     if (serial) {
                         applyPendingLabels(Config.getInstance().db, this.udid, serial);
                         this.backfillMac(serial);
+                        this.claimTransportAddress(serial);
                     }
                 } catch {
                     /* best-effort */
@@ -379,6 +381,25 @@ export class Device extends TypedEmitter<DeviceEvents> {
         resolveMac(hostOf(this.udid))
             .then((mac) => {
                 if (mac && !db.devices.getMac(serial)) db.devices.recordMac(serial, mac);
+            })
+            .catch(() => {
+                /* best-effort */
+            });
+    }
+
+    /**
+     * Record the address a TCP transport answers at against the device's serial,
+     * in the form a scan hit carries, as a connect does (M11): a hostname is
+     * resolved to its IPv4, an IPv4 or bracketed IPv6 literal is kept as it is
+     * (`scanAddressFor`). A rescan joins its hit to the device by this address,
+     * which is how it finds the remembered model. A USB transport has no
+     * address. Best-effort, and skipped if the transport went away meanwhile.
+     */
+    private claimTransportAddress(serial: string): void {
+        if (!/:\d+$/.test(this.udid)) return;
+        scanAddressFor(this.udid, lookupIpv4)
+            .then((address) => {
+                if (this.connected) Config.getInstance().db.devices.claimAddress(serial, address, Date.now());
             })
             .catch(() => {
                 /* best-effort */

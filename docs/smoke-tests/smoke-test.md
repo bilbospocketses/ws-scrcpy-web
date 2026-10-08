@@ -86,7 +86,7 @@ Terms used in the run rows. Linked from a term's first use.
 **Android / adb**
 - <a id="g-adb"></a>**adb · Wireless debugging** — Android Debug Bridge (the tool that talks to devices); an Android 11+ option letting adb connect over Wi-Fi.
 - <a id="g-scrcpy"></a>**scrcpy · scrcpy-server · kill-server** — the screen-mirroring engine; a small server runs on the phone; `kill-server` shuts adb's daemon down cleanly.
-- <a id="g-udid"></a>**udid** — a device's unique id; the key used to remember per-device settings.
+- <a id="g-udid"></a>**udid** — the id adb lists a device's connection under (its serial over USB, `<ip>:5555` over Wi-Fi). Per-device stream settings are remembered under the device's serial (`ro.serialno`), not the udid, so they follow the device across USB, Wi-Fi and IP changes.
 
 **Windows · App / packaging**
 - <a id="g-msi"></a>**MSI · PerMachine** — a standard Windows installer; PerMachine = installed once for **all** users under Program Files.

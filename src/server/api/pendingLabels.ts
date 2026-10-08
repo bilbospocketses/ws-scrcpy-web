@@ -83,7 +83,10 @@ export function applyPendingLabels(db: Db, address: string, serial: string, now:
     }
 }
 
-/** The device serial already read on the transport at `address`, if it is still up. */
+/**
+ * The device serial already read on the transport at `address`, if it is still
+ * up. Also how `SettingsApi` keys a transport's stream settings by serial (M11).
+ */
 export function serialReadOn(address: string): string | undefined {
     return serials.get(transportKey(address));
 }

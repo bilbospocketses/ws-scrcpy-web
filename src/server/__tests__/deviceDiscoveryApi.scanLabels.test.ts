@@ -145,8 +145,142 @@ function rescanLabel(hit: { address: string; serial: string; mac: string | null 
     }).label;
 }
 
+/** The model a rescan's hit carries (finding 7.6), resolved as `rescanLabel` resolves the label. */
+function rescanModel(address: string): string | null {
+    const db = Config.getInstance().db;
+    return resolveHitIdentity({
+        address,
+        hitSerial: address,
+        mac: null,
+        labelFor: (key) => db.devices.getLabel(IMPLICIT_ADMIN_ID, key),
+        deviceByAddress: (a) => {
+            const found = db.devices.findByAddress(a);
+            return found ? { serial: found.serial, model: found.model } : undefined;
+        },
+    }).model;
+}
+
 /** A subnet-scan (TCP-probe) hit: its serial is the probe address. */
 const tcpHit = (mac: string | null) => ({ address: HIT, serial: HIT, mac });
+
+describe('the device tracker files what it sees under the real serial (M11)', () => {
+    // The tracker wrote its row under the adb transport id, so a Wi-Fi device
+    // had a `<ip>:5555` row holding the model and a serial row holding the
+    // address, and a rescan (which joins by address) never found the model.
+    const rows = () =>
+        Config.getInstance()
+            .db.devices.listDevices()
+            .map((d) => d.serial);
+
+    it('a TCP sighting writes no transport row: model and address land on the serial row', async () => {
+        setup('container');
+        flakyGetprop();
+
+        await sight(HIT, SERIAL);
+
+        expect(rows()).toEqual([SERIAL]);
+        expect(Config.getInstance().db.devices.getDevice(SERIAL)).toMatchObject({
+            model: 'Pixel 7',
+            address: HIT,
+        });
+    });
+
+    it('folds an existing transport row into the serial row and deletes it', async () => {
+        setup('container');
+        flakyGetprop();
+        const db = Config.getInstance().db;
+        db.devices.upsertDevice({ serial: HIT, manufacturer: 'Google', model: 'Pixel 7', lastSeenAt: 1 });
+        db.devices.recordMac(SERIAL, MAC);
+
+        await sight(HIT, SERIAL);
+
+        expect(rows()).toEqual([SERIAL]);
+        expect(db.devices.getDevice(SERIAL)).toMatchObject({ manufacturer: 'Google', model: 'Pixel 7' });
+        expect(db.devices.getMac(SERIAL)).toBe(MAC);
+    });
+
+    it('a USB sighting claims no address', async () => {
+        setup('container');
+        flakyGetprop();
+        const db = Config.getInstance().db;
+
+        await sight(SERIAL, SERIAL);
+
+        expect(rows()).toEqual([SERIAL]);
+        expect(db.devices.getDevice(SERIAL)).toMatchObject({ model: 'Pixel 7', address: null });
+    });
+
+    it('a sighting with no serial writes nothing', async () => {
+        setup('container');
+        flakyGetprop();
+
+        await sight(HIT, '');
+
+        expect(rows()).toEqual([]);
+    });
+
+    it('a hostname transport claims the address at its IPv4, as connect records it', async () => {
+        setup('container');
+        flakyGetprop();
+        dnsLookup.mockImplementation(async (host: string) => {
+            if (host === 'qa-android') return { address: '10.0.0.5', family: 4 };
+            throw new Error('ENOTFOUND');
+        });
+
+        await sight('qa-android:5555', SERIAL);
+        await vi.waitFor(() => expect(Config.getInstance().db.devices.getDevice(SERIAL)?.address).toBe(HIT));
+
+        expect(rows()).toEqual([SERIAL]);
+    });
+
+    it('a transport that goes away before its hostname resolves claims nothing', async () => {
+        setup('container');
+        flakyGetprop();
+        let answer: (v: { address: string; family: number }) => void = () => undefined;
+        dnsLookup.mockImplementation(() => new Promise((r) => (answer = r)));
+
+        const device = await sight('qa-android:5555', SERIAL);
+        await vi.waitFor(() => expect(dnsLookup).toHaveBeenCalled());
+        device.setState('disconnected');
+        answer({ address: '10.0.0.5', family: 4 });
+        await new Promise((r) => setImmediate(r));
+
+        expect(Config.getInstance().db.devices.getDevice(SERIAL)?.address).toBeNull();
+    });
+
+    it('an IPv6 transport claims its bracketed form, as connect records it', async () => {
+        setup('container');
+        flakyGetprop();
+
+        await sight('[fe80::1]:5555', SERIAL);
+
+        expect(Config.getInstance().db.devices.getDevice(SERIAL)?.address).toBe('[fe80::1]:5555');
+        expect(dnsLookup).not.toHaveBeenCalled();
+    });
+
+    it('connect, then a tracker sighting, then a rescan: the hit carries the remembered model', async () => {
+        setup('container');
+        const getprop = flakyGetprop();
+        getprop.answer = SERIAL;
+        await post('/api/devices/connect', { address: HIT });
+
+        await sight(HIT, SERIAL);
+
+        expect(rescanModel(HIT)).toBe('Pixel 7');
+    });
+
+    it('the address moves to whichever device the tracker sees there now', async () => {
+        setup('container');
+        flakyGetprop();
+        const db = Config.getInstance().db;
+        db.devices.claimAddress('OTHER0SERIAL', HIT, 1);
+
+        await sight(HIT, SERIAL);
+
+        expect(db.devices.findByAddress(HIT)?.serial).toBe(SERIAL);
+        expect(db.devices.getDevice('OTHER0SERIAL')?.address).toBeNull();
+    });
+});
 
 describe('connect with a name from a subnet-scan hit (row 19.5, defect a)', () => {
     for (const where of ['host', 'container'] as const) {
