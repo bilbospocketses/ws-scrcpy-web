@@ -907,6 +907,12 @@ test.describe('device streaming (smoke §8)', () => {
                     { timeout: 45_000, message: 'the Settings home screen should show its search affordance' },
                 )
                 .toBe(true);
+            // The witness below is "a text field is focused", so none may be
+            // focused before the tap — otherwise the tap could miss and pass.
+            expect(
+                nodes.some(isFocusedTextField),
+                'no text field may be focused before the tap, or a focused one afterwards proves nothing',
+            ).toBe(false);
             const display = displaySize(nodes);
             const search = nodes.find((n) => /search/i.test(n.id) || /search/i.test(n.desc)) as UiNode;
             await tapDevicePoint(
