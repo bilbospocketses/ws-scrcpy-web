@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.198] - 2026-10-08
+
 ### Fixed
 - **Settings → Dependencies no longer offers a scrcpy-server the app has not been tested with.** scrcpy v5.0 came out on 2026-10-05 and was offered as an update, although this build's stream handling is written and tested for scrcpy-server 4.1, and the app runs whichever server is installed. The panel now offers scrcpy-server only up to the version the app ships with; a newer scrcpy arrives through an app update once it has been tested. If you already installed v5.0, the panel offers 4.1 back as an update.
 
