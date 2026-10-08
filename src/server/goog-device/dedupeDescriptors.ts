@@ -1,3 +1,4 @@
+import { isUniqueSerial } from '../../common/deviceSerial';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 
 /**
@@ -43,7 +44,9 @@ export function isNetworkTransportUdid(udid: string): boolean {
  * Descriptors whose `ro.serialno` is still empty — the initial value, until
  * `getprop` lands — pass through untouched. An unidentified device must stay
  * visible, and two unidentified devices must never be merged into one on the
- * strength of both being unknown.
+ * strength of both being unknown. The same goes for a placeholder serial many
+ * devices share (`0123456789ABCDEF`, an emulator's `EMULATOR…`; see
+ * `isUniqueSerial`): it does not say two transports are one device.
  *
  * Selects rather than rebuilds: callers hold references to these descriptors.
  */
@@ -55,7 +58,7 @@ export function dedupeByHardwareSerial(descriptors: GoogDeviceDescriptor[]): Goo
 
     for (const descriptor of descriptors) {
         const serial = descriptor['ro.serialno'];
-        if (!serial) {
+        if (!isUniqueSerial(serial)) {
             order.push(descriptor);
             continue;
         }

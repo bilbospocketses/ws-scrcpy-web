@@ -5,7 +5,7 @@ import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
 import { inContainer } from '../api/containerGuard';
 import { recordTrackerSighting } from '../api/deviceObserved';
-import { applyPendingLabels, forgetPendingLabels } from '../api/pendingLabels';
+import { applyPendingLabels, forgetPendingLabels, forgetSerialReadOn } from '../api/pendingLabels';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { lookupIpv4 } from '../network/lookupIpv4';
@@ -41,6 +41,14 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private updateCount = 0;
     private throttleTimeoutId?: Timeout | undefined;
     private lastEmit = 0;
+    /**
+     * True once the tracker has read this transport's properties and recorded
+     * what it read, since the transport last became a `device` (M11 fix 1).
+     * Until then nobody knows which device answers here, so `SettingsApi` waits
+     * for it (`whenSighted`) rather than file settings under the transport.
+     */
+    private sighted = false;
+    private readonly sightingWaiters = new Set<(sighted: boolean) => void>();
     public readonly TAG: string;
     public readonly descriptor: GoogDeviceDescriptor;
 
@@ -70,6 +78,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     public setState(state: string): void {
+        this.sighted = false;
         if (state === 'device') {
             this.connected = true;
             this.properties = undefined;
@@ -77,6 +86,13 @@ export class Device extends TypedEmitter<DeviceEvents> {
         } else {
             this.connected = false;
             this.descriptor.pid = -1;
+            // Whatever answers on this transport when it is a device again may
+            // be another device (DHCP reuse, a swapped cable), so the serial read
+            // on it goes: the client must not bind the card's settings to it and
+            // `SettingsApi` must not resolve the transport to it (M11 fix 1, m5).
+            this.descriptor['ro.serialno'] = '';
+            forgetSerialReadOn(this.udid);
+            this.settleSightingWaiters(false);
             // The transport is gone: a name still waiting on it must not land
             // on whatever device answers at this address next.
             if (state === DeviceState.DISCONNECTED) forgetPendingLabels(this.udid);
@@ -88,6 +104,31 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     public isConnected(): boolean {
         return this.connected;
+    }
+
+    /**
+     * Resolves true once the tracker has read and recorded this transport's
+     * properties (M11 fix 1), at once if it already has; false if the transport
+     * is not a `device`, stops being one, or `timeoutMs` passes first. After
+     * true, `serialReadOn(udid)` holds the device's serial, or nothing when it
+     * reported none that names one device (`isUniqueSerial`).
+     */
+    public whenSighted(timeoutMs: number): Promise<boolean> {
+        if (this.sighted) return Promise.resolve(true);
+        if (!this.connected) return Promise.resolve(false);
+        return new Promise((resolve) => {
+            const settle = (sighted: boolean): void => {
+                clearTimeout(timer);
+                this.sightingWaiters.delete(settle);
+                resolve(sighted);
+            };
+            const timer = setTimeout(() => settle(false), timeoutMs);
+            this.sightingWaiters.add(settle);
+        });
+    }
+
+    private settleSightingWaiters(sighted: boolean): void {
+        for (const settle of [...this.sightingWaiters]) settle(sighted);
     }
 
     public async getPidOf(processName: string): Promise<number[] | undefined> {
@@ -321,7 +362,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 // transport id (M11) — best-effort; never break device tracking.
                 try {
                     const serial = this.descriptor['ro.serialno'];
-                    recordTrackerSighting(Config.getInstance().db, {
+                    const bySerial = recordTrackerSighting(Config.getInstance().db, {
                         udid: this.udid,
                         serial,
                         manufacturer: this.descriptor['ro.product.manufacturer'] || null,
@@ -330,12 +371,15 @@ export class Device extends TypedEmitter<DeviceEvents> {
                     });
                     // A name typed at connect before this serial could be read
                     // is filed under it now, ahead of the update that makes the
-                    // card fetch labels (row 19.5 follow-up).
-                    if (serial) {
+                    // card fetch labels (row 19.5 follow-up). A placeholder
+                    // serial many devices share keys nothing (M11 fix 1, m4).
+                    if (bySerial) {
                         applyPendingLabels(Config.getInstance().db, this.udid, serial);
                         this.backfillMac(serial);
                         this.claimTransportAddress(serial);
                     }
+                    this.sighted = true;
+                    this.settleSightingWaiters(true);
                 } catch {
                     /* best-effort */
                 }
@@ -393,13 +437,16 @@ export class Device extends TypedEmitter<DeviceEvents> {
      * resolved to its IPv4, an IPv4 or bracketed IPv6 literal is kept as it is
      * (`scanAddressFor`). A rescan joins its hit to the device by this address,
      * which is how it finds the remembered model. A USB transport has no
-     * address. Best-effort, and skipped if the transport went away meanwhile.
+     * address. Best-effort, and skipped if the transport went away meanwhile
+     * or now answers with another device's serial (M11 fix 1, m3).
      */
     private claimTransportAddress(serial: string): void {
         if (!/:\d+$/.test(this.udid)) return;
         scanAddressFor(this.udid, lookupIpv4)
             .then((address) => {
-                if (this.connected) Config.getInstance().db.devices.claimAddress(serial, address, Date.now());
+                if (this.connected && this.descriptor['ro.serialno'] === serial) {
+                    Config.getInstance().db.devices.claimAddress(serial, address, Date.now());
+                }
             })
             .catch(() => {
                 /* best-effort */

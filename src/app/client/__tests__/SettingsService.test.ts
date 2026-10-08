@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StoredVideo } from '../SettingsService';
 // We import the class (not the singleton) so each test can instantiate fresh.
 // The singleton export is tested separately in the singleton test below.
-import { SettingsService } from '../SettingsService';
+import { DEVICE_SETTINGS_ATTEMPTS, SettingsService } from '../SettingsService';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -365,6 +365,74 @@ describe('SettingsService.bindSerial()', () => {
             `/api/settings/device?udid=${encodeURIComponent(WIFI)}`,
             `/api/settings/device?udid=${encodeURIComponent(WIFI)}`,
         ]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// 503 while the device's serial is read — bounded, visible retry (M11 fix 1)
+// ---------------------------------------------------------------------------
+
+describe('SettingsService device requests while the server reads the serial', () => {
+    const WIFI = '10.0.0.5:5555';
+
+    function busy(retryAfter = '0'): Response {
+        return {
+            ok: false,
+            status: 503,
+            headers: { get: (h: string) => (h.toLowerCase() === 'retry-after' ? retryAfter : null) },
+            json: () => Promise.resolve({ error: 'serial not read yet' }),
+        } as unknown as Response;
+    }
+
+    it('retries a 503 and takes the answer that follows, logging each retry', async () => {
+        const svc = new SettingsService();
+        const answers = [busy(), busy(), makeOkResponse({ video: { fit: true } })];
+        const stub = vi.fn(() => Promise.resolve(answers.shift()!));
+        vi.stubGlobal('fetch', stub);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        await svc.hydrateDevice(WIFI);
+
+        expect(stub).toHaveBeenCalledTimes(3);
+        expect(warn).toHaveBeenCalledTimes(2);
+        expect(svc.getDeviceVideo(WIFI)).toEqual({ fit: true });
+    });
+
+    it('a PATCH is retried too, so the write lands once the serial is read', async () => {
+        const svc = new SettingsService();
+        const answers = [busy(), makeOkResponse({})];
+        const methods: (string | undefined)[] = [];
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((_url: string, init?: RequestInit) => {
+                methods.push(init?.method);
+                return Promise.resolve(answers.shift()!);
+            }),
+        );
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        await svc.patchDevice(WIFI, { video: { fit: true } });
+
+        expect(methods).toEqual(['PATCH', 'PATCH']);
+    });
+
+    it('gives up after DEVICE_SETTINGS_ATTEMPTS and says why, never silently', async () => {
+        const svc = new SettingsService();
+        const stub = vi.fn(() => Promise.resolve(busy()));
+        vi.stubGlobal('fetch', stub);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        await expect(svc.patchDevice(WIFI, { video: { fit: true } })).rejects.toThrow(/has not reported its serial/);
+        expect(stub).toHaveBeenCalledTimes(DEVICE_SETTINGS_ATTEMPTS);
+    });
+
+    it('any other error is not retried', async () => {
+        const svc = new SettingsService();
+        const stub = vi.fn(() => Promise.resolve({ ok: false, status: 500 } as unknown as Response));
+        vi.stubGlobal('fetch', stub);
+
+        await expect(svc.getDevice(WIFI)).rejects.toThrow('HTTP 500');
+        expect(stub).toHaveBeenCalledOnce();
     });
 });
 

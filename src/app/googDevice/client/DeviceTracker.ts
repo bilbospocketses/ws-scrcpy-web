@@ -14,6 +14,7 @@ import { insecureOriginNotice } from '../../secureContext';
 import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
+import { bindDeviceSettings } from './deviceSettingsBinding';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
 
 // ---------- capability gating ----------
@@ -180,10 +181,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             context && typeof context === 'object' ? (context as Record<string, string>) : {};
         const fullName = `${this.id}_${Util.escapeUdid(device.udid)}`;
         const isActive = device.state === DeviceState.DEVICE;
-        // Stream settings follow the device, not the transport (M11): every
-        // settings read and write for this udid, here, in ConfigureScrcpy and
-        // in the player, goes under the serial the descriptor carries.
-        settingsService.bindSerial(device.udid, device['ro.serialno'] || '');
+        // Stream settings follow the device, not the transport (M11).
+        bindDeviceSettings(settingsService, device);
         const deviceName = device['ro.product.model']?.startsWith(device['ro.product.manufacturer'])
             ? device['ro.product.model']
             : `${device['ro.product.manufacturer']} ${device['ro.product.model']}`;

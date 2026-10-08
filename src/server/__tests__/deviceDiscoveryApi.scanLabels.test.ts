@@ -248,6 +248,27 @@ describe('the device tracker files what it sees under the real serial (M11)', ()
         expect(Config.getInstance().db.devices.getDevice(SERIAL)?.address).toBeNull();
     });
 
+    it('a lookup that answers after the transport went offline and came back as another device claims nothing for the first (M11 fix 1, m3)', async () => {
+        setup('container');
+        flakyGetprop();
+        const answers: Array<(v: { address: string; family: number }) => void> = [];
+        dnsLookup.mockImplementation(() => new Promise((r) => answers.push(r)));
+
+        const device = await sight('qa-android:5555', SERIAL);
+        await vi.waitFor(() => expect(answers).toHaveLength(1));
+        device.setState('offline');
+        const props = vi
+            .spyOn(AdbClient.prototype, 'getProperties')
+            .mockResolvedValue({ 'ro.serialno': 'OTHER0SERIAL', 'ro.product.model': 'Pixel 8' });
+        props.mockClear();
+        device.setState('device');
+        await vi.waitFor(() => expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL'));
+        answers[0]!({ address: '10.0.0.5', family: 4 });
+        await new Promise((r) => setImmediate(r));
+
+        expect(Config.getInstance().db.devices.getDevice(SERIAL)?.address).toBeNull();
+    });
+
     it('an IPv6 transport claims its bracketed form, as connect records it', async () => {
         setup('container');
         flakyGetprop();

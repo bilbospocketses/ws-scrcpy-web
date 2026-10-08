@@ -14,12 +14,13 @@ vi.mock('dns/promises', () => ({
 }));
 
 import { AdbClient } from '../AdbClient';
-import { _resetPendingLabelsForTest } from '../api/pendingLabels';
-import { SettingsApi } from '../api/SettingsApi';
+import { _resetPendingLabelsForTest, serialReadOn } from '../api/pendingLabels';
+import { SERIAL_RETRY_AFTER_S, SettingsApi } from '../api/SettingsApi';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
 import { Device } from '../goog-device/Device';
+import { ControlCenter } from '../goog-device/services/ControlCenter';
 import { makeReqRes } from './helpers/httpMock';
 
 const SERIAL = 'R5CN30ABCDE';
@@ -115,6 +116,8 @@ describe('stream settings keyed by the real serial (M11)', () => {
     it('a legacy transport-keyed set is adopted once, when the device is seen there and the serial has none', async () => {
         setup();
         const db = Config.getInstance().db;
+        // Before M11 the tracker filed the transport's row with the model it saw.
+        db.devices.upsertDevice({ serial: WIFI, model: 'Pixel 7', lastSeenAt: 1 });
         db.devices.setDeviceSetting(IMPLICIT_ADMIN_ID, WIFI, 'video', { fit: true });
 
         await sight(WIFI);
@@ -126,6 +129,7 @@ describe('stream settings keyed by the real serial (M11)', () => {
     it('a serial-keyed set is never overwritten by a legacy one, and the legacy rows are left in place', async () => {
         setup();
         const db = Config.getInstance().db;
+        db.devices.upsertDevice({ serial: WIFI, model: 'Pixel 7', lastSeenAt: 1 });
         db.devices.setDeviceSetting(IMPLICIT_ADMIN_ID, SERIAL, 'video', { fit: false });
         db.devices.setDeviceSetting(IMPLICIT_ADMIN_ID, WIFI, 'video', { fit: true });
 
@@ -133,5 +137,159 @@ describe('stream settings keyed by the real serial (M11)', () => {
 
         expect(await getSettings(SERIAL)).toEqual({ video: { fit: false } });
         expect(db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, WIFI)).toEqual({ video: { fit: true } });
+    });
+});
+
+describe('a live transport whose serial is not read yet is never used as the settings key (M11 fix 1, I1)', () => {
+    // Configure, or a deep-link stream tab after a server restart, can ask for
+    // settings by transport before the tracker's getprop lands. Filed under the
+    // transport then, the set would never reach the serial once the user had one.
+    const live = new Map<string, Device>();
+    function trackerHolds(device: Device): Device {
+        live.set(device.udid, device);
+        vi.spyOn(ControlCenter, 'hasInstance').mockReturnValue(true);
+        vi.spyOn(ControlCenter, 'getInstance').mockReturnValue({
+            getDevice: (udid: string) => live.get(udid),
+        } as unknown as ControlCenter);
+        return device;
+    }
+    afterEach(() => live.clear());
+
+    /** getProperties answers only when `release` is called. */
+    function slowGetprop(serial = SERIAL) {
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((r) => (release = r));
+        const props = vi.spyOn(AdbClient.prototype, 'getProperties').mockImplementation(async () => {
+            await gate;
+            return { 'ro.serialno': serial, 'ro.product.model': 'Pixel 7' };
+        });
+        return { props, release: () => release() };
+    }
+
+    function request(method: 'GET' | 'PATCH', key: string, body?: Record<string, unknown>, waitMs?: number) {
+        const r = makeReqRes(method, `/api/settings/device?udid=${encodeURIComponent(key)}`, body);
+        const done = new SettingsApi(waitMs).handle(r.req, r.res);
+        return { r, done };
+    }
+
+    it('a PATCH before the serial is known waits for it and lands under the serial', async () => {
+        setup();
+        const { props, release } = slowGetprop();
+        trackerHolds(new Device(WIFI, 'device'));
+        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+
+        const { r, done } = request('PATCH', WIFI, { video: { fit: true } });
+        release();
+        await done;
+
+        expect(r.getStatus()).toBe(200);
+        const db = Config.getInstance().db;
+        expect(db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, SERIAL)).toEqual({ video: { fit: true } });
+        expect(db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, WIFI)).toEqual({});
+    });
+
+    it("a GET before the serial is known returns the serial's set", async () => {
+        setup();
+        Config.getInstance().db.devices.setDeviceSetting(IMPLICIT_ADMIN_ID, SERIAL, 'video', { fit: true });
+        const { props, release } = slowGetprop();
+        trackerHolds(new Device(WIFI, 'device'));
+        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+
+        const { r, done } = request('GET', WIFI);
+        release();
+        await done;
+
+        expect(r.getStatus()).toBe(200);
+        expect(r.getJson()).toEqual({ video: { fit: true } });
+    });
+
+    it('a serial that is not read in time is answered 503 with Retry-After, and nothing is filed under the transport', async () => {
+        setup();
+        const { props } = slowGetprop();
+        trackerHolds(new Device(WIFI, 'device'));
+        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+
+        const { r, done } = request('PATCH', WIFI, { video: { fit: true } }, 20);
+        await done;
+
+        expect(r.getStatus()).toBe(503);
+        expect(r.getHeader('Retry-After')).toBe(String(SERIAL_RETRY_AFTER_S));
+        const db = Config.getInstance().db;
+        expect(db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, WIFI)).toEqual({});
+        expect(db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, SERIAL)).toEqual({});
+    });
+
+    it('a transport that is not a device (unauthorized) is answered 503 at once', async () => {
+        setup();
+        trackerHolds(new Device(WIFI, 'unauthorized'));
+
+        const { r, done } = request('PATCH', WIFI, { video: { fit: true } }, 60_000);
+        await done;
+
+        expect(r.getStatus()).toBe(503);
+        expect(Config.getInstance().db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, WIFI)).toEqual({});
+    });
+
+    it('a key the tracker does not hold is used as it is, without waiting', async () => {
+        setup();
+        trackerHolds(new Device(WIFI, 'unauthorized'));
+
+        const { r, done } = request('PATCH', 'e2e-fake-device', { video: { fit: true } }, 60_000);
+        await done;
+
+        expect(r.getStatus()).toBe(200);
+        expect(Config.getInstance().db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, 'e2e-fake-device')).toEqual({
+            video: { fit: true },
+        });
+    });
+});
+
+describe('a placeholder serial keys nothing (M11 fix 1, m4)', () => {
+    for (const placeholder of ['0123456789ABCDEF', 'unknown', 'EMULATOR37X1X11X0']) {
+        it(`a device reporting ${placeholder} keeps its settings and row under the transport`, async () => {
+            setup();
+            const props = vi
+                .spyOn(AdbClient.prototype, 'getProperties')
+                .mockResolvedValue({ 'ro.serialno': placeholder, 'ro.product.model': 'TV Box' });
+            const device = new Device(WIFI, 'device');
+            await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+            await new Promise((r) => setImmediate(r));
+            vi.spyOn(ControlCenter, 'hasInstance').mockReturnValue(true);
+            vi.spyOn(ControlCenter, 'getInstance').mockReturnValue({
+                getDevice: (udid: string) => (udid === WIFI ? device : undefined),
+            } as unknown as ControlCenter);
+
+            await patchSettings(WIFI, { video: { fit: true } });
+
+            const db = Config.getInstance().db;
+            expect(serialReadOn(WIFI)).toBeUndefined();
+            expect(db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, WIFI)).toEqual({ video: { fit: true } });
+            expect(db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, placeholder)).toEqual({});
+            expect(db.devices.getDevice(placeholder)).toBeUndefined();
+        });
+    }
+});
+
+describe('a reused transport forgets the previous device (M11 fix 1, m5)', () => {
+    it('offline, then a different device on the same transport: neither the descriptor nor the server keeps the old serial', async () => {
+        setup();
+        const db = Config.getInstance().db;
+        db.devices.setDeviceSetting(IMPLICIT_ADMIN_ID, 'OTHER0SERIAL', 'video', { fit: false });
+        const device = await sight(WIFI);
+        expect(serialReadOn(WIFI)).toBe(SERIAL);
+
+        device.setState('offline');
+        expect(device.descriptor['ro.serialno']).toBe('');
+        expect(serialReadOn(WIFI)).toBeUndefined();
+
+        const props = vi
+            .spyOn(AdbClient.prototype, 'getProperties')
+            .mockResolvedValue({ 'ro.serialno': 'OTHER0SERIAL', 'ro.product.model': 'Pixel 8' });
+        device.setState('device');
+        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+        await new Promise((r) => setImmediate(r));
+
+        expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL');
+        expect(await getSettings(WIFI)).toEqual({ video: { fit: false } });
     });
 });

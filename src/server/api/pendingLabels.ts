@@ -91,6 +91,17 @@ export function serialReadOn(address: string): string | undefined {
     return serials.get(transportKey(address));
 }
 
+/**
+ * The transport at `address` stopped answering as a device (offline,
+ * unauthorized, gone): whoever answers there next may be another device, so
+ * the serial read on it no longer holds (M11 fix 1, m5). A name still waiting
+ * on it is kept, since a device that was unauthorized at connect is the case it
+ * waits for.
+ */
+export function forgetSerialReadOn(address: string): void {
+    serials.delete(transportKey(address));
+}
+
 /** The transport at `address` went away: whatever answers there next is not the device that was named. */
 export function forgetPendingLabels(address: string): void {
     pending.delete(transportKey(address));

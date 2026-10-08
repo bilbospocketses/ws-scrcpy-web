@@ -11,6 +11,8 @@ import { runMigrations } from '../migrations';
 
 const SERIAL = 'R5CN30ABCDE';
 const TRANSPORT = '10.0.0.5:5555';
+/** The transport's devices row, as `mergeDeviceInto` found it: this device's model. */
+const SEEN_HERE = { model: 'Pixel 7' };
 
 let db: DatabaseSync;
 let store: DeviceStore;
@@ -81,6 +83,12 @@ describe('DeviceStore.mergeDeviceInto (the transport row folds into the serial r
         expect(rowCount(TRANSPORT)).toBe(0);
     });
 
+    it('returns the transport row it folded, or nothing when there was none (M11 fix 1, m2)', () => {
+        store.upsertDevice({ serial: TRANSPORT, model: 'Pixel 7', lastSeenAt: 5 });
+        expect(store.mergeDeviceInto(TRANSPORT, SERIAL)).toEqual({ model: 'Pixel 7' });
+        expect(store.mergeDeviceInto(TRANSPORT, SERIAL)).toBeUndefined();
+    });
+
     it('does nothing when the two keys are the same (a USB transport is its serial)', () => {
         store.upsertDevice({ serial: SERIAL, model: 'Pixel 7', lastSeenAt: 5 });
         store.mergeDeviceInto(SERIAL, SERIAL);
@@ -100,7 +108,7 @@ describe('DeviceStore.adoptTransportSettings (legacy transport-keyed stream sett
         store.setDeviceSetting(1, TRANSPORT, 'video', { fit: true });
         store.setDeviceSetting(1, TRANSPORT, 'audio', { source: 'mic' });
 
-        store.adoptTransportSettings(TRANSPORT, SERIAL);
+        store.adoptTransportSettings(TRANSPORT, SERIAL, SEEN_HERE, 'Pixel 7');
 
         expect(store.getDeviceSettings(1, SERIAL)).toEqual({ video: { fit: true }, audio: { source: 'mic' } });
         expect(store.getDeviceSettings(1, TRANSPORT)).toEqual({});
@@ -111,7 +119,7 @@ describe('DeviceStore.adoptTransportSettings (legacy transport-keyed stream sett
         store.setDeviceSetting(1, TRANSPORT, 'video', { fit: true });
         store.setDeviceSetting(1, TRANSPORT, 'audio', { source: 'mic' });
 
-        store.adoptTransportSettings(TRANSPORT, SERIAL);
+        store.adoptTransportSettings(TRANSPORT, SERIAL, SEEN_HERE, 'Pixel 7');
 
         expect(store.getDeviceSettings(1, SERIAL)).toEqual({ video: { fit: false } });
         expect(store.getDeviceSettings(1, TRANSPORT)).toEqual({ video: { fit: true }, audio: { source: 'mic' } });
@@ -122,7 +130,7 @@ describe('DeviceStore.adoptTransportSettings (legacy transport-keyed stream sett
         store.setDeviceSetting(1, TRANSPORT, 'video', { fit: true });
         store.setDeviceSetting(2, TRANSPORT, 'audio', { source: 'output' });
 
-        store.adoptTransportSettings(TRANSPORT, SERIAL);
+        store.adoptTransportSettings(TRANSPORT, SERIAL, SEEN_HERE, 'Pixel 7');
 
         expect(store.getDeviceSettings(1, SERIAL)).toEqual({ video: { fit: false } });
         expect(store.getDeviceSettings(2, SERIAL)).toEqual({ audio: { source: 'output' } });
@@ -131,10 +139,10 @@ describe('DeviceStore.adoptTransportSettings (legacy transport-keyed stream sett
 
     it('adopts once: a second legacy transport seen later does not replace the adopted set', () => {
         store.setDeviceSetting(1, TRANSPORT, 'video', { fit: true });
-        store.adoptTransportSettings(TRANSPORT, SERIAL);
+        store.adoptTransportSettings(TRANSPORT, SERIAL, SEEN_HERE, 'Pixel 7');
 
         store.setDeviceSetting(1, '10.0.0.9:5555', 'video', { fit: false });
-        store.adoptTransportSettings('10.0.0.9:5555', SERIAL);
+        store.adoptTransportSettings('10.0.0.9:5555', SERIAL, SEEN_HERE, 'Pixel 7');
 
         expect(store.getDeviceSettings(1, SERIAL)).toEqual({ video: { fit: true } });
         expect(store.getDeviceSettings(1, '10.0.0.9:5555')).toEqual({ video: { fit: false } });
@@ -142,9 +150,36 @@ describe('DeviceStore.adoptTransportSettings (legacy transport-keyed stream sett
 
     it('does nothing for the same key or an empty serial', () => {
         store.setDeviceSetting(1, TRANSPORT, 'video', { fit: true });
-        store.adoptTransportSettings(TRANSPORT, TRANSPORT);
-        store.adoptTransportSettings(TRANSPORT, '');
+        store.adoptTransportSettings(TRANSPORT, TRANSPORT, SEEN_HERE, 'Pixel 7');
+        store.adoptTransportSettings(TRANSPORT, '', SEEN_HERE, 'Pixel 7');
         expect(store.getDeviceSettings(1, TRANSPORT)).toEqual({ video: { fit: true } });
         expect(store.getDeviceSettings(1, '')).toEqual({});
+    });
+});
+
+describe('adoptTransportSettings only takes a set the transport row says is this device (M11 fix 1, m2)', () => {
+    // DHCP reuses addresses: `10.0.0.5:5555` may have been another device when
+    // its settings were filed there.
+    beforeEach(() => store.setDeviceSetting(1, TRANSPORT, 'video', { fit: true }));
+
+    it('a transport row naming another model keeps its settings where they are', () => {
+        store.adoptTransportSettings(TRANSPORT, SERIAL, { model: 'Galaxy Tab A11+' }, 'Pixel 7');
+
+        expect(store.getDeviceSettings(1, SERIAL)).toEqual({});
+        expect(store.getDeviceSettings(1, TRANSPORT)).toEqual({ video: { fit: true } });
+    });
+
+    it('a transport row with no model recorded is adopted', () => {
+        store.adoptTransportSettings(TRANSPORT, SERIAL, { model: null }, 'Pixel 7');
+
+        expect(store.getDeviceSettings(1, SERIAL)).toEqual({ video: { fit: true } });
+        expect(store.getDeviceSettings(1, TRANSPORT)).toEqual({});
+    });
+
+    it('a transport with no devices row at all keeps its settings where they are', () => {
+        store.adoptTransportSettings(TRANSPORT, SERIAL, undefined, 'Pixel 7');
+
+        expect(store.getDeviceSettings(1, SERIAL)).toEqual({});
+        expect(store.getDeviceSettings(1, TRANSPORT)).toEqual({ video: { fit: true } });
     });
 });

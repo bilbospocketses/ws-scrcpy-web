@@ -3,6 +3,51 @@ async function ok(res: Response): Promise<Response> {
     return res;
 }
 
+/**
+ * Tries a device-settings request gets while the server answers 503 (M11 fix
+ * 1): the device on the transport has not reported its serial yet, and the
+ * server will not file the device's settings under the transport meanwhile.
+ * Each wait follows `Retry-After`, capped at `DEVICE_RETRY_CAP_MS`.
+ */
+export const DEVICE_SETTINGS_ATTEMPTS = 4;
+const DEVICE_RETRY_DEFAULT_MS = 1000;
+const DEVICE_RETRY_CAP_MS = 5000;
+
+function retryAfterMs(res: Response): number {
+    const raw = res.headers?.get?.('Retry-After');
+    const seconds = raw == null ? Number.NaN : Number(raw);
+    if (!Number.isFinite(seconds) || seconds < 0) return DEVICE_RETRY_DEFAULT_MS;
+    return Math.min(seconds * 1000, DEVICE_RETRY_CAP_MS);
+}
+
+/**
+ * A device-settings request, retried while the server answers 503 and at most
+ * `DEVICE_SETTINGS_ATTEMPTS` times. Every retry is logged, and the last 503 is
+ * thrown with what it means, so a setting that could not be saved is never
+ * dropped in silence.
+ */
+async function deviceRequest(key: string, init?: RequestInit): Promise<Response> {
+    const url = `/api/settings/device?udid=${encodeURIComponent(key)}`;
+    for (let attempt = 1; ; attempt++) {
+        const res = await fetch(url, init);
+        if (res.status !== 503) return ok(res);
+        if (attempt >= DEVICE_SETTINGS_ATTEMPTS) {
+            throw new Error(
+                `device settings for ${key} are unavailable: the device has not reported its serial ` +
+                    `(HTTP 503 after ${attempt} attempts)`,
+            );
+        }
+        const wait = retryAfterMs(res);
+        console.warn('[SettingsService] device settings not ready (serial not read yet); retrying', {
+            key,
+            retry: attempt,
+            of: DEVICE_SETTINGS_ATTEMPTS - 1,
+            waitMs: wait,
+        });
+        await new Promise((r) => setTimeout(r, wait));
+    }
+}
+
 // Shape stored under device scope 'video'.
 export interface StoredVideo {
     settings?: Record<string, unknown> | undefined; // raw VideoSettings JSON
@@ -74,18 +119,16 @@ export class SettingsService {
     }
 
     private async fetchDevice(key: string): Promise<Record<string, unknown>> {
-        const res = await ok(await fetch(`/api/settings/device?udid=${encodeURIComponent(key)}`));
+        const res = await deviceRequest(key);
         return (await res.json()) as Record<string, unknown>;
     }
 
     private async sendDevicePatch(key: string, patch: Record<string, unknown>): Promise<void> {
-        await ok(
-            await fetch(`/api/settings/device?udid=${encodeURIComponent(key)}`, {
-                method: 'PATCH',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify(patch),
-            }),
-        );
+        await deviceRequest(key, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(patch),
+        });
     }
 
     async reset(): Promise<void> {

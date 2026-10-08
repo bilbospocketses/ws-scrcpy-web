@@ -8,6 +8,11 @@ export interface DeviceRecord {
     lastSeenAt: number | null;
 }
 
+/** The row a transport id held, as `mergeDeviceInto` found it before deleting it. */
+export interface MergedTransportRow {
+    model: string | null;
+}
+
 export class DeviceStore {
     constructor(private readonly db: DatabaseSync) {}
 
@@ -70,9 +75,13 @@ export class DeviceStore {
      * gaps, so an address or MAC is never nulled; the newer `last_seen_at`
      * wins. Nothing happens for an empty serial or when the keys are the same
      * (a USB transport id is the serial).
+     *
+     * Returns what the transport row held, or undefined when there was none, so
+     * the caller can tell whose legacy settings the transport carries
+     * (`adoptTransportSettings`, M11 fix 1).
      */
-    mergeDeviceInto(from: string, into: string): void {
-        if (!from || !into || from === into) return;
+    mergeDeviceInto(from: string, into: string): MergedTransportRow | undefined {
+        if (!from || !into || from === into) return undefined;
         const old = this.db
             .prepare('SELECT manufacturer, model, address, mac, last_seen_at FROM devices WHERE serial = ?')
             .get(from) as
@@ -84,7 +93,7 @@ export class DeviceStore {
                   last_seen_at: number | null;
               }
             | undefined;
-        if (!old) return;
+        if (!old) return undefined;
         // A savepoint, not BEGIN, so this also nests inside a caller's transaction.
         this.db.exec('SAVEPOINT merge_device');
         try {
@@ -109,6 +118,7 @@ export class DeviceStore {
             this.db.exec('RELEASE merge_device');
             throw e;
         }
+        return { model: old.model };
     }
 
     getMac(serial: string): string | undefined {
@@ -238,9 +248,22 @@ export class DeviceStore {
      * settings under the serial keeps them, and the transport rows stay where
      * they are, so no setting is ever lost silently. Nothing happens for an
      * empty serial or when the keys are the same.
+     *
+     * An address is reused (DHCP), so a transport's legacy settings may be
+     * another device's. They are adopted only when the transport's own devices
+     * row, `transportRow` as `mergeDeviceInto` found it, recorded the model the
+     * tracker sees now (`sightedModel`) or no model at all. A transport with no
+     * row, or a row naming another model, keeps its settings where they are
+     * (M11 fix 1, m2).
      */
-    adoptTransportSettings(transport: string, serial: string): void {
+    adoptTransportSettings(
+        transport: string,
+        serial: string,
+        transportRow: MergedTransportRow | undefined,
+        sightedModel: string | null,
+    ): void {
         if (!transport || !serial || transport === serial) return;
+        if (!transportRow || (transportRow.model !== null && transportRow.model !== sightedModel)) return;
         this.db
             .prepare(
                 `UPDATE device_settings SET udid = ?
