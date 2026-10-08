@@ -381,6 +381,9 @@ export class UpdateService {
      * immediate check is fire-and-forget via void.
      */
     public init(): void {
+        // Every path below replaces `this.state` wholesale, which drops the
+        // pending update; its manager goes with it (see pendingMgr).
+        this.pendingMgr = null;
         // v0.1.17: detect Velopack install via Update.exe (Windows) instead
         // of sq.version. sq.version is Squirrel.Windows naming (Velopack's
         // predecessor); Velopack drops Update.exe at the install root next
@@ -773,6 +776,16 @@ export class UpdateService {
         }
         this.applyInFlight = true;
         // The manager, update and channel one check produced together.
+        //
+        // `pendingMgr` rather than `mgr` is the second safeguard; today no user
+        // path reaches a `ready` state in which the two differ. `ready` is set
+        // only by the check that just paired the update with the manager it
+        // asked, or by that check's own download. A later check sets
+        // `checking` before it can rebuild `mgr`, and ends idle (pending
+        // cleared), ready (paired anew) or error (apply refused); a channel
+        // change clears the pending update; and no check runs during an apply.
+        // Only a direct downloadIfNeeded() during a check, which no route calls,
+        // could produce it.
         const mgr = this.pendingMgr;
         const pendingUpdate = this.state.pendingUpdate;
         // The feed the pending update came from; set with it by every check. The
@@ -875,7 +888,9 @@ export class UpdateService {
         if (this.platform !== 'win32') {
             const config = Config.getInstance();
             const appCfg = config.getAppConfig();
-            const version = this.state.availableVersion;
+            // The captured update's version, not the live state's: they are one
+            // release only as long as nothing has rewritten the state.
+            const version = pendingUpdate.TargetFullRelease.Version;
             if (!version) {
                 throw new Error('apply: no available version resolved');
             }
@@ -1042,7 +1057,7 @@ export class UpdateService {
             // §49: hand the operation-server the Velopack-authenticated
             // version + filename + SHA-256 so it can verify the nupkg (which
             // lives in the user-writable packages/ dir) before extracting it.
-            await this.writeApplyVerifyManifest();
+            await this.writeApplyVerifyManifest(pendingUpdate);
             await this.enterPointOfNoReturn();
             const child = spawn(helperPath, ['--operation-server'], {
                 cwd: dataRoot,
@@ -1168,10 +1183,11 @@ export class UpdateService {
      * dir — before extracting + executing it. Windows local-mode only: service
      * mode uses Velopack's own verified apply, and Linux verifies against the
      * release SHA256SUMS. Throws on write failure so the caller skips spawning
-     * an operation-server that would only fail-closed.
+     * an operation-server that would only fail-closed. `pendingUpdate` is the one
+     * applyUpdate captured, the package Velopack downloaded.
      */
-    private async writeApplyVerifyManifest(): Promise<void> {
-        const asset = this.state.pendingUpdate?.TargetFullRelease;
+    private async writeApplyVerifyManifest(pendingUpdate: UpdateInfo): Promise<void> {
+        const asset = pendingUpdate.TargetFullRelease;
         if (!asset) {
             throw new Error('apply: no pending update asset to build the verify manifest from');
         }
