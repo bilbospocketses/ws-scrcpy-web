@@ -1,6 +1,14 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as openpgp from 'openpgp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildPinnedKeysModule, droppedSelfSignatures, signatureCounts } from '../refresh-release-keys.mjs';
+import {
+    buildPinnedKeysModule,
+    droppedSelfSignatures,
+    previousArmored,
+    signatureCounts,
+} from '../refresh-release-keys.mjs';
 
 /**
  * M5: a refresh must keep every self-signature and subkey binding a pinned key
@@ -124,5 +132,64 @@ describe('refresh-release-keys keeps every self-signature', () => {
         expect(built.module).toContain(node.full);
         expect(built.module).toContain(scrcpy.full);
         expect(built.module.match(/selfSignatures: 2,\n {8}subkeyBindings: 2,/g)).toHaveLength(2);
+    });
+});
+
+describe('refresh-release-keys reads the pinned module back, or stops', () => {
+    const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-refresh-keys-'));
+    const exitThrows = () =>
+        vi.spyOn(process, 'exit').mockImplementation((code) => {
+            throw new Error(`exit ${code}`);
+        });
+
+    it('reads every pinned key from the real generated module', () => {
+        const real = path.join(
+            import.meta.dirname,
+            '..',
+            '..',
+            'src',
+            'server',
+            'release-keys',
+            'pinnedReleaseKeys.ts',
+        );
+        const listed = new Set(
+            [...fs.readFileSync(real, 'utf8').matchAll(/fingerprint: '([0-9A-F]{40})'/g)].map((m) => m[1]),
+        );
+        const exit = exitThrows();
+
+        const pinned = previousArmored(real);
+
+        expect(exit).not.toHaveBeenCalled();
+        expect(listed.size).toBeGreaterThan(0);
+        expect(pinned.size).toBe(listed.size);
+    });
+
+    it('returns nothing, without failing, when no module exists yet', () => {
+        const exit = exitThrows();
+        expect(previousArmored(path.join(tmp(), 'absent.ts')).size).toBe(0);
+        expect(exit).not.toHaveBeenCalled();
+    });
+
+    it('stops when the module lists keys it cannot read back (a changed format)', () => {
+        const file = path.join(tmp(), 'pinned.ts');
+        // Fingerprints present, but the armored text is no longer in a template literal.
+        fs.writeFileSync(
+            file,
+            `export const NODE_RELEASE_KEYS = [\n    { fingerprint: '${'A'.repeat(40)}', armored: "x" },\n];\n`,
+        );
+        const exit = exitThrows();
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        expect(() => previousArmored(file)).toThrow('exit 1');
+        expect(exit).toHaveBeenCalledWith(1);
+    });
+
+    it('stops when the module has no keys it can find at all', () => {
+        const file = path.join(tmp(), 'pinned.ts');
+        fs.writeFileSync(file, 'export const NODE_RELEASE_KEYS = [];\n');
+        exitThrows();
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        expect(() => previousArmored(file)).toThrow('exit 1');
     });
 });

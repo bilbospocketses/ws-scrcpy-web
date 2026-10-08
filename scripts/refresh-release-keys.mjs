@@ -225,12 +225,25 @@ async function scrcpyKeys(options) {
     ];
 }
 
-/** The armored keys the module at `out` pins now, by fingerprint. */
-function previousArmored(out) {
+/**
+ * The armored keys the module at `out` pins now, by fingerprint. Fails closed:
+ * this feeds the "no self-signature dropped" check, so a module whose keys
+ * cannot all be read back (its format changed) must stop the refresh rather
+ * than yield an empty map that skips that check without a word.
+ */
+export function previousArmored(out) {
     const pinned = new Map();
     if (!fs.existsSync(out)) return pinned;
     const src = fs.readFileSync(out, 'utf8');
     for (const m of src.matchAll(/fingerprint: '([0-9A-F]{40})',[^`]*?armored: `([^`]*)`/g)) pinned.set(m[1], m[2]);
+    const listed = new Set([...src.matchAll(/fingerprint: '([0-9A-F]{40})'/g)].map((m) => m[1]));
+    if (listed.size === 0 || pinned.size !== listed.size) {
+        fail(
+            `could read ${pinned.size} armored key(s) from ${out} but it lists ${listed.size} fingerprint(s); ` +
+                'its format no longer matches this script, so the dropped-self-signature check cannot run. ' +
+                'Fix previousArmored before refreshing.',
+        );
+    }
     return pinned;
 }
 
