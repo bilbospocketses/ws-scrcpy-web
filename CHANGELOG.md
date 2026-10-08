@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The beta update channel now also offers stable releases.** A beta install only ever looked for betas, so once the first stable release ships it would not have been offered it. Each update check on the beta channel now looks at the newest beta and the newest stable release and offers whichever is the higher version; a stable `X.Y.Z` counts as newer than its own `X.Y.Z-beta.N` builds. The install stays on the beta channel after installing the stable release, so the next beta after that is offered as usual: a beta install whose channel was never changed in Settings was on beta only because its version was a beta, and the stable version would have started on stable, so the app now records the beta channel before it applies the update. The stable channel is unchanged and is never offered a beta. On Linux, the update downloads the AppImage of the release it was offered (`WsScrcpyWeb-linux-stable.AppImage` for a stable one).
+
 ## [0.1.30-beta.199] - 2026-10-08
 
 ### Fixed

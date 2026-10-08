@@ -24,6 +24,7 @@ describe('GithubReleaseFeedResolver', () => {
         expect(got).toEqual({
             tag: 'v0.1.30',
             url: 'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download/v0.1.30/',
+            channel: 'stable',
         });
         expect(api.calls[0]!.url).toBe(
             'https://api.github.com/repos/bilbospocketses/ws-scrcpy-web/releases?per_page=100&page=1',
@@ -173,12 +174,27 @@ describe('GithubReleaseFeedResolver', () => {
         },
     );
 
-    it('a refusal with only another channel cached still throws', async () => {
+    it('a refusal answers any channel from the owner listing already read', async () => {
+        // The cache is the listing, not one channel's answer: every feed each
+        // release carries was recorded, so a channel never asked for before is
+        // answered from it as well as the one that was.
         const api = fakeGithubApi([...betas(3, 10), release('v0.1.30', ['stable'])]);
         const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
         await r.resolve('bilbospocketses', 'stable');
         api.refuse(403);
-        const err = await r.resolve('bilbospocketses', 'beta').catch((e: unknown) => e);
+        expect((await r.resolve('bilbospocketses', 'beta'))?.tag).toBe('v0.1.30-beta.10');
+        expect(await r.resolve('bilbospocketses', ['beta', 'stable'])).toMatchObject({
+            tag: 'v0.1.30',
+            channel: 'stable',
+        });
+    });
+
+    it('a refusal with only another owner cached still throws', async () => {
+        const api = fakeGithubApi([...betas(3, 10), release('v0.1.30', ['stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        await r.resolve('bilbospocketses', 'stable');
+        api.refuse(403);
+        const err = await r.resolve('forky', 'stable').catch((e: unknown) => e);
         expect((err as HttpStatusError).status).toBe(403);
     });
 
@@ -209,15 +225,81 @@ describe('GithubReleaseFeedResolver', () => {
         expect((await r.resolve('bilbospocketses', 'stable'))?.tag).toBe('v0.1.31');
     });
 
-    it('a different channel or owner is a different cache entry', async () => {
+    it('a different channel reuses the owner listing (304); a different owner is a different cache entry', async () => {
         const api = fakeGithubApi([...betas(3, 10), release('v0.1.30', ['stable'])]);
         const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
         await r.resolve('bilbospocketses', 'stable');
         expect((await r.resolve('bilbospocketses', 'beta'))?.tag).toBe('v0.1.30-beta.10');
-        expect(api.calls[1]!.ifNoneMatch).toBeNull();
+        expect(api.calls[1]!.ifNoneMatch).toMatch(/^"p1-/);
         await r.resolve('forky', 'beta');
         expect(api.calls[2]!.ifNoneMatch).toBeNull();
         expect(api.calls[2]!.url).toContain('/repos/forky/ws-scrcpy-web/releases');
+    });
+
+    // ── Several feeds at once: the beta channel is a superset of stable ──
+    //
+    // A beta-channel check asks for ['beta', 'stable'] (or the linux- pair) and
+    // gets the higher version of the two, with the feed it came from.
+
+    it('several channels: the higher version wins, whichever feed carries it', async () => {
+        const api = fakeGithubApi([...betas(15, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        // A plain 0.1.30 outranks 0.1.30-beta.30.
+        expect(await r.resolve('bilbospocketses', ['beta', 'stable'])).toEqual({
+            tag: 'v0.1.30',
+            url: 'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download/v0.1.30/',
+            channel: 'stable',
+        });
+        expect(await r.resolve('bilbospocketses', ['linux-beta', 'linux-stable'])).toMatchObject({
+            tag: 'v0.1.30',
+            channel: 'linux-stable',
+        });
+        api.set([release('v0.1.31-beta.1', ['beta', 'linux-beta']), ...betas(15, 30), release('v0.1.30', ['stable'])]);
+        expect(await r.resolve('bilbospocketses', ['beta', 'stable'])).toMatchObject({
+            tag: 'v0.1.31-beta.1',
+            channel: 'beta',
+        });
+    });
+
+    it('several channels: one with no release at all leaves the other answering alone', async () => {
+        const api = fakeGithubApi(betas(14, 166));
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect(await r.resolve('bilbospocketses', ['beta', 'stable'])).toMatchObject({
+            tag: 'v0.1.30-beta.166',
+            channel: 'beta',
+        });
+        expect(await r.resolve('bilbospocketses', ['stable'])).toBeNull();
+    });
+
+    it('several channels: on equal versions the channel listed first wins', async () => {
+        const api = fakeGithubApi([release('v0.1.30', ['beta', 'stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect((await r.resolve('bilbospocketses', ['beta', 'stable']))?.channel).toBe('beta');
+        expect((await r.resolve('bilbospocketses', ['stable', 'beta']))?.channel).toBe('stable');
+    });
+
+    it('several channels: answered from ONE walk of the listing, re-checked with one 304 per page', async () => {
+        const api = fakeGithubApi([...betas(RELEASES_PER_PAGE, 200), release('v0.1.31', ['stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect((await r.resolve('bilbospocketses', ['beta', 'stable']))?.tag).toBe('v0.1.31');
+        expect(api.calls).toHaveLength(2);
+        expect((await r.resolve('bilbospocketses', ['beta', 'stable']))?.tag).toBe('v0.1.31');
+        expect(api.calls).toHaveLength(4);
+        expect(api.calls[2]!.ifNoneMatch).toMatch(/^"p1-/);
+        expect(api.calls[3]!.ifNoneMatch).toMatch(/^"p2-/);
+    });
+
+    it('several channels: a prerelease-flagged stable is skipped, so the beta answers', async () => {
+        const api = fakeGithubApi([
+            { ...release('v0.1.31', ['stable']), prerelease: true },
+            release('v0.1.31-beta.4', ['beta']),
+            release('v0.1.30', ['stable']),
+        ]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect(await r.resolve('bilbospocketses', ['beta', 'stable'])).toMatchObject({
+            tag: 'v0.1.31-beta.4',
+            channel: 'beta',
+        });
     });
 
     it('forget() drops the cache, so the next lookup walks the listing again', async () => {
