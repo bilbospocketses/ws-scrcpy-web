@@ -83,9 +83,23 @@ export function applyPendingLabels(db: Db, address: string, serial: string, now:
     }
 }
 
-/** The device serial already read on the transport at `address`, if it is still up. */
+/**
+ * The device serial already read on the transport at `address`, if it is still
+ * up. Also how `SettingsApi` keys a transport's stream settings by serial (M11).
+ */
 export function serialReadOn(address: string): string | undefined {
     return serials.get(transportKey(address));
+}
+
+/**
+ * The transport at `address` stopped answering as a device (offline,
+ * unauthorized, gone): whoever answers there next may be another device, so
+ * the serial read on it no longer holds (M11 fix 1, m5). A name still waiting
+ * on it is kept, since a device that was unauthorized at connect is the case it
+ * waits for.
+ */
+export function forgetSerialReadOn(address: string): void {
+    serials.delete(transportKey(address));
 }
 
 /** The transport at `address` went away: whatever answers there next is not the device that was named. */

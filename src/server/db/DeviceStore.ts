@@ -8,6 +8,11 @@ export interface DeviceRecord {
     lastSeenAt: number | null;
 }
 
+/** The row a transport id held, as `mergeDeviceInto` found it before deleting it. */
+export interface MergedTransportRow {
+    model: string | null;
+}
+
 export class DeviceStore {
     constructor(private readonly db: DatabaseSync) {}
 
@@ -57,6 +62,63 @@ export class DeviceStore {
                 'INSERT INTO devices (serial, mac) VALUES (?, ?) ON CONFLICT(serial) DO UPDATE SET mac = excluded.mac',
             )
             .run(serial, mac);
+    }
+
+    /**
+     * Fold the row filed under `from`, an adb transport id, into the row for the
+     * device's real serial `into`, and delete it (M11). Before M11 the device
+     * tracker filed what it saw under the transport (`<ip>:5555` for Wi-Fi)
+     * while connect filed the address and MAC under the serial, so one device
+     * had two half rows and a rescan, which joins by address, found no model.
+     *
+     * The serial row's values win where set, the transport row only fills
+     * gaps, so an address or MAC is never nulled; the newer `last_seen_at`
+     * wins. Nothing happens for an empty serial or when the keys are the same
+     * (a USB transport id is the serial).
+     *
+     * Returns what the transport row held, or undefined when there was none, so
+     * the caller can tell whose legacy settings the transport carries
+     * (`adoptTransportSettings`, M11 fix 1).
+     */
+    mergeDeviceInto(from: string, into: string): MergedTransportRow | undefined {
+        if (!from || !into || from === into) return undefined;
+        const old = this.db
+            .prepare('SELECT manufacturer, model, address, mac, last_seen_at FROM devices WHERE serial = ?')
+            .get(from) as
+            | {
+                  manufacturer: string | null;
+                  model: string | null;
+                  address: string | null;
+                  mac: string | null;
+                  last_seen_at: number | null;
+              }
+            | undefined;
+        if (!old) return undefined;
+        // A savepoint, not BEGIN, so this also nests inside a caller's transaction.
+        this.db.exec('SAVEPOINT merge_device');
+        try {
+            this.db
+                .prepare(
+                    `INSERT INTO devices (serial, manufacturer, model, address, mac, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(serial) DO UPDATE SET
+                       manufacturer = COALESCE(devices.manufacturer, excluded.manufacturer),
+                       model        = COALESCE(devices.model,        excluded.model),
+                       address      = COALESCE(devices.address,      excluded.address),
+                       mac          = COALESCE(devices.mac,          excluded.mac),
+                       last_seen_at = CASE
+                         WHEN devices.last_seen_at IS NULL THEN excluded.last_seen_at
+                         WHEN excluded.last_seen_at IS NULL THEN devices.last_seen_at
+                         ELSE MAX(devices.last_seen_at, excluded.last_seen_at) END`,
+                )
+                .run(into, old.manufacturer, old.model, old.address, old.mac, old.last_seen_at);
+            this.db.prepare('DELETE FROM devices WHERE serial = ?').run(from);
+            this.db.exec('RELEASE merge_device');
+        } catch (e) {
+            this.db.exec('ROLLBACK TO merge_device');
+            this.db.exec('RELEASE merge_device');
+            throw e;
+        }
+        return { model: old.model };
     }
 
     getMac(serial: string): string | undefined {
@@ -174,6 +236,41 @@ export class DeviceStore {
     }
 
     // --- Per-device settings (Phase 3): device_settings keyed (user, udid, scope) ---
+    // Since M11 the `udid` column holds the device's real serial (`ro.serialno`),
+    // so one device keeps one set across USB, Wi-Fi and IP changes. Rows written
+    // before M11 under an adb transport id are adopted by `adoptTransportSettings`.
+
+    /**
+     * Adopt stream settings filed under the adb transport `transport` (before
+     * M11) for the device whose serial is `serial`, now that it is seen there.
+     * Per user: a user with no settings under the serial yet takes the
+     * transport's whole set, which moves to the serial. A user who already has
+     * settings under the serial keeps them, and the transport rows stay where
+     * they are, so no setting is ever lost silently. Nothing happens for an
+     * empty serial or when the keys are the same.
+     *
+     * An address is reused (DHCP), so a transport's legacy settings may be
+     * another device's. They are adopted only when the transport's own devices
+     * row, `transportRow` as `mergeDeviceInto` found it, recorded the model the
+     * tracker sees now (`sightedModel`) or no model at all. A transport with no
+     * row, or a row naming another model, keeps its settings where they are
+     * (M11 fix 1, m2).
+     */
+    adoptTransportSettings(
+        transport: string,
+        serial: string,
+        transportRow: MergedTransportRow | undefined,
+        sightedModel: string | null,
+    ): void {
+        if (!transport || !serial || transport === serial) return;
+        if (!transportRow || (transportRow.model !== null && transportRow.model !== sightedModel)) return;
+        this.db
+            .prepare(
+                `UPDATE device_settings SET udid = ?
+                 WHERE udid = ? AND user_id NOT IN (SELECT user_id FROM device_settings WHERE udid = ?)`,
+            )
+            .run(serial, transport, serial);
+    }
 
     getDeviceSetting(userId: number, udid: string, scope: string): unknown {
         const r = this.db
