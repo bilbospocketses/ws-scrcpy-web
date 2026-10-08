@@ -1428,6 +1428,51 @@ describe('UpdateService', () => {
         expect(s).toMatchObject({ status: 'idle', availableVersion: undefined, pendingUpdate: undefined });
     });
 
+    it('a check asked for while an update is being applied changes nothing, and checks resume once the apply fails', async () => {
+        // The Linux apply downloads the AppImage before its point of no return;
+        // the interval timer can fire in the middle of that.
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'stable',
+            githubOwner: 'bilbospocketses',
+        });
+        const { resolver, resolve } = heldResolver(() => releaseOf('0.2.0', 'linux-stable'));
+        const checkFn = vi.fn(async () => fakeUpdateInfo('0.2.0'));
+        const assetDownload = deferred<Response>();
+        const fetchFn = vi.fn(() => assetDownload.promise) as unknown as typeof fetch;
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: checkFn }),
+            releaseFeedResolver: resolver,
+            fetchFn,
+            ...quietTimers,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-stable.AppImage';
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus()).toMatchObject({ status: 'ready', availableVersion: '0.2.0' });
+        resolve.mockClear();
+        checkFn.mockClear();
+
+        const applying = svc.applyUpdate();
+        await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+        await svc.checkForUpdates();
+        expect(resolve).not.toHaveBeenCalled();
+        expect(checkFn).not.toHaveBeenCalled();
+        const during = svc.getStatus();
+        expect(during).toMatchObject({ status: 'ready', availableVersion: '0.2.0', pendingChannel: 'stable' });
+        expect(during.pendingUpdate?.TargetFullRelease.Version).toBe('0.2.0');
+
+        assetDownload.reject(new Error('network down'));
+        await expect(applying).rejects.toThrow(/network down/);
+        await svc.checkForUpdates();
+        expect(resolve).toHaveBeenCalledTimes(1);
+        expect(checkFn).toHaveBeenCalledTimes(1);
+    });
+
     // ── VelopackLocator strategy (platform-split) ──────────────────────────
     //
     // BOTH platforms hand Velopack an explicit locator. `platform` is injected

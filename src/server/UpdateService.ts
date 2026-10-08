@@ -184,7 +184,7 @@ export class UpdateService {
     /**
      * True while an applyUpdate is running. A second apply is refused: two at
      * once would race the swap and reset each other's streamsStoppedForApply.
-     * Cleared when an apply fails (it may be retried); a successful apply ends
+     * Update checks are skipped while it is set (runCheck). Cleared when an apply fails (it may be retried); a successful apply ends
      * in process exit, so it stays set.
      */
     private applyInFlight = false;
@@ -500,6 +500,15 @@ export class UpdateService {
      * Velopack step has a deadline ({@link VELOPACK_CHECK_TIMEOUT_MS}).
      */
     private runCheck(buildFailurePrefix: string): Promise<UpdateServiceState> {
+        if (this.applyInFlight) {
+            // The apply works from the update, manager and channel it captured,
+            // and a check now could set 'checking' over 'ready', replace or clear
+            // the pending update, or start a Velopack download into the packages
+            // folder the Windows hand-off is about to read. A failed apply clears
+            // applyInFlight, so checks resume; a successful one ends in exit.
+            log.info('update check skipped: an update is being applied');
+            return Promise.resolve(this.state);
+        }
         const generation = this.generation;
         if (this.check && this.check.generation === generation) {
             return this.check.done;
