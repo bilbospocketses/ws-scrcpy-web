@@ -147,6 +147,18 @@ export class UpdateService {
     private generation = 0;
     /** The Velopack download in flight, if any, and the generation it was started for. */
     private download: { generation: number; done: Promise<void> } | null = null;
+    /**
+     * The update check in flight, if any, and the generation it was started
+     * for. A second check in the same generation joins it (see runCheck).
+     */
+    private check: { generation: number; done: Promise<UpdateServiceState> } | null = null;
+    /**
+     * The manager whose check produced `state.pendingUpdate`. Set and cleared
+     * with it (setPending / clearPending), never apart: a download or apply
+     * asks the release folder this manager reads for the package `pendingUpdate`
+     * names, and `mgr` may already have been rebuilt for a newer release.
+     */
+    private pendingMgr: UpdateManagerLike | null = null;
     private readonly resolver: ReleaseFeedResolver;
     private state: UpdateServiceState;
     private timer: NodeJS.Timeout | null = null;
@@ -440,8 +452,7 @@ export class UpdateService {
         this.generation++;
         this.channel = channel;
         this.githubOwner = githubOwner;
-        this.state.pendingUpdate = undefined;
-        this.state.pendingChannel = undefined;
+        this.clearPending();
         this.state.availableVersion = undefined;
         this.state.errorMessage = undefined;
         this.state.status = 'idle';
@@ -454,17 +465,46 @@ export class UpdateService {
     }
 
     /**
+     * One update check at a time per generation. A check asked for while one is
+     * already running for the current generation (the startup check, the
+     * interval timer, a manual check from the API) joins it, as a second
+     * download joins the first (downloadIfNeeded).
+     *
+     * Two checks used to run side by side, each resolving the newest release
+     * and swapping `mgr` for it across awaits. When the two resolved different
+     * releases (one published between them, or the beta channel's winning feed
+     * moving), the later-landing answer paired its UpdateInfo with the other
+     * check's manager, and the Windows download 404'd: Velopack's HttpSource
+     * joins the package name onto the manager's release folder.
+     *
+     * A check for an OLDER generation is not joined: reconfigure() bumps the
+     * generation and must get a check of the new channel, and the old check
+     * discards its own answer when it lands.
+     */
+    private runCheck(buildFailurePrefix: string): Promise<UpdateServiceState> {
+        const generation = this.generation;
+        if (this.check && this.check.generation === generation) {
+            return this.check.done;
+        }
+        const done: Promise<UpdateServiceState> = this.performCheck(buildFailurePrefix, generation).finally(() => {
+            if (this.check?.done === done) this.check = null;
+        });
+        this.check = { generation, done };
+        return done;
+    }
+
+    /**
      * One update check: find the feed, (re)build the manager if the feed or
      * channel changed, ask Velopack. `buildFailurePrefix` labels a failed
-     * manager build, so a reconfigure that cannot build says so.
+     * manager build, so a reconfigure that cannot build says so. Never rejects.
+     * Only {@link runCheck} calls it.
      */
-    private async runCheck(buildFailurePrefix: string): Promise<UpdateServiceState> {
+    private async performCheck(buildFailurePrefix: string, generation: number): Promise<UpdateServiceState> {
         if (!this.mgr) {
             this.state.status = 'idle';
             return this.state;
         }
 
-        const generation = this.generation;
         const channel = this.channel;
         this.state.status = 'checking';
         this.state.errorMessage = undefined;
@@ -501,8 +541,7 @@ export class UpdateService {
                 this.state.lastCheckedAt = new Date();
                 this.state.status = 'idle';
                 this.state.availableVersion = undefined;
-                this.state.pendingUpdate = undefined;
-                this.state.pendingChannel = undefined;
+                this.clearPending();
                 return this.state;
             }
 
@@ -530,20 +569,20 @@ export class UpdateService {
                 }
             }
 
-            const info = await this.mgr.checkForUpdatesAsync();
+            // The manager this check asks is the one its answer is kept with.
+            const mgr = this.mgr;
+            const info = await mgr.checkForUpdatesAsync();
             if (generation !== this.generation) return this.state;
             this.state.lastCheckedAt = new Date();
             if (info === null) {
                 this.state.status = 'idle';
                 this.state.availableVersion = undefined;
-                this.state.pendingUpdate = undefined;
-                this.state.pendingChannel = undefined;
+                this.clearPending();
                 return this.state;
             }
 
             this.state.availableVersion = info.TargetFullRelease.Version;
-            this.state.pendingUpdate = info;
-            this.state.pendingChannel = feedChannel;
+            this.setPending(info, feedChannel, mgr);
 
             const cfg = Config.getInstance().getAppConfig();
             // On Linux our apply downloads the published AppImage directly, so the
@@ -587,7 +626,7 @@ export class UpdateService {
      */
     public async downloadIfNeeded(): Promise<void> {
         const generation = this.generation;
-        if (!this.mgr || !this.state.pendingUpdate) return;
+        if (!this.pendingMgr || !this.state.pendingUpdate) return;
 
         while (this.download && this.download.generation !== generation) {
             // A waiter whose own channel was itself superseded must not touch the
@@ -598,7 +637,7 @@ export class UpdateService {
             log.info('waiting for the previous channel download to finish before starting this one');
             await this.download.done;
         }
-        if (generation !== this.generation || !this.mgr || !this.state.pendingUpdate) return;
+        if (generation !== this.generation || !this.pendingMgr || !this.state.pendingUpdate) return;
         if (this.download) {
             this.state.status = 'downloading';
             await this.download.done;
@@ -607,11 +646,27 @@ export class UpdateService {
 
         this.state.status = 'downloading';
         this.state.progress = 0;
-        const done: Promise<void> = this.runDownload(this.mgr, this.state.pendingUpdate, generation).finally(() => {
+        // The manager that produced the pending update, not `mgr`: a check may
+        // have rebuilt `mgr` for another release since.
+        const mgr = this.pendingMgr;
+        const done: Promise<void> = this.runDownload(mgr, this.state.pendingUpdate, generation).finally(() => {
             if (this.download?.done === done) this.download = null;
         });
         this.download = { generation, done };
         await done;
+    }
+
+    /** Keep a check's answer with the manager and feed channel that produced it. */
+    private setPending(info: UpdateInfo, channel: UpdateChannel, mgr: UpdateManagerLike): void {
+        this.state.pendingUpdate = info;
+        this.state.pendingChannel = channel;
+        this.pendingMgr = mgr;
+    }
+
+    private clearPending(): void {
+        this.state.pendingUpdate = undefined;
+        this.state.pendingChannel = undefined;
+        this.pendingMgr = null;
     }
 
     /** One Velopack download; never rejects. See {@link downloadIfNeeded}. */
@@ -661,7 +716,7 @@ export class UpdateService {
      * checksum) leaves adb, the open streams and the markers as they were.
      */
     public async applyUpdate(): Promise<{ redirectPort: number | null }> {
-        if (!this.mgr || !this.state.pendingUpdate || this.state.status !== 'ready') {
+        if (!this.pendingMgr || !this.state.pendingUpdate || this.state.status !== 'ready') {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
@@ -669,7 +724,8 @@ export class UpdateService {
             throw new Error('apply already in progress');
         }
         this.applyInFlight = true;
-        const mgr = this.mgr;
+        // The manager, update and channel one check produced together.
+        const mgr = this.pendingMgr;
         const pendingUpdate = this.state.pendingUpdate;
         // The feed the pending update came from; set with it by every check. The
         // configured channel only covers a state no check produced.
