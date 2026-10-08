@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A scrcpy-server update now reaches a device even when the new server file is the same size as the old one.** Before starting a stream the app sends the server to the device only when the copy already there differs, and it judged that by size alone. It now compares checksums, and falls back to the size on a device that cannot compute one.
 - **The app no longer installs an out-of-date bundled scrcpy-server as the current version.** The server copied in on first run was assumed to be the version the app ships, but a run from source that skips the staging step can leave an older one in place. The app now checks the bundled server's checksum before copying it, records the version it really is (so Settings → Dependencies offers the update), and refuses one it does not recognise.
 - **A scrcpy-server whose version could not be recorded, or an update interrupted partway, no longer starts with the wrong version number.** Either could leave the app starting the server with a version it is not, which the server refuses, so no device would stream. When no version is recorded the app now works it out from the server's checksum, and an update removes the old record before it replaces the file.
+
 ## [0.1.30-beta.201] - 2026-10-08
 
 ### Fixed
