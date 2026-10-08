@@ -11,7 +11,8 @@ import { classifyFailedApply, LostApplyWatch } from './updateApplyOutcome';
  *   - downloading: blue button "downloading update… {progress}%" (no-op click)
  *   - ready: green button "apply update v{availableVersion}" (POST /apply),
  *     with the reason beside it when the last install of it failed
- *   - error: red caption + retry button (POST /check)
+ *   - error: red caption + retry button (POST /check); the caption is the
+ *     failed install's reason when there is one
  *
  * While the chip's own install runs it shows the download's progress, else
  * "installing update…", never a clickable "apply update"; once the server
@@ -151,20 +152,32 @@ export function createUpdateButton(): HTMLElement {
         container.appendChild(btn);
     }
 
-    function renderError(message: string | undefined): void {
+    /**
+     * A failed check, with a retry that checks again. `applyError` is a failed
+     * install of the update on offer (the check after it failed too): its reason
+     * is the one shown, as Settings → Updates does. The retry still checks, since
+     * the server only installs from `ready`; a check that succeeds brings back the
+     * apply button with the same reason beside it.
+     */
+    function renderError(message: string | undefined, applyError?: string): void {
         container.replaceChildren();
         setState('state-error');
         container.style.display = 'flex';
-        container.title = message ? `update check failed: ${message}` : 'update check failed';
+        if (applyError !== undefined) {
+            container.title = `install failed: ${applyError} — retry checks for the update again`;
+        } else {
+            container.title = message ? `update check failed: ${message}` : 'update check failed';
+        }
 
         const caption = document.createElement('span');
         caption.className = 'update-button-label';
-        caption.textContent = 'update check failed';
+        caption.textContent = applyError !== undefined ? `install failed: ${applyError}` : 'update check failed';
         container.appendChild(caption);
 
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
         retryBtn.className = 'update-button-retry';
+        retryBtn.title = 'check for updates again';
         retryBtn.textContent = 'retry';
         retryBtn.addEventListener('click', () => {
             void onRetryClick(retryBtn);
@@ -227,7 +240,7 @@ export function createUpdateButton(): HTMLElement {
                 if (currentPollMs !== SLOW_POLL_MS) scheduleTimer(SLOW_POLL_MS);
                 break;
             case 'error':
-                renderError(s.errorMessage);
+                renderError(s.errorMessage, s.lastApplyError);
                 if (currentPollMs !== SLOW_POLL_MS) scheduleTimer(SLOW_POLL_MS);
                 break;
             default:

@@ -127,6 +127,74 @@ describe('UpdateButton: a failed install the server recorded', () => {
     });
 });
 
+describe('UpdateButton: a failed install, then a failed check', () => {
+    const checkFailed: UpdatesStatusResponse = {
+        ...ready,
+        status: 'error',
+        errorMessage: 'release lookup failed: 502',
+    };
+
+    function stubStatusAndCheck(status: UpdatesStatusResponse, check: UpdatesStatusResponse): ReturnType<typeof vi.fn> {
+        const f = vi.fn((url: string) =>
+            Promise.resolve({
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve(url === '/api/updates/check' ? check : status),
+            }),
+        );
+        vi.stubGlobal('fetch', f);
+        return f;
+    }
+
+    it("shows the install's reason, with a retry that checks again rather than installs", async () => {
+        const failed = { ...checkFailed, lastApplyError: 'update download failed: 503' };
+        const f = stubStatusAndCheck(failed, failed);
+        const chip = createUpdateButton();
+        await flush();
+
+        expect(chip.classList.contains('state-error')).toBe(true);
+        expect(chip.querySelector('.update-button-label')?.textContent).toBe(
+            'install failed: update download failed: 503',
+        );
+        expect(chip.title).toBe('install failed: update download failed: 503 — retry checks for the update again');
+        expect(chip.querySelector('button.update-button-action')).toBeNull();
+        const retry = chip.querySelector<HTMLButtonElement>('button.update-button-retry');
+        expect(retry?.textContent).toBe('retry');
+
+        retry!.click();
+        await flush();
+        const urls = f.mock.calls.map((c) => c[0]);
+        expect(urls).toContain('/api/updates/check');
+        expect(urls).not.toContain('/api/updates/apply');
+    });
+
+    it('a failed check with no failed install still says the check failed', async () => {
+        stubStatusAndCheck(checkFailed, checkFailed);
+        const chip = createUpdateButton();
+        await flush();
+
+        expect(chip.querySelector('.update-button-label')?.textContent).toBe('update check failed');
+        expect(chip.title).toBe('update check failed: release lookup failed: 502');
+        expect(chip.querySelector('button.update-button-retry')?.textContent).toBe('retry');
+    });
+
+    it('a re-check that succeeds brings back the apply button with the reason beside it', async () => {
+        const failed = { ...checkFailed, lastApplyError: 'update download failed: 503' };
+        stubStatusAndCheck(failed, { ...ready, lastApplyError: 'update download failed: 503' });
+        const chip = createUpdateButton();
+        await flush();
+
+        chip.querySelector<HTMLButtonElement>('button.update-button-retry')!.click();
+        await flush();
+        await flush();
+
+        expect(chip.querySelector('.update-button-label')?.textContent).toBe(
+            'install failed: update download failed: 503 — click to retry',
+        );
+        expect(chip.querySelector('button.update-button-action')?.textContent).toBe('apply update v0.2.0');
+    });
+});
+
 /**
  * A scripted server: `status` answers the reads (or they fail once `down`),
  * and the apply request is held until the test answers or drops it.
