@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.205] - 2026-10-08
+
 ### Fixed
 - **On Windows, installing an update works with "automatically download updates" turned off.** With that setting off, an update check only reports a new version, and clicking install never downloaded it: running as a service, the install closed every open stream, stopped adb and then failed with an error; running as a normal app, the app shut down and did not come back. The install now downloads the update first, with its progress shown on the update button and in Settings → Updates, and only then closes the streams and hands over to the installer. If the download fails, nothing is stopped, the update stays ready to install again, and both places say why the install failed (still shown after a page reload, until the next install or a newer version is offered); the updater then looks the release up again, so the retry does not repeat the download that just failed. A download that makes no progress for two minutes is given up on with "update download stalled (no progress for 120 s)", where before it held the updater until the app was restarted: every later check was skipped and every install refused. When a proxy in front of the app, or the browser, gives up on the long install request, the page keeps following the install instead of reporting a failure, and once the app stops answering it shows "restarting…" and reloads, as after an install request that was answered. With automatic download on, nothing changes, because the update is already downloaded (`src/server/UpdateService.ts`, `src/app/client/UpdateButton.ts`, `src/app/client/settings/tabs/UpdatesTab.ts`).
 
