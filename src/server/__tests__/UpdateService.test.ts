@@ -29,13 +29,47 @@ vi.mock('../appVersion', async (importOriginal) => {
     return { getAppVersion: vi.fn(real.getAppVersion) };
 });
 
+/**
+ * The install's Velopack packages folder, one per install and so shared by every
+ * manager a test builds: the file names fakeMgr's downloadUpdateAsync has put
+ * there. Neither Windows hand-off downloads anything, so both read it strictly:
+ * fakeMgr's waitExitThenApplyUpdate throws as Velopack does on a package that
+ * is not there (velopack 1.2.161 `manager.rs:629-634`), and an operation-server
+ * spawned with its package missing is recorded in `operationServerMissing` --
+ * the real one fails with "nupkg named by manifest not found" after the app
+ * has gone down -- and fails the test in afterEach. Before 2026-10-08 both
+ * fakes were no-ops, and every Windows apply test with autoUpdate off passed
+ * an apply that could not work.
+ */
+const velopackPackages = vi.hoisted(() => ({
+    onDisk: new Set<string>(),
+    operationServerMissing: [] as string[],
+}));
+
 // Mock child_process.spawn so local-mode applyUpdate doesn't try to exec
 // the real operation-server helper binary (which doesn't exist in test).
 vi.mock('child_process', async (importOriginal) => {
     const real = await importOriginal<typeof child_process>();
+    const realFs = await vi.importActual<typeof import('fs')>('fs');
+    const realPath = await vi.importActual<typeof import('path')>('path');
+    /**
+     * The operation-server reads the package the verify manifest names from the
+     * packages folder. A test that stubs fs.promises.writeFile leaves no manifest
+     * on disk; the folder must then hold some package at least.
+     */
+    function operationServerFindsPackage(cwd: string | undefined): void {
+        const manifest = realPath.join(cwd ?? '', 'control', 'apply-update-verify.json');
+        if (cwd && realFs.existsSync(manifest)) {
+            const { fileName } = JSON.parse(realFs.readFileSync(manifest, 'utf8')) as { fileName: string };
+            if (!velopackPackages.onDisk.has(fileName)) velopackPackages.operationServerMissing.push(fileName);
+        } else if (velopackPackages.onDisk.size === 0) {
+            velopackPackages.operationServerMissing.push('(no manifest; the packages folder is empty)');
+        }
+    }
     return {
         ...real,
-        spawn: vi.fn(() => {
+        spawn: vi.fn((_cmd: string, args?: readonly string[], opts?: { cwd?: string }) => {
+            if (args?.includes('--operation-server')) operationServerFindsPackage(opts?.cwd);
             // Minimal ChildProcess stand-in: `unref` (detached non-systemd path)
             // + `once` (the systemd-run path awaits 'exit' = unit registration;
             // fire it on the next microtask so the await resolves in tests).
@@ -96,13 +130,33 @@ async function settled(svc: UpdateService): Promise<void> {
     await vi.waitFor(() => expect(['checking', 'downloading']).not.toContain(svc.getStatus().status));
 }
 
+/**
+ * A Velopack manager. Overrides of downloadUpdateAsync and
+ * waitExitThenApplyUpdate are wrapped, not replaced: a download that resolves
+ * puts its package in the packages folder (velopackPackages), and an apply
+ * throws Velopack's FileNotFound unless the package is there.
+ */
 function fakeMgr(overrides: Partial<UpdateManagerLike> = {}): UpdateManagerLike {
+    const {
+        downloadUpdateAsync = async () => undefined,
+        waitExitThenApplyUpdate = () => undefined,
+        ...rest
+    } = overrides;
     return {
         getCurrentVersion: () => '0.1.0',
         checkForUpdatesAsync: async () => null,
-        downloadUpdateAsync: async () => undefined,
-        waitExitThenApplyUpdate: () => undefined,
-        ...overrides,
+        ...rest,
+        downloadUpdateAsync: async (update, progress) => {
+            await downloadUpdateAsync(update, progress);
+            velopackPackages.onDisk.add(update.TargetFullRelease.FileName);
+        },
+        waitExitThenApplyUpdate: (update, silent, restart, restartArgs) => {
+            const name = update.TargetFullRelease.FileName;
+            if (!velopackPackages.onDisk.has(name)) {
+                throw new Error(`File does not exist: packages/${name}`);
+            }
+            return waitExitThenApplyUpdate(update, silent, restart, restartArgs);
+        },
     };
 }
 
@@ -163,6 +217,8 @@ describe('UpdateService', () => {
     beforeEach(() => {
         api = fakeGithubApi([release('v9.9.9', ['beta', 'stable', 'linux-beta', 'linux-stable'])]);
         vi.stubGlobal('fetch', api.fetchFn);
+        velopackPackages.onDisk.clear();
+        velopackPackages.operationServerMissing.length = 0;
         const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-update-svc-'));
         tmpDirs.push(tmpRoot);
         const configPath = path.join(tmpRoot, 'config.json');
@@ -193,6 +249,10 @@ describe('UpdateService', () => {
     });
 
     afterEach(() => {
+        // Every operation-server a test spawned found its package (see velopackPackages).
+        expect(velopackPackages.operationServerMissing, 'operation-server spawned with its package missing').toEqual(
+            [],
+        );
         // The stream registry is a module singleton: a failed apply test can leave
         // a fake stream in it or the stop flag set, and that must not reach the
         // next test.
@@ -2878,6 +2938,260 @@ describe('UpdateService', () => {
                 'reap',
                 'spawn helper (markers)',
             ]);
+        },
+    );
+
+    // ── Windows: the apply downloads the package first ──────────────────
+    //
+    // With auto-download off the check only reports the update; neither Windows
+    // hand-off downloads it (see velopackPackages). Until 2026-10-08 the install
+    // failed every time: in service mode after closing every stream, in local
+    // mode with the app shut down for good.
+
+    const WINDOWS_MODES: ['user' | 'user-service'][] = [['user'], ['user-service']];
+
+    /** A Windows install offering v0.2.0; `mgr` overrides the fake manager. */
+    function windowsApplyService(
+        installMode: 'user' | 'user-service',
+        autoUpdate: boolean,
+        mgr: Partial<UpdateManagerLike>,
+        extra: UpdateServiceOptions = {},
+    ): UpdateService {
+        Config.getInstance().updateAppConfig({
+            autoUpdate,
+            installMode,
+            channel: 'stable',
+            githubOwner: 'bilbospocketses',
+        });
+        return new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0'), ...mgr }),
+            ...quietTimers,
+            ...extra,
+        });
+    }
+
+    /**
+     * Push 'spawn operation-server' to `order` at every spawn until disposed
+     * (`using`). Not mockImplementationOnce: an apply that never spawns would
+     * leave it queued for the next test's spawn.
+     */
+    function recordHandoff(order: string[]) {
+        const spawnMock = vi.mocked(child_process.spawn);
+        const base = spawnMock.getMockImplementation()!;
+        spawnMock.mockClear();
+        spawnMock.mockImplementation(((...args: Parameters<typeof child_process.spawn>) => {
+            order.push('spawn operation-server');
+            return base(...args);
+        }) as typeof child_process.spawn);
+        return {
+            spawnMock,
+            [Symbol.dispose](): void {
+                spawnMock.mockImplementation(base);
+            },
+        };
+    }
+
+    it.each(WINDOWS_MODES)(
+        'applyUpdate (win32 %s, auto-download off): downloads the update before the hand-off, showing progress',
+        async (installMode) => {
+            const order: string[] = [];
+            using probe = hygieneProbe(order);
+            using handoff = recordHandoff(order);
+            const { spawnMock } = handoff;
+            const download = deferred<void>();
+            const downloaded: UpdateInfo[] = [];
+            const handedOff: UpdateInfo[] = [];
+            const svc = windowsApplyService(
+                installMode,
+                false,
+                {
+                    downloadUpdateAsync: async (u, cb) => {
+                        order.push(`download v${u.TargetFullRelease.Version}`);
+                        downloaded.push(u);
+                        cb?.(40);
+                        await download.promise;
+                    },
+                    waitExitThenApplyUpdate: (u) => {
+                        order.push('waitExitThenApplyUpdate');
+                        handedOff.push(u);
+                    },
+                },
+                { reapOwnAdbFn: probe.reapOwnAdbFn },
+            );
+            svc.init();
+            await settled(svc);
+            expect(svc.getStatus().status).toBe('ready');
+            // The check reported the update and downloaded nothing.
+            expect(order).toEqual([]);
+
+            const applying = svc.applyUpdate();
+            await vi.waitFor(() => expect(order).toEqual(['download v0.2.0']));
+            // Held mid-download: progress shows, and nothing has been stopped yet.
+            expect(svc.getStatus()).toMatchObject({ status: 'downloading', progress: 40 });
+            expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
+            expect(spawnMock).not.toHaveBeenCalled();
+
+            download.resolve();
+            await applying;
+
+            const handoffStep = installMode === 'user' ? 'spawn operation-server' : 'waitExitThenApplyUpdate';
+            expect(order).toEqual(['download v0.2.0', 'close stream', 'kill-server', 'reap', handoffStep]);
+            // The update the check offered is the one downloaded and the one installed.
+            const offered = svc.getStatus().pendingUpdate;
+            expect(downloaded).toHaveLength(1);
+            expect(downloaded[0]!.TargetFullRelease).toEqual(offered!.TargetFullRelease);
+            if (installMode === 'user-service') expect(handedOff).toEqual([downloaded[0]]);
+            expect(svc.getStatus()).toMatchObject({ status: 'ready', progress: 100 });
+        },
+    );
+
+    it.each(WINDOWS_MODES)(
+        'applyUpdate (win32 %s): a failed download stops the apply before anything is touched, and a retry goes ahead',
+        async (installMode) => {
+            using probe = hygieneProbe();
+            const order: string[] = [];
+            using handoff = recordHandoff(order);
+            const { spawnMock } = handoff;
+            let fail = true;
+            const applyFn = vi.fn();
+            const svc = windowsApplyService(
+                installMode,
+                false,
+                {
+                    downloadUpdateAsync: async () => {
+                        if (fail) throw new Error('Network error: Http error: http status: 503');
+                    },
+                    waitExitThenApplyUpdate: applyFn,
+                },
+                { reapOwnAdbFn: probe.reapOwnAdbFn },
+            );
+            svc.init();
+            await settled(svc);
+            expect(svc.getStatus().status).toBe('ready');
+
+            await expect(svc.applyUpdate()).rejects.toThrow(
+                'update download failed: Network error: Http error: http status: 503',
+            );
+
+            expect(spawnMock).not.toHaveBeenCalled();
+            expect(applyFn).not.toHaveBeenCalled();
+            expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
+            expect(liveStreams.isStopping()).toBe(false);
+            const cfg = Config.getInstance();
+            expect(fs.existsSync(cfg.applyUpdatePendingMarkerPath)).toBe(false);
+            expect(fs.existsSync(cfg.suppressBrowserOpenMarkerPath)).toBe(false);
+            expect(fs.existsSync(cfg.applyUpdateVerifyManifestPath)).toBe(false);
+            // Still on offer, as after a failed Linux download.
+            expect(svc.getStatus()).toMatchObject({
+                status: 'ready',
+                availableVersion: '0.2.0',
+                errorMessage: undefined,
+            });
+
+            // Not stuck as "in progress": the retry downloads and installs.
+            fail = false;
+            await svc.applyUpdate();
+            if (installMode === 'user') expect(spawnMock).toHaveBeenCalledTimes(1);
+            else expect(applyFn).toHaveBeenCalledTimes(1);
+        },
+    );
+
+    it.each(WINDOWS_MODES)(
+        'applyUpdate (win32 %s): a channel change during the download stops the apply before anything is touched',
+        async (installMode) => {
+            using probe = hygieneProbe();
+            const order: string[] = [];
+            using handoff = recordHandoff(order);
+            const { spawnMock } = handoff;
+            const download = deferred<void>();
+            let downloading = false;
+            const applyFn = vi.fn();
+            const checkFn = vi.fn(async () => fakeUpdateInfo('0.2.0'));
+            const svc = windowsApplyService(
+                installMode,
+                false,
+                {
+                    checkForUpdatesAsync: checkFn,
+                    downloadUpdateAsync: async () => {
+                        downloading = true;
+                        await download.promise;
+                    },
+                    waitExitThenApplyUpdate: applyFn,
+                },
+                { reapOwnAdbFn: probe.reapOwnAdbFn },
+            );
+            svc.init();
+            await settled(svc);
+            expect(svc.getStatus().status).toBe('ready');
+            checkFn.mockClear();
+
+            const applying = svc.applyUpdate();
+            await vi.waitFor(() => expect(downloading).toBe(true));
+            await svc.reconfigure('beta', 'bilbospocketses');
+            expect(svc.getStatus()).toMatchObject({ status: 'idle', pendingUpdate: undefined });
+
+            // The download finishes, but for a release the user switched away from.
+            download.resolve();
+            await expect(applying).rejects.toThrow('update changed during download');
+
+            expect(spawnMock).not.toHaveBeenCalled();
+            expect(applyFn).not.toHaveBeenCalled();
+            expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
+            expect(liveStreams.isStopping()).toBe(false);
+            expect(fs.existsSync(Config.getInstance().applyUpdatePendingMarkerPath)).toBe(false);
+            // The new channel is checked as soon as the apply has failed.
+            await vi.waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
+            await settled(svc);
+            expect(svc.getStatus().status).toBe('ready');
+        },
+    );
+
+    // With auto-download on the check has already downloaded the package. The
+    // apply still asks Velopack, which owns the packages folder and skips a
+    // package already there (manager.rs:414-415) -- a stat, not a re-download
+    // or a re-hash -- rather than trusting a flag kept in memory that a deleted
+    // or cleaned-up package would make wrong. This fake skips the same way and
+    // counts what it actually fetches.
+    it.each(WINDOWS_MODES)(
+        'applyUpdate (win32 %s, auto-download on): the package the check downloaded is not fetched again',
+        async (installMode) => {
+            const order: string[] = [];
+            using handoff = recordHandoff(order);
+            const { spawnMock } = handoff;
+            const asked: UpdateInfo[] = [];
+            const fetched: string[] = [];
+            const applyFn = vi.fn();
+            const svc = windowsApplyService(
+                installMode,
+                true,
+                {
+                    downloadUpdateAsync: async (u, cb) => {
+                        asked.push(u);
+                        if (velopackPackages.onDisk.has(u.TargetFullRelease.FileName)) return;
+                        fetched.push(u.TargetFullRelease.Version);
+                        cb?.(100);
+                    },
+                    waitExitThenApplyUpdate: applyFn,
+                },
+                { reapOwnAdbFn: async () => 0 },
+            );
+            svc.init();
+            await settled(svc);
+            expect(svc.getStatus()).toMatchObject({ status: 'ready', progress: 100 });
+            expect(fetched).toEqual(['0.2.0']);
+
+            await svc.applyUpdate();
+
+            expect(fetched).toEqual(['0.2.0']);
+            // Asked twice for the one update the check offered: by the check, then by the apply.
+            expect(asked).toHaveLength(2);
+            expect(asked[1]).toBe(asked[0]);
+            if (installMode === 'user') expect(spawnMock).toHaveBeenCalledTimes(1);
+            else expect(applyFn).toHaveBeenCalledTimes(1);
+            expect(svc.getStatus()).toMatchObject({ status: 'ready', progress: 100 });
         },
     );
 
