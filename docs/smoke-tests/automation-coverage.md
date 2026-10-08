@@ -16,7 +16,7 @@ beta.131 server work (2026-09-23) added 8.15, 8.16, 8.17 and 12.6 (155), and qa-
 container audit (2026-09-30) added 20.18 (164), 20.19 (165), 20.20 and 20.21 (167), and D8's container spec
 (same day) added 20.22 (168), and the 2026-10-03 coverage audit added 83 rows for its gaps G1-G85
 (three gaps were clauses added to residual rows instead, and G7 became two rows) (251), and M11
-(2026-10-08) added 8.31 (252), and the scrcpy-server 5.0 bump (same day) added 9.13 (253), and the manual audio row 8.32 (same day) added 8.32, so the doc holds **254**. Row ids are stable and gappy; so are the lines here. Each audit row's line below names its
+(2026-10-08) added 8.31 (252), and the scrcpy-server 5.0 bump (same day) added 9.13 (253), and the manual audio row (same day) added 8.32, so the doc holds **254**. Row ids are stable and gappy; so are the lines here. Each audit row's line below names its
 gap number.
 
 | | Rows | Where |
@@ -731,7 +731,7 @@ the distinction matters to anyone deciding what to fix:
   yet* until 2026-09-30, when `docker-gating.spec.ts` asserted both, and they count in
   the container tier now.)
 
-Forty-two further rows have no spec yet. Thirty-six are the 2026-10-03 coverage
+Forty-three further rows have no spec yet. **9.13** (the scrcpy-server 5.0 upgrade path, 2026-10-08) is the newest. Thirty-six are the 2026-10-03 coverage
 audit's (each line names its gap and the tier it needs), 12.11 among them since
 2026-10-05, and 7.5 joined them on the audit's day. The five older ones are **18.13**
 (allowRemoteAdmin surviving a restart and an unrelated save), **15.6** (the Windows
@@ -739,7 +739,8 @@ tray's Exit, end to end), **8.10 and 8.11** (item 24's rotation rows) and **8.16
 (Opus on redroid's legacy OMX stack). All of them are automatable with the tiers
 already built. They are the cheapest coverage left
 anywhere in this document and are listed as their own bucket so they cannot be
-mistaken for residual manual work. (This paragraph said forty-three until later on
+mistaken for residual manual work. (This paragraph said forty-two until 2026-10-08,
+when the scrcpy-server 5.0 bump added 9.13 without a spec; forty-three until later on
 2026-10-06, when `WS_SCRCPY_NODE_DIST_BASE` took 9.12 into the fast tier; forty-five until 2026-10-06,
 when item 167's mkcert URL seam took 21.12 into the fast tier and the LAN-address
 spec took 8.19; it said eighty-five until 2026-10-05,
