@@ -11,6 +11,7 @@ import { liveStreams } from '../liveStreams';
 import { PkexecDeclinedError } from '../service/SystemdClient';
 import { stageSystemHelper } from '../service/systemHelper';
 import { type UpdateManagerLike, UpdateService } from '../UpdateService';
+import { RELEASES_PER_PAGE, type ResolvedReleaseFeed } from '../updateFeedResolver';
 import { betas, type FakeGithubApi, fakeGithubApi, release } from './helpers/fakeGithubReleases';
 
 // FD2: the system-service apply must spawn a bin_t copy under /opt, not the
@@ -333,7 +334,9 @@ describe('UpdateService', () => {
     });
 
     it('channel=beta resolves to the newest beta', async () => {
-        api.set([...betas(15, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        // The stable release is OLDER than the betas: a stable 0.1.30 would
+        // outrank 0.1.30-beta.30 and win (see the superset tests below).
+        api.set([...betas(15, 30), release('v0.1.29', ['stable', 'linux-stable'])]);
         Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
         const feeds: unknown[] = [];
         const svc = new UpdateService({
@@ -430,7 +433,7 @@ describe('UpdateService', () => {
     });
 
     it('a channel switch re-resolves against the new channel', async () => {
-        api.set([...betas(15, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        api.set([...betas(15, 30), release('v0.1.29', ['stable', 'linux-stable'])]);
         Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
         const factory = vi.fn((_feed: unknown, _opts: UpdateOptions) => fakeMgr());
         const svc = new UpdateService({
@@ -445,12 +448,12 @@ describe('UpdateService', () => {
         expect(factory.mock.calls.at(-1)![0]).toMatchObject({ tag: 'v0.1.30-beta.30' });
         await svc.reconfigure('stable', 'bilbospocketses');
         const [feed, opts] = factory.mock.calls.at(-1)!;
-        expect(feed).toMatchObject({ kind: 'release', tag: 'v0.1.30' });
+        expect(feed).toMatchObject({ kind: 'release', tag: 'v0.1.29' });
         expect(opts.ExplicitChannel).toBe('stable');
     });
 
     it('the resolved release is cached across checks and refreshed when a newer one appears', async () => {
-        api.set([...betas(3, 30), release('v0.1.30', ['stable'])]);
+        api.set([...betas(3, 30), release('v0.1.29', ['stable'])]);
         Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
         const factory = vi.fn((_feed: unknown, _opts: UpdateOptions) => fakeMgr());
         const svc = new UpdateService({
@@ -470,7 +473,7 @@ describe('UpdateService', () => {
         expect(builtFor('v0.1.30-beta.30')).toBe(1);
         expect(api.calls.at(-1)!.ifNoneMatch).not.toBeNull();
 
-        api.set([...betas(1, 31), ...betas(3, 30), release('v0.1.30', ['stable'])]);
+        api.set([...betas(1, 31), ...betas(3, 30), release('v0.1.29', ['stable'])]);
         await svc.checkForUpdates();
         expect(factory.mock.calls.at(-1)![0]).toMatchObject({ tag: 'v0.1.30-beta.31' });
     });
@@ -514,6 +517,241 @@ describe('UpdateService', () => {
         const s = await svc.checkForUpdates();
         expect(s.status).toBe('idle');
         expect(s.errorMessage).toBeUndefined();
+    });
+
+    // ── The beta channel is a superset of stable (user decision 2026-10-07) ──
+    //
+    // A beta-channel check considers the newest beta-feed release AND the
+    // newest stable-feed release, and reads whichever has the higher version --
+    // from that release's folder AND with that feed's ExplicitChannel, since a
+    // stable release publishes only releases.stable.json / releases.linux-stable.json.
+    // The configured channel stays beta. The stable channel never sees a beta.
+
+    /** A service on `platform` whose factory records every (feed, options) it is built with. */
+    function recordingService(platform: NodeJS.Platform, checkFn?: () => Promise<UpdateInfo | null>) {
+        const factory = vi.fn((_feed: unknown, _opts: UpdateOptions) =>
+            fakeMgr(checkFn ? { checkForUpdatesAsync: checkFn } : {}),
+        );
+        const svc = new UpdateService({
+            platform,
+            installRoot: platform === 'linux' ? path.join('/fake', 'mount', 'usr') : '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            ...quietTimers,
+        });
+        const last = () => {
+            const [feed, opts] = factory.mock.calls.at(-1)!;
+            return { feed: feed as { kind: string; tag?: string; url: string }, explicit: opts.ExplicitChannel };
+        };
+        return { svc, factory, last };
+    }
+
+    it.each([
+        ['win32', 'stable'],
+        ['linux', 'linux-stable'],
+    ] as const)(
+        'beta channel (%s): a stable release newer than every beta is read from its folder with the %s feed',
+        async (platform, explicit) => {
+            api.set([...betas(15, 30), release('v0.1.30', ['stable', 'linux-stable']), ...betas(3, 15)]);
+            Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+            const { svc, last } = recordingService(platform);
+            svc.init();
+            await settled(svc);
+            await svc.checkForUpdates();
+            expect(last().feed).toEqual({
+                kind: 'release',
+                tag: 'v0.1.30',
+                url: 'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download/v0.1.30/',
+            });
+            expect(last().explicit).toBe(explicit);
+            // The install stays on the beta channel: nothing wrote config.
+            expect(Config.getInstance().getAppConfig().channel).toBe('beta');
+        },
+    );
+
+    it.each([
+        ['win32', 'beta'],
+        ['linux', 'linux-beta'],
+    ] as const)(
+        'beta channel (%s): a beta newer than the newest stable is read with the %s feed',
+        async (platform, explicit) => {
+            api.set([...betas(3, 30), release('v0.1.29', ['stable', 'linux-stable'])]);
+            Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+            const { svc, last } = recordingService(platform);
+            svc.init();
+            await settled(svc);
+            await svc.checkForUpdates();
+            expect(last().feed).toMatchObject({ kind: 'release', tag: 'v0.1.30-beta.30' });
+            expect(last().explicit).toBe(explicit);
+        },
+    );
+
+    it('beta channel: the feed follows the newest version back and forth, rebuilding the manager each time', async () => {
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const { svc, last } = recordingService('win32');
+        svc.init();
+        await settled(svc);
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.30' }, explicit: 'stable' });
+
+        // The next beta cycle starts: its first beta outranks the stable release.
+        api.set([release('v0.1.31-beta.1', ['beta', 'linux-beta']), ...betas(3, 30), release('v0.1.30', ['stable'])]);
+        await svc.checkForUpdates();
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.31-beta.1' }, explicit: 'beta' });
+
+        // ...and the stable release that ends it outranks every one of its betas.
+        api.set([
+            release('v0.1.31', ['stable']),
+            release('v0.1.31-beta.1', ['beta', 'linux-beta']),
+            ...betas(3, 30),
+            release('v0.1.30', ['stable']),
+        ]);
+        await svc.checkForUpdates();
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.31' }, explicit: 'stable' });
+        expect(Config.getInstance().getAppConfig().channel).toBe('beta');
+    });
+
+    it('beta channel: the same release folder read through a different feed rebuilds the manager', async () => {
+        // The manager key carries the feed's ExplicitChannel, not the configured
+        // channel: here the folder never changes, only which feed in it wins.
+        api.set([release('v0.1.30', ['stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const { svc, last } = recordingService('win32');
+        svc.init();
+        await settled(svc);
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.30' }, explicit: 'stable' });
+        api.set([release('v0.1.30', ['beta', 'stable'])]);
+        await svc.checkForUpdates();
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.30' }, explicit: 'beta' });
+    });
+
+    it('beta channel: on a tie the beta feed is kept (one release carrying both feeds)', async () => {
+        api.set([release('v0.1.30', ['beta', 'stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const { svc, last } = recordingService('win32');
+        svc.init();
+        await settled(svc);
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.30' }, explicit: 'beta' });
+    });
+
+    it('stable channel: never offered a beta, however much newer', async () => {
+        api.set([release('v0.9.0-beta.1', ['beta', 'linux-beta']), release('v0.1.30', ['stable', 'linux-stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'stable', githubOwner: 'bilbospocketses' });
+        const { svc, factory, last } = recordingService('linux');
+        svc.init();
+        await settled(svc);
+        await svc.checkForUpdates();
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.30' }, explicit: 'linux-stable' });
+        // Call 0 is init()'s manager on the running build's own release (a beta
+        // here); every manager a check built since read a stable release.
+        expect(factory.mock.calls.length).toBeGreaterThan(1);
+        for (const [feed, opts] of factory.mock.calls.slice(1)) {
+            expect((feed as { tag?: string }).tag).not.toMatch(/beta/);
+            expect(opts.ExplicitChannel).toBe('linux-stable');
+        }
+    });
+
+    it('beta channel with no stable release yet: the newest beta, exactly as before', async () => {
+        api.set(betas(14, 166));
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const { svc, last } = recordingService('win32');
+        svc.init();
+        await settled(svc);
+        const before = api.calls.length;
+        await svc.checkForUpdates();
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.30-beta.166' }, explicit: 'beta' });
+        // One page, one request: the stable lookup costs nothing extra.
+        expect(api.calls.length - before).toBe(1);
+        expect(svc.getStatus().status).toBe('idle');
+        expect(svc.getStatus().errorMessage).toBeUndefined();
+    });
+
+    it('beta channel: an unchanged two-page listing costs one conditional request per page, and no rebuild', async () => {
+        api.set([...betas(RELEASES_PER_PAGE, 200), release('v0.1.31', ['stable', 'linux-stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const { svc, factory, last } = recordingService('win32');
+        svc.init();
+        await settled(svc);
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.31' }, explicit: 'stable' });
+        const builds = factory.mock.calls.length;
+        const before = api.calls.length;
+        await svc.checkForUpdates();
+        const second = api.calls.slice(before);
+        // Both feeds answered from ONE walk: two pages, two requests, both conditional.
+        expect(second.map((c) => new URL(c.url).searchParams.get('page'))).toEqual(['1', '2']);
+        expect(second.every((c) => c.ifNoneMatch !== null)).toBe(true);
+        expect(factory.mock.calls.length).toBe(builds);
+    });
+
+    it('beta channel: a refused lookup with the listing already read keeps offering the newer stable release', async () => {
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses', autoUpdate: false });
+        const { svc, factory, last } = recordingService('win32', async () => fakeUpdateInfo('0.1.30'));
+        svc.init();
+        await settled(svc);
+        const builds = factory.mock.calls.length;
+        api.refuse(403);
+        const s = await svc.checkForUpdates();
+        expect(s.status).toBe('ready');
+        expect(s.availableVersion).toBe('0.1.30');
+        expect(last()).toMatchObject({ feed: { tag: 'v0.1.30' }, explicit: 'stable' });
+        expect(factory.mock.calls.length).toBe(builds);
+    });
+
+    it('beta channel: a refusal with no listing read yet fails the check, as before', async () => {
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        api.refuse(403);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const { svc, factory } = recordingService('win32');
+        svc.init();
+        await settled(svc);
+        const s = svc.getStatus();
+        expect(s.status).toBe('error');
+        expect(s.errorMessage).toMatch(/HTTP 403/);
+        // Only init()'s own-release manager was ever built: neither feed was guessed at.
+        expect(factory).toHaveBeenCalledTimes(1);
+    });
+
+    it('beta channel (linux): applying a newer stable release downloads the linux-stable AppImage from that release', async () => {
+        const { createHash } = await import('crypto');
+        api.set([...betas(3, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'beta',
+            githubOwner: 'bilbospocketses',
+        });
+        const appImageBytes = Buffer.from('STABLE-APPIMAGE');
+        const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
+        const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-stable.AppImage\n`;
+        const fetched: string[] = [];
+        const fetchFn = vi.fn(async (url: string) => {
+            fetched.push(url);
+            return url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums);
+        }) as unknown as typeof fetch;
+        vi.mocked(child_process.spawn).mockClear();
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30') }),
+            ...quietTimers,
+            fetchFn,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage';
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('ready');
+
+        await svc.applyUpdate();
+        expect(fetched).toContain(
+            'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download/v0.1.30/WsScrcpyWeb-linux-stable.AppImage',
+        );
+        expect(fetched).toContain(
+            'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download/v0.1.30/SHA256SUMS',
+        );
+        expect(fetched.some((u) => u.includes('linux-beta'))).toBe(false);
+        expect(vi.mocked(child_process.spawn)).toHaveBeenCalledTimes(1);
     });
 
     // ── A channel switch while work for the old channel is still running ──
@@ -561,15 +799,16 @@ describe('UpdateService', () => {
     it('a release lookup still running for the old channel does not rebuild the manager after a switch', async () => {
         Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses', autoUpdate: false });
         let hold = false;
-        let answerBeta: ((r: { tag: string; url: string }) => void) | undefined;
+        let answerBeta: ((r: ResolvedReleaseFeed) => void) | undefined;
         const resolver = {
-            resolve: vi.fn((_owner: string, channel: string) =>
-                hold && channel === 'beta'
-                    ? new Promise<{ tag: string; url: string }>((resolve) => {
+            resolve: vi.fn((_owner: string, channels: string | readonly string[]) => {
+                const channel = typeof channels === 'string' ? channels : channels[0]!;
+                return hold && channel === 'beta'
+                    ? new Promise<ResolvedReleaseFeed>((resolve) => {
                           answerBeta = resolve;
                       })
-                    : Promise.resolve({ tag: `v-${channel}`, url: `https://feeds.example/${channel}/` }),
-            ),
+                    : Promise.resolve({ tag: `v-${channel}`, url: `https://feeds.example/${channel}/`, channel });
+            }),
         };
         const factory = vi.fn((_feed: unknown, _opts: UpdateOptions) => fakeMgr());
         const svc = new UpdateService({
@@ -589,7 +828,7 @@ describe('UpdateService', () => {
         expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
         const builds = factory.mock.calls.length;
 
-        answerBeta!({ tag: 'v-beta-late', url: 'https://feeds.example/beta-late/' });
+        answerBeta!({ tag: 'v-beta-late', url: 'https://feeds.example/beta-late/', channel: 'beta' });
         await oldCheck;
         expect(factory.mock.calls.length).toBe(builds);
         expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');

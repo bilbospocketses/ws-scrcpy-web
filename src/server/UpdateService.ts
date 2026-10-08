@@ -39,7 +39,8 @@ export interface UpdateManagerLike {
  * Where Velopack reads the feed from.
  *
  *  - `release`: ONE GitHub release's download folder, the newest release that
- *    carries the selected channel's feed (see updateFeedResolver.ts). Handed to
+ *    carries the selected channel's feed -- on the beta channel, the beta OR
+ *    the stable feed (see feedChannels and updateFeedResolver.ts). Handed to
  *    Velopack as an explicit HttpSource -- a github.com URL given as a plain
  *    string would be turned into a GithubSource (velopack 1.2.161
  *    `sources/mod.rs:64-69`), which reads only the 10 newest releases.
@@ -106,6 +107,12 @@ export interface UpdateServiceState {
     lastCheckedAt?: Date | undefined;
     /** Internal: the UpdateInfo we got from checkForUpdatesAsync, kept until apply. */
     pendingUpdate?: UpdateInfo | undefined;
+    /**
+     * Internal: the channel whose feed `pendingUpdate` came from. On the beta
+     * channel that can be `stable` (see {@link UpdateService.feedChannels}), and
+     * the Linux apply downloads that channel's AppImage.
+     */
+    pendingChannel?: UpdateChannel | undefined;
 }
 
 const defaultUpdateManagerFactory: UpdateManagerFactory = (feed, opts, locator) =>
@@ -299,6 +306,22 @@ export class UpdateService {
         return { kind: 'release', tag, url: releaseFeedUrl(githubOwner, tag) };
     }
 
+    /**
+     * The feeds a check on `channel` reads, in order of preference: the beta
+     * channel is a superset of stable (user decision 2026-10-07), so a beta
+     * check reads both and takes the higher version -- a stable release with
+     * an equal core outranks its betas (`compareVersions`). On a tie the beta
+     * feed wins, so nothing changes for a beta install until a stable release
+     * is genuinely newer. The stable channel never reads the beta feed.
+     *
+     * The configured channel stays `beta` whichever feed wins (nothing here
+     * writes config), so every check considers both again.
+     */
+    private feedChannels(channel: UpdateChannel): UpdateChannel[] {
+        return channel === 'beta' ? ['beta', 'stable'] : ['stable'];
+    }
+
+    /** `channel` is the one whose feed Velopack reads -- on a beta install, possibly `stable`. */
     private buildManager(feed: UpdateFeed, channel: UpdateChannel): UpdateManagerLike {
         return this.factory(
             feed,
@@ -416,6 +439,7 @@ export class UpdateService {
         this.channel = channel;
         this.githubOwner = githubOwner;
         this.state.pendingUpdate = undefined;
+        this.state.pendingChannel = undefined;
         this.state.availableVersion = undefined;
         this.state.errorMessage = undefined;
         this.state.status = 'idle';
@@ -440,18 +464,33 @@ export class UpdateService {
 
         const generation = this.generation;
         const channel = this.channel;
-        const explicitChannel = this.resolveExplicitChannel(channel);
         this.state.status = 'checking';
         this.state.errorMessage = undefined;
         let resolved = false;
         try {
-            // One resolution per check. The resolver caches each page of the
-            // listing by ETag, so an unchanged listing is answered with 304s.
+            // One resolution per check, covering every feed the channel reads
+            // (feedChannels) in a single walk of the listing. The resolver
+            // caches each page by ETag, so an unchanged listing is answered
+            // with 304s.
             let feed = this.overrideFeed();
+            // The channel whose feed Velopack reads. An override feed is read
+            // as the configured channel, as before.
+            let feedChannel: UpdateChannel = channel;
             if (feed === null) {
-                const release = await this.resolver.resolve(this.githubOwner, explicitChannel);
-                feed = release && { kind: 'release', tag: release.tag, url: release.url };
+                const candidates = this.feedChannels(channel);
+                const release = await this.resolver.resolve(
+                    this.githubOwner,
+                    candidates.map((c) => this.resolveExplicitChannel(c)),
+                );
                 resolved = true;
+                if (release) {
+                    const won = candidates.find((c) => this.resolveExplicitChannel(c) === release.channel);
+                    if (won === undefined) {
+                        throw new Error(`release lookup answered feed ${release.channel}, which was not asked for`);
+                    }
+                    feedChannel = won;
+                    feed = { kind: 'release', tag: release.tag, url: release.url };
+                }
             }
             if (generation !== this.generation) return this.state; // reconfigured meanwhile
             if (feed === null) {
@@ -461,21 +500,32 @@ export class UpdateService {
                 this.state.status = 'idle';
                 this.state.availableVersion = undefined;
                 this.state.pendingUpdate = undefined;
+                this.state.pendingChannel = undefined;
                 return this.state;
             }
 
-            const key = feedKey(feed, explicitChannel);
+            // The key carries the feed's ExplicitChannel, so a beta install whose
+            // newest candidate moves from the beta feed to the stable feed (or
+            // back) rebuilds the manager.
+            const key = feedKey(feed, this.resolveExplicitChannel(feedChannel));
             if (key !== this.mgrKey) {
                 let built: UpdateManagerLike;
                 try {
-                    built = this.buildManager(feed, channel);
+                    built = this.buildManager(feed, feedChannel);
                 } catch (err) {
                     throw new Error(`${buildFailurePrefix}: ${(err as Error).message}`);
                 }
                 // Only swap once construction succeeded — keep the old mgr otherwise.
                 this.mgr = built;
                 this.mgrKey = key;
-                if (feed.kind === 'release') log.info(`reading the ${channel} channel from release ${feed.tag}`);
+                if (feed.kind === 'release') {
+                    log.info(
+                        feedChannel === channel
+                            ? `reading the ${channel} channel from release ${feed.tag}`
+                            : `reading the ${channel} channel from ${feedChannel} release ${feed.tag}, ` +
+                                  `newer than any ${channel} release`,
+                    );
+                }
             }
 
             const info = await this.mgr.checkForUpdatesAsync();
@@ -485,11 +535,13 @@ export class UpdateService {
                 this.state.status = 'idle';
                 this.state.availableVersion = undefined;
                 this.state.pendingUpdate = undefined;
+                this.state.pendingChannel = undefined;
                 return this.state;
             }
 
             this.state.availableVersion = info.TargetFullRelease.Version;
             this.state.pendingUpdate = info;
+            this.state.pendingChannel = feedChannel;
 
             const cfg = Config.getInstance().getAppConfig();
             // On Linux our apply downloads the published AppImage directly, so the
@@ -617,9 +669,12 @@ export class UpdateService {
         this.applyInFlight = true;
         const mgr = this.mgr;
         const pendingUpdate = this.state.pendingUpdate;
+        // The feed the pending update came from; set with it by every check. The
+        // configured channel only covers a state no check produced.
+        const pendingChannel = this.state.pendingChannel ?? this.channel;
         this.streamsStoppedForApply = false;
         try {
-            return await this.applyByPath(mgr, pendingUpdate);
+            return await this.applyByPath(mgr, pendingUpdate, pendingChannel);
         } catch (err) {
             this.applyInFlight = false;
             // A throw means no exit follows (UpdatesApi answers 403 or 500 and the
@@ -639,6 +694,7 @@ export class UpdateService {
     private async applyByPath(
         mgr: UpdateManagerLike,
         pendingUpdate: UpdateInfo,
+        pendingChannel: UpdateChannel,
     ): Promise<{ redirectPort: number | null }> {
         const installMode = Config.getInstance().getAppConfig().installMode;
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
@@ -673,7 +729,10 @@ export class UpdateService {
             if (!version) {
                 throw new Error('apply: no available version resolved');
             }
-            const assetName = linuxAppImageAssetName(appCfg.channel);
+            // The AppImage of the release the check resolved: a beta install
+            // offered a newer stable release downloads WsScrcpyWeb-linux-stable,
+            // the only AppImage that release publishes.
+            const assetName = linuxAppImageAssetName(pendingChannel);
             // Item 169: WS_SCRCPY_RELEASE_URL_BASE moves both downloads off github.com
             // (a test / mirror seam). The SHA-256 check below runs either way.
             const baseOverride = process.env[RELEASE_URL_BASE_ENV]?.trim() || undefined;
