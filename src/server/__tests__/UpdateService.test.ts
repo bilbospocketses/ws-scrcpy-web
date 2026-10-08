@@ -1266,16 +1266,16 @@ describe('UpdateService', () => {
             check.answer();
             await tick();
         }
-        const [a, b] = await Promise.all([first, second]);
+        await Promise.all([first, second]);
 
         // Every package was asked of the folder of its own release: no 404.
         for (const d of downloads) expect(d.folder).toBe(`v${d.version}`);
         const s = svc.getStatus();
         expect(s.errorMessage).toBeUndefined();
         expect(s.status).toBe('ready');
-        // Because only one check ran, and both callers got its answer.
+        // Because only one check ran: Velopack was asked once, the release lookup once.
+        expect(heldChecks).toHaveLength(1);
         expect(resolve).toHaveBeenCalledTimes(1);
-        expect(b).toBe(a);
         expect(s.availableVersion).toBe('0.2.0');
         expect(downloads).toEqual([{ folder: 'v0.2.0', version: '0.2.0' }]);
     });
@@ -1318,7 +1318,7 @@ describe('UpdateService', () => {
         const { resolver, resolve, held, state } = heldResolver((channels) =>
             channels[0] === 'stable' ? releaseOf('0.3.0') : null,
         );
-        const { factory, heldChecks, opts } = folderManagers();
+        const { factory, opts } = folderManagers();
         const svc = new UpdateService({
             platform: 'win32',
             installRoot: '/fake',
@@ -1335,18 +1335,23 @@ describe('UpdateService', () => {
         state.hold = false;
         opts.holdChecks = false;
 
+        let giveUp: NodeJS.Timeout | undefined;
         const switched = await Promise.race([
             svc.reconfigure('stable', 'bilbospocketses').then(() => 'checked the new channel'),
-            new Promise((r) => setTimeout(() => r('joined the old check'), 2000)),
+            new Promise((r) => {
+                giveUp = setTimeout(() => r('joined the old check'), 2000);
+            }),
         ]);
+        clearTimeout(giveUp);
         expect(switched).toBe('checked the new channel');
         expect(resolve.mock.calls.at(-1)![1]).toEqual(['stable']);
         expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
 
-        // The old check's late answer is dropped.
+        // The old check's late answer is dropped: it builds no manager for the old channel.
+        const managersBuilt = factory.mock.calls.length;
         held[0]!.answer(releaseOf('0.2.0', 'beta'));
         await oldCheck;
-        expect(heldChecks).toHaveLength(0);
+        expect(factory).toHaveBeenCalledTimes(managersBuilt);
         expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
         expect(svc.getStatus()).toMatchObject({ status: 'idle', pendingChannel: undefined });
     });
