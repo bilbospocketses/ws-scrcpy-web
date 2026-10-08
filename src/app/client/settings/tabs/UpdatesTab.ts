@@ -1,7 +1,8 @@
 import type { UpdateChannel } from '../../../../common/ConfigEvents';
 import type { UpdatesStatusResponse } from '../../../../common/UpdateEvents';
-import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMessage';
+import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { runUpgradingHandoff } from '../../UpgradingOverlay';
+import { classifyFailedApply, LostApplyWatch } from '../../updateApplyOutcome';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import type { TabContext } from './EmbeddingTab';
 
@@ -69,6 +70,24 @@ const OWNER_ID = 'githubOwner';
 /** The interval bounds `Config.validateField('updateCheckIntervalMinutes')` enforces. */
 const INTERVAL_MIN = 5;
 const INTERVAL_MAX = 1440;
+
+/**
+ * How often the status is read while an apply started here runs (its Windows
+ * download can take minutes), and after a failed one until the check the
+ * server starts has finished.
+ */
+const APPLY_POLL_MS = 2 * 1000;
+/** How long "restarting…" shows before the page is reloaded. */
+const APPLY_RELOAD_DELAY_MS = 5 * 1000;
+
+/** An apply started from this tab, from the click until its outcome is known. */
+interface ApplyRun {
+    btn: HTMLButtonElement;
+    prevText: string | null;
+    timer: number | undefined;
+    /** Set once the apply's answer was lost (see LostApplyWatch); `reason` is what to say if it never happened. */
+    lost: { watch: LostApplyWatch; reason: string } | null;
+}
 
 /** The four values this tab stages, as /api/updates/status reports them. */
 interface UpdatesBaseline {
@@ -170,7 +189,12 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     let actionBtn: HTMLButtonElement | null = null;
     let intervalDebounce: number | undefined;
     let lastStatus: UpdatesStatusResponse | null = null;
-    let applyInFlight = false;
+    /** The apply in flight, if any; null once its outcome is known. */
+    let run: ApplyRun | null = null;
+    /** Set once "restarting…" (or the upgrading overlay) is up; every later status read is dropped. */
+    let restarting = false;
+    /** The status read that follows a failed apply until its check has finished. */
+    let settleTimer: number | undefined;
 
     /**
      * `keepError`: a failure line the caller has just shown. The rebuild below
@@ -210,7 +234,12 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             githubOwner: resp.githubOwner,
         });
         renderSection(resp);
-        if (keepError !== undefined) setStatusError(keepError);
+        // A failed install the server recorded already says why (applyStatusText).
+        if (keepError !== undefined && !showsApplyError(resp)) setStatusError(keepError);
+    }
+
+    function showsApplyError(s: UpdatesStatusResponse): boolean {
+        return s.status === 'ready' && s.lastApplyError !== undefined;
     }
 
     function renderError(msg: string): void {
@@ -374,8 +403,14 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
                 break;
             }
             case 'ready':
-                text = `update: v${s.availableVersion ?? '?'}`;
-                isReady = true;
+                if (s.lastApplyError !== undefined) {
+                    // The last install of this update failed; the button retries it.
+                    text = `apply failed: ${s.lastApplyError}`;
+                    isError = true;
+                } else {
+                    text = `update: v${s.availableVersion ?? '?'}`;
+                    isReady = true;
+                }
                 break;
             case 'error':
                 text = `check failed: ${s.errorMessage ?? 'unknown error'}`;
@@ -409,7 +444,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         if (!actionBtn) return;
         const btn = actionBtn;
         const busy = s.status === 'checking' || s.status === 'downloading';
-        btn.disabled = busy || applyInFlight;
+        btn.disabled = busy || run !== null || restarting;
         if (s.status === 'ready') {
             btn.textContent = s.availableVersion ? `apply v${s.availableVersion}` : 'apply update';
             btn.classList.remove('settings-btn-primary');
@@ -512,78 +547,204 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     }
 
     /**
-     * Apply a downloaded update from inside the Settings modal — mirrors the
-     * home-page UpdateButton chip's apply path. POST /api/updates/apply returns
-     * 200 then the server exits ~100ms later (after Velopack's pre-apply hygiene
-     * + waitExitThenApplyUpdate); we show a "restarting…" message and reload the
-     * page after a grace window so the user lands on the new version once
+     * Apply an update from inside the Settings modal — mirrors the home-page
+     * UpdateButton chip's apply path. POST /api/updates/apply returns 200 then
+     * the server exits ~100ms later; we show a "restarting…" message and reload
+     * the page after a grace window so the user lands on the new version once
      * Velopack's swap + relaunch completes.
+     *
+     * On Windows the request stays open while the server downloads the update
+     * first, so the status is read every 2 s meanwhile and the line shows the
+     * download. An answer lost on the way (a proxy's 502/503/504, or none at
+     * all) is not a failure: the install may be carrying on, so the status is
+     * followed until it says how it ended, or stops answering because the
+     * server has gone down for the update (see LostApplyWatch).
      */
     async function onApplyClick(btn: HTMLButtonElement): Promise<void> {
-        if (applyInFlight) return;
-        applyInFlight = true;
+        if (run !== null || restarting) return;
+        stopSettling();
+        const me: ApplyRun = { btn, prevText: btn.textContent, timer: undefined, lost: null };
+        run = me;
         btn.disabled = true;
-        const prevText = btn.textContent;
         btn.textContent = 'applying…';
-        if (statusEl) {
-            statusEl.textContent = 'applying update…';
-            statusEl.classList.remove('settings-status-error');
-        }
+        showApplyLine('installing update…');
+        void readApplyStatus(me);
+        me.timer = window.setInterval(() => {
+            void readApplyStatus(me);
+        }, APPLY_POLL_MS);
+
+        let r: Response;
         try {
-            const r = await fetch('/api/updates/apply', { method: 'POST' });
-            if (!r.ok) {
-                btn.disabled = false;
-                btn.textContent = prevText;
-                applyInFlight = false;
-                if (await isElevationDeclined(r)) {
-                    // A cancelled polkit prompt on a machine-wide update (smoke
-                    // 14.10). Nothing changed and the update is still ready, so
-                    // there is no state to re-read, and the refresh below would
-                    // repaint the line straight back to "update: vX".
-                    setStatusError(reasonToUserMessage('uac-declined', ''));
+            r = await fetch('/api/updates/apply', { method: 'POST' });
+        } catch {
+            followLostApply(me, "couldn't reach server");
+            return;
+        }
+        if (r.ok) {
+            const applyBody = (await r.json().catch(() => ({}))) as { mode?: string };
+            await startRestart(applyBody.mode);
+            return;
+        }
+        const failure = await classifyFailedApply(r);
+        if (failure.kind === 'lost') {
+            followLostApply(me, `apply failed (${r.status})`);
+            return;
+        }
+        if (failure.kind === 'declined') {
+            endApply(me);
+            // A cancelled polkit prompt on a machine-wide update (smoke
+            // 14.10). Nothing changed and the update is still ready, so
+            // there is no state to re-read, and a refresh would repaint the
+            // line straight back to "update: vX".
+            setStatusError(reasonToUserMessage('uac-declined', ''));
+            return;
+        }
+        failApply(me, failure.reason !== undefined ? `apply failed: ${failure.reason}` : `apply failed (${r.status})`);
+    }
+
+    function showApplyLine(text: string): void {
+        if (!statusEl) return;
+        statusEl.textContent = text;
+        statusEl.classList.remove('settings-status-error', 'settings-status-ready');
+    }
+
+    function downloadingLine(progress: number | undefined): string {
+        const pct = typeof progress === 'number' ? Math.max(0, Math.min(100, Math.round(progress))) : 0;
+        return `downloading update… ${pct}%`;
+    }
+
+    /** One status read for the apply in flight. */
+    async function readApplyStatus(me: ApplyRun): Promise<void> {
+        let s: UpdatesStatusResponse;
+        try {
+            const r = await fetch('/api/updates/status');
+            if (!r.ok) throw new Error(`status ${r.status}`);
+            s = (await r.json()) as UpdatesStatusResponse;
+        } catch {
+            if (run !== me || restarting) return;
+            // The apply's answer was lost and now the server does not answer
+            // either: it has gone down for the update. While the request is
+            // still open, its own answer decides.
+            if (me.lost) void startRestart();
+            return;
+        }
+        if (run !== me || restarting) return;
+        lastStatus = s;
+        if (!me.lost) {
+            showApplyLine(s.status === 'downloading' ? downloadingLine(s.progress) : 'installing update…');
+            return;
+        }
+        const view = me.lost.watch.read(s);
+        switch (view.kind) {
+            case 'downloading':
+                showApplyLine(downloadingLine(view.progress));
+                return;
+            case 'installing':
+                showApplyLine('installing update…');
+                return;
+            case 'failed':
+                failApply(me, `apply failed: ${view.reason}`);
+                return;
+            default:
+                // 'gave-up' or 'ended': it did not happen, and nothing says why.
+                failApply(me, me.lost.reason);
+        }
+    }
+
+    function followLostApply(me: ApplyRun, reason: string): void {
+        if (run !== me) return;
+        me.lost = { watch: new LostApplyWatch(), reason };
+        void readApplyStatus(me);
+    }
+
+    function endApply(me: ApplyRun): void {
+        if (me.timer !== undefined) window.clearInterval(me.timer);
+        me.timer = undefined;
+        if (run === me) run = null;
+        me.btn.disabled = false;
+        me.btn.textContent = me.prevText;
+    }
+
+    /**
+     * The apply failed: say why, and re-read the state. The refresh rebuilds
+     * the body and re-baselines, so any staged edit is dropped — the same
+     * rebuild the pre-tabs code did, and the alternative (a stale body
+     * describing a state that has moved on) is worse. The failure line rides
+     * through the rebuild, or the user never gets to read it; and while the
+     * check a failed download starts is running, the status is followed
+     * until it ends, or the button would stay disabled.
+     */
+    function failApply(me: ApplyRun, line: string): void {
+        endApply(me);
+        setStatusError(line);
+        void runRefresh(line).then(() => settleAfterFailure(line));
+    }
+
+    function stopSettling(): void {
+        if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+        settleTimer = undefined;
+    }
+
+    function settleAfterFailure(line: string): void {
+        stopSettling();
+        if (!lastStatus || (lastStatus.status !== 'checking' && lastStatus.status !== 'downloading')) return;
+        settleTimer = window.setTimeout(() => {
+            settleTimer = undefined;
+            void (async () => {
+                let s: UpdatesStatusResponse;
+                try {
+                    const r = await fetch('/api/updates/status');
+                    if (!r.ok) return;
+                    s = (await r.json()) as UpdatesStatusResponse;
+                } catch {
                     return;
                 }
-                const failed = `apply failed (${r.status})`;
-                setStatusError(failed);
-                // Re-poll to learn the current state (probably 409 because state
-                // wasn't 'ready' anymore by the time we got here). This rebuilds
-                // the body and re-baselines, so any staged edit is dropped — the
-                // same rebuild the pre-tabs code did, and the alternative (a
-                // stale body describing a state that has moved on) is worse. The
-                // failure line rides through the rebuild, or the user never gets
-                // to read it.
-                void runRefresh(failed);
-                return;
-            }
-            const applyBody = (await r.json().catch(() => ({}))) as { mode?: string };
-            if (applyBody.mode === 'reconnect') {
-                // Linux: server relaunching the AppImage. Show the upgrading
-                // overlay and poll the same origin until the new version answers.
-                await runUpgradingHandoff(lastStatus?.currentVersion ?? '');
-                return;
-            }
-            // Success: server is exiting within ~100ms. Show "restarting…" and
-            // attempt a page reload after a 5s grace period. The reload will
-            // fail until Velopack finishes the swap and relaunches the server;
-            // that's expected — leave the message visible.
-            if (statusEl) {
-                statusEl.textContent = 'server restarting to apply update — page will reload…';
-            }
-            btn.textContent = 'restarting…';
-            window.setTimeout(() => {
-                try {
-                    ctx.reload();
-                } catch {
-                    /* server still down — user will reload manually */
+                if (run !== null || restarting) return;
+                lastStatus = s;
+                applyActionButtonState(s);
+                // The failure stays up while its check runs; a download, or the
+                // check's answer, replaces it unless that answer does not say why.
+                if (s.status === 'checking' || (s.status === 'ready' && s.lastApplyError === undefined)) {
+                    setStatusError(line);
+                } else {
+                    applyStatusText(s);
                 }
-            }, 5_000);
-        } catch {
-            setStatusError("couldn't reach server");
-            btn.disabled = false;
-            btn.textContent = prevText;
-            applyInFlight = false;
-            void runRefresh("couldn't reach server");
+                settleAfterFailure(line);
+            })();
+        }, APPLY_POLL_MS);
+    }
+
+    /**
+     * The server is going down for the update: say so and reload, or on Linux
+     * (`mode: 'reconnect'`) hand over to the upgrading overlay. Used by an apply
+     * that answered 200, and by one whose answer was lost once the server stops
+     * answering.
+     */
+    async function startRestart(mode?: string): Promise<void> {
+        if (restarting) return;
+        restarting = true;
+        const me = run;
+        if (me?.timer !== undefined) window.clearInterval(me.timer);
+        if (me) me.timer = undefined;
+        if (mode === 'reconnect') {
+            // Linux: server relaunching the AppImage. Show the upgrading
+            // overlay and poll the same origin until the new version answers.
+            await runUpgradingHandoff(lastStatus?.currentVersion ?? '');
+            return;
         }
+        // The server is exiting within ~100ms. Show "restarting…" and attempt
+        // a page reload after a 5s grace period. The reload will fail until
+        // Velopack finishes the swap and relaunches the server; that's
+        // expected — leave the message visible.
+        showApplyLine('server restarting to apply update — page will reload…');
+        if (me) me.btn.textContent = 'restarting…';
+        window.setTimeout(() => {
+            try {
+                ctx.reload();
+            } catch {
+                /* server still down — user will reload manually */
+            }
+        }, APPLY_RELOAD_DELAY_MS);
     }
 
     async function onCheckNowClick(): Promise<void> {

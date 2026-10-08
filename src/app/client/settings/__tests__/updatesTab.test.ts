@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UpdatesStatusResponse } from '../../../../common/UpdateEvents';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { askUnbound } from '../tabs/EmbeddingTab';
@@ -486,7 +486,7 @@ describe('UpdatesTab', () => {
             expect(btn.textContent).toBe('apply v0.2.0');
         });
 
-        it('any other failure keeps the "apply failed (N)" line', async () => {
+        it('any other failure says why, from the answer itself', async () => {
             const { el } = await mountUpdatesTab(ready);
             // The follow-up status read is held open so the line can be read
             // before that refresh repaints the section.
@@ -495,7 +495,7 @@ describe('UpdatesTab', () => {
                     ? Promise.resolve({
                           ok: false,
                           status: 500,
-                          json: () => Promise.resolve({ ok: false, error: 'boom' }),
+                          json: () => Promise.resolve({ ok: false, error: 'update download failed: boom' }),
                       })
                     : new Promise(() => undefined),
             );
@@ -504,11 +504,28 @@ describe('UpdatesTab', () => {
             applyBtnOf(el).click();
             await flush();
 
-            expect(actionStatusOf(el).textContent).toBe('apply failed (500)');
+            expect(actionStatusOf(el).textContent).toBe('apply failed: update download failed: boom');
             expect(f.mock.calls.map((c) => String(c[0]))).toContain('/api/updates/status');
         });
 
-        it('the "apply failed (N)" line survives the follow-up refresh', async () => {
+        it('a failure whose answer gives no reason keeps the "apply failed (N)" line', async () => {
+            const { el } = await mountUpdatesTab(ready);
+            stubApply(() =>
+                Promise.resolve({
+                    ok: false,
+                    status: 500,
+                    json: () => Promise.reject(new SyntaxError('Unexpected end of JSON input')),
+                }),
+            );
+
+            applyBtnOf(el).click();
+            await flush();
+            await flush();
+
+            expect(actionStatusOf(el).textContent).toBe('apply failed (500)');
+        });
+
+        it('the "apply failed" line survives the follow-up refresh', async () => {
             const { el } = await mountUpdatesTab(ready);
             const f = stubApply(() =>
                 Promise.resolve({
@@ -529,20 +546,28 @@ describe('UpdatesTab', () => {
             expect(btn.textContent).toBe('apply v0.2.0');
             // ...but the reason the apply failed is still on screen.
             const line = actionStatusOf(el);
-            expect(line.textContent).toBe('apply failed (500)');
+            expect(line.textContent).toBe('apply failed: boom');
             expect(line.classList.contains('settings-status-error')).toBe(true);
         });
 
-        it('an apply request that never reached the server keeps saying so after the refresh', async () => {
-            const { el } = await mountUpdatesTab(ready);
-            stubApply(() => Promise.reject(new TypeError('Failed to fetch')));
+        it('an apply request that never reached the server says so, once the grace has passed', async () => {
+            vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'] });
+            try {
+                const { el } = await mountUpdatesTab(ready);
+                stubApply(() => Promise.reject(new TypeError('Failed to fetch')));
 
-            applyBtnOf(el).click();
-            await flush();
-            await flush();
+                applyBtnOf(el).click();
+                await vi.advanceTimersByTimeAsync(0);
+                // The server answers `ready` with nothing recorded, which is also
+                // the moment between the download and the hand-off: waited out.
+                expect(actionStatusOf(el).textContent).toBe('installing update…');
+                await vi.advanceTimersByTimeAsync(32_000);
 
-            expect(applyBtnOf(el).textContent).toBe('apply v0.2.0');
-            expect(actionStatusOf(el).textContent).toBe("couldn't reach server");
+                expect(applyBtnOf(el).textContent).toBe('apply v0.2.0');
+                expect(actionStatusOf(el).textContent).toBe("couldn't reach server");
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it('the next action on the tab replaces the kept failure line', async () => {
@@ -557,13 +582,130 @@ describe('UpdatesTab', () => {
             applyBtnOf(el).click();
             await flush();
             await flush();
-            expect(actionStatusOf(el).textContent).toBe('apply failed (500)');
+            expect(actionStatusOf(el).textContent).toBe('apply failed: boom');
 
             const owner = ownerInputOf(el);
             owner.value = 'someone-else';
             owner.dispatchEvent(new Event('blur'));
 
             expect(actionStatusOf(el).textContent).toBe('update: v0.2.0');
+        });
+    });
+
+    /**
+     * On Windows the apply downloads the update before it installs, so the
+     * request can stay open for minutes, and a proxy or the browser may give up
+     * on it while the install carries on.
+     */
+    describe('apply: an install that runs longer than its request', () => {
+        const ready = status({ status: 'ready', availableVersion: '0.2.0' });
+        const applyBtnOf = (el: HTMLElement): HTMLButtonElement =>
+            [...el.querySelectorAll('button')].find((b) => /apply|restarting/i.test(b.textContent ?? ''))!;
+
+        /** `status` answers the reads (they fail once `down`); the apply is held until answered. */
+        function scriptedServer() {
+            const server = {
+                status: ready,
+                down: false,
+                answerApply: undefined as ((r: unknown) => void) | undefined,
+            };
+            const f = vi.fn((url: string) => {
+                if (url === '/api/updates/apply') {
+                    return new Promise((resolve) => {
+                        server.answerApply = resolve;
+                    });
+                }
+                return server.down
+                    ? Promise.reject(new TypeError('Failed to fetch'))
+                    : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(server.status) });
+            });
+            return { server, f };
+        }
+
+        beforeEach(() => {
+            vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'] });
+        });
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('shows the download while the request is open', async () => {
+            const { el } = await mountUpdatesTab(ready);
+            const { server, f } = scriptedServer();
+            vi.stubGlobal('fetch', f);
+
+            applyBtnOf(el).click();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(actionStatusOf(el).textContent).toBe('installing update…');
+
+            server.status = { ...ready, status: 'downloading', progress: 40 };
+            await vi.advanceTimersByTimeAsync(2_000);
+            expect(actionStatusOf(el).textContent).toBe('downloading update… 40%');
+            expect(applyBtnOf(el).disabled).toBe(true);
+        });
+
+        it('a 504 from a proxy is not a failure: it follows the install, then restarts when the server goes down', async () => {
+            const reload = vi.fn();
+            const store = new StagedSettingsStore();
+            const { server, f } = scriptedServer();
+            vi.stubGlobal('fetch', f);
+            const el = buildUpdatesTab({ ...ctx, reload }, store);
+            await refreshUpdates(el);
+            server.status = { ...ready, status: 'downloading', progress: 70 };
+
+            applyBtnOf(el).click();
+            await vi.advanceTimersByTimeAsync(0);
+            server.answerApply!({
+                ok: false,
+                status: 504,
+                json: () => Promise.reject(new SyntaxError('Unexpected token <')),
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(actionStatusOf(el).textContent).toBe('downloading update… 70%');
+
+            server.down = true;
+            await vi.advanceTimersByTimeAsync(2_000);
+            const btn = applyBtnOf(el);
+            expect(btn.textContent).toBe('restarting…');
+            expect(btn.closest('.settings-row')!.querySelector('.settings-label')!.textContent).toBe(
+                'server restarting to apply update — page will reload…',
+            );
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(reload).toHaveBeenCalledTimes(1);
+        });
+
+        it('a failed install recorded by the server is shown on a tab opened after it', async () => {
+            const { el } = await mountUpdatesTab({ ...ready, lastApplyError: 'update download failed: 503' });
+
+            const line = actionStatusOf(el);
+            expect(line.textContent).toBe('apply failed: update download failed: 503');
+            expect(line.classList.contains('settings-status-error')).toBe(true);
+            expect(applyBtnOf(el).textContent).toBe('apply v0.2.0');
+        });
+
+        it('after a failed install, the check the server starts is followed until the button can retry', async () => {
+            const { el } = await mountUpdatesTab(ready);
+            const { server, f } = scriptedServer();
+            vi.stubGlobal('fetch', f);
+
+            applyBtnOf(el).click();
+            await vi.advanceTimersByTimeAsync(0);
+            server.status = { ...ready, status: 'checking' };
+            server.answerApply!({
+                ok: false,
+                status: 500,
+                json: () => Promise.resolve({ ok: false, error: 'update download failed: 503' }),
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            // The refresh found the check running: the reason stays up.
+            expect(actionStatusOf(el).textContent).toBe('apply failed: update download failed: 503');
+
+            server.status = { ...ready, lastApplyError: 'update download failed: 503' };
+            await vi.advanceTimersByTimeAsync(2_000);
+            expect(actionStatusOf(el).textContent).toBe('apply failed: update download failed: 503');
+            const btn = applyBtnOf(el);
+            expect(btn.textContent).toBe('apply v0.2.0');
+            expect(btn.disabled).toBe(false);
         });
     });
 
