@@ -133,8 +133,12 @@ async function settled(svc: UpdateService): Promise<void> {
 /**
  * A Velopack manager. Overrides of downloadUpdateAsync and
  * waitExitThenApplyUpdate are wrapped, not replaced: a download that resolves
- * puts its package in the packages folder (velopackPackages), and an apply
- * throws Velopack's FileNotFound unless the package is there.
+ * puts its package in the packages folder (velopackPackages) and, as Velopack
+ * does, deletes every other package there (velopack 1.2.161
+ * `manager.rs:419-481`) -- unless its own package was already on disk, which
+ * Velopack skips without touching anything (`manager.rs:414-417`). An apply
+ * throws Velopack's FileNotFound unless the package is there. So "download A,
+ * download B, install A" fails here as it would for real.
  */
 function fakeMgr(overrides: Partial<UpdateManagerLike> = {}): UpdateManagerLike {
     const {
@@ -147,8 +151,11 @@ function fakeMgr(overrides: Partial<UpdateManagerLike> = {}): UpdateManagerLike 
         checkForUpdatesAsync: async () => null,
         ...rest,
         downloadUpdateAsync: async (update, progress) => {
+            const name = update.TargetFullRelease.FileName;
+            const alreadyOnDisk = velopackPackages.onDisk.has(name);
             await downloadUpdateAsync(update, progress);
-            velopackPackages.onDisk.add(update.TargetFullRelease.FileName);
+            if (!alreadyOnDisk) velopackPackages.onDisk.clear();
+            velopackPackages.onDisk.add(name);
         },
         waitExitThenApplyUpdate: (update, silent, restart, restartArgs) => {
             const name = update.TargetFullRelease.FileName;
@@ -249,10 +256,9 @@ describe('UpdateService', () => {
     });
 
     afterEach(() => {
-        // Every operation-server a test spawned found its package (see velopackPackages).
-        expect(velopackPackages.operationServerMissing, 'operation-server spawned with its package missing').toEqual(
-            [],
-        );
+        // Read now, asserted after the cleanup below: a failing assertion here
+        // must not skip the restores and cascade into the next test.
+        const operationServerMissing = [...velopackPackages.operationServerMissing];
         // The stream registry is a module singleton: a failed apply test can leave
         // a fake stream in it or the stop flag set, and that must not reach the
         // next test.
@@ -281,6 +287,21 @@ describe('UpdateService', () => {
                 /* best-effort */
             }
         }
+        // Every operation-server a test spawned found its package (see velopackPackages).
+        expect(operationServerMissing, 'operation-server spawned with its package missing').toEqual([]);
+    });
+
+    it('the fake packages folder keeps only the package downloaded last, as Velopack does', async () => {
+        const mgr = fakeMgr();
+        const a = fakeUpdateInfo('0.2.0');
+        const b = fakeUpdateInfo('0.3.0');
+        await mgr.downloadUpdateAsync(a);
+        await mgr.downloadUpdateAsync(b);
+        // Downloading B deleted A: installing A now is Velopack's FileNotFound.
+        expect(() => mgr.waitExitThenApplyUpdate(a)).toThrow('File does not exist');
+        // A package already on disk is skipped, and deletes nothing.
+        await mgr.downloadUpdateAsync(b);
+        expect(() => mgr.waitExitThenApplyUpdate(b)).not.toThrow();
     });
 
     // ── Dev mode detection ──────────────────────────────────────────────
