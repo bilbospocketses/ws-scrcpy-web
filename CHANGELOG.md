@@ -5,17 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **A note on release history.** Every version below `0.1.30` was a development
-> milestone published during bring-up, while the app was not yet a working
-> cross-platform application. To avoid implying those builds were finished
-> releases, their GitHub Releases have been removed — but every git tag is
-> retained, so the full history stays browsable and the per-version entries
-> below are unchanged. **`0.1.30` is the project's first true release** — the
-> first build that is functional on both Windows and Linux — published once
-> Linux is fully verified. The **next full release** will ship alongside the
-> Docker image.
+> **A note on release history.** Every version below `0.5.0` was a development
+> milestone or a beta. The GitHub Releases of the versions below `0.1.30`
+> (bring-up builds, before the app worked on both platforms) have been removed
+> so they are not mistaken for finished releases. Every git tag is kept, so the
+> history stays browsable and the entries below are unchanged. **`0.5.0` is the
+> project's first production release.** Betas after it are numbered
+> `0.5.1-beta.N`.
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-10-08
+
+### Changed
+- **This is ws-scrcpy-web's first production release.** It contains everything listed under the `0.1.30-beta` versions in `CHANGELOG.md`. That covers the Windows installers (MSI and portable zip) and the Linux AppImage, which update themselves, and the Docker image (`bilbospocketses/ws-scrcpy-web` on Docker Hub, mirrored on GHCR), which is now tagged `latest` and `stable` for the first time. A beta-channel install on `0.1.30-beta.200` or later is offered this release and stays on the beta channel, so its next update is the first `0.5.1-beta`. An older beta install updates to the newest beta first.
 
 ## [0.1.30-beta.205] - 2026-10-08
 
