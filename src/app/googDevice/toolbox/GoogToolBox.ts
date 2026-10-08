@@ -147,10 +147,16 @@ export class GoogToolBox extends ToolBox {
         });
         elements.push(refresh);
 
-        // GET: pull device clipboard to host
-        const clipGet = new ToolBoxButton('copy device clipboard to host', SvgImage.Icon.CLIPBOARD_GET);
+        // GET: copy the device's selection to the host clipboard. This is what
+        // upstream scrcpy sends for Ctrl+C (input_manager.c, SC_COPY_KEY_COPY):
+        // the device presses COPY on its current selection, and the clipboard
+        // autosync we leave on carries the new text back as a CLIPBOARD device
+        // message. With copy_key NONE the device stays silent while autosync is
+        // on (Controller.getClipboard only replies when it is off), so the
+        // button did nothing at all.
+        const clipGet = new ToolBoxButton('copy device selection to host clipboard', SvgImage.Icon.CLIPBOARD_GET);
         clipGet.addEventListener('click', () => {
-            client.sendMessage(CommandControlMessage.createGetClipboardCommand());
+            client.sendMessage(CommandControlMessage.createGetClipboardCommand(CommandControlMessage.COPY_KEY_COPY));
         });
         elements.push(clipGet);
 

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The toolbar's clipboard button now copies the device's selection to this computer's clipboard.** It did nothing before: it asked the device for its clipboard in a way the device only answers when clipboard syncing is off, and the app keeps syncing on. The button, now labelled "copy device selection to host clipboard", does what Ctrl+C does in scrcpy's own app: the device copies whatever is selected on its screen, and that text arrives on this computer's clipboard. Text you copy on the device yourself still arrives on its own, as before.
+
 ## [0.1.30-beta.200] - 2026-10-08
 
 ### Changed
