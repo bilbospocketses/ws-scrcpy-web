@@ -35,7 +35,7 @@ describe('getInstalledScrcpyServerVersion', () => {
         expect(getInstalledScrcpyServerVersion(tmpDir)).toBe('4.0');
     });
 
-    it('falls back to SERVER_VERSION when marker is absent (legacy seed install)', () => {
+    it('falls back to SERVER_VERSION when there is neither a marker nor a jar to identify', () => {
         expect(getInstalledScrcpyServerVersion(tmpDir)).toBe(SERVER_VERSION);
     });
 

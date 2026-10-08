@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SERVER_JAR_SHA256, SERVER_VERSION } from '../common/Constants';
 import { writeFileAtomicSync } from './util/atomicFile';
+import { sha256FileSync } from './verifySha256';
 
 const VERSION_MARKER = '.version';
 
@@ -22,18 +23,56 @@ export function readScrcpyServerVersionMarker(depsPath: string): string | null {
 }
 
 /**
+ * What a marker-less jar was identified as, per jar path, and the file
+ * identity it was identified from. A replaced jar (an atomic rename) has a new
+ * inode, mtime or size, so it is hashed again; an unchanged one never is.
+ */
+const identifiedJars = new Map<string, { ino: number; size: number; mtimeMs: number; version: string | null }>();
+
+/**
+ * The version whose pinned hash the marker-less jar at `jar` matches, or null
+ * when it matches none, is absent or cannot be read. Hashed at most once per
+ * change to the file (see `identifiedJars`).
+ */
+function identifyMarkerlessJar(jar: string): string | null {
+    let stat: fs.Stats;
+    try {
+        stat = fs.statSync(jar);
+    } catch {
+        return null;
+    }
+    const seen = identifiedJars.get(jar);
+    if (seen && seen.ino === stat.ino && seen.size === stat.size && seen.mtimeMs === stat.mtimeMs) {
+        return seen.version;
+    }
+    let version: string | null = null;
+    try {
+        version = scrcpyServerVersionForSha256(sha256FileSync(jar));
+    } catch {
+        version = null;
+    }
+    identifiedJars.set(jar, { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, version });
+    return version;
+}
+
+/**
  * Reads the actual installed scrcpy-server version from the on-disk
- * marker at <deps>/scrcpy-server/.version, falling back to the bundled
- * SERVER_VERSION constant when the marker is absent or empty.
+ * marker at <deps>/scrcpy-server/.version. With no marker, the jar is
+ * identified by its SHA-256 against SERVER_JAR_SHA256; only a jar that is
+ * absent, unreadable or matches no pin falls back to the bundled
+ * SERVER_VERSION constant.
  *
  * The marker is written by DependencyManager.installScrcpyServer after
  * a successful updater download, and by the seed promote. A jar an earlier
  * build seed-promoted WITHOUT a marker is given one at boot, before any probe
- * or stream can start, by DependencyManager.repairScrcpyServerVersionMarker:
- * the fallback here used to be what answered for it, and after a
- * SERVER_VERSION bump it named a version that jar is not.
+ * or stream can start, by DependencyManager.repairScrcpyServerVersionMarker.
+ * The hash lookup here covers the case where that marker could not be
+ * written (2026-10-08): answering SERVER_VERSION for a pinned 4.1 jar would
+ * start it as "5.0", which the server refuses.
  *
- * Deliberately a cheap synchronous read: it runs on every probe and stream.
+ * Deliberately cheap and synchronous: it runs on every probe and stream. A
+ * marker is one small read; a marker-less jar is hashed once and then
+ * remembered until the file changes.
  *
  * Used by:
  *  - DependencyDefinitions.scrcpy-server.checkInstalled — for the UI's
@@ -46,7 +85,22 @@ export function readScrcpyServerVersionMarker(depsPath: string): string | null {
  *    against an updated JAR causes silent connection failures.
  */
 export function getInstalledScrcpyServerVersion(depsPath: string): string {
-    return readScrcpyServerVersionMarker(depsPath) ?? SERVER_VERSION;
+    return (
+        readScrcpyServerVersionMarker(depsPath) ??
+        identifyMarkerlessJar(path.join(depsPath, 'scrcpy-server', 'scrcpy-server')) ??
+        SERVER_VERSION
+    );
+}
+
+/**
+ * Deletes <deps>/scrcpy-server/.version. Called BEFORE a jar is copied in, so
+ * a crash between the copy and the new marker leaves a marker-less jar --
+ * which the boot repair identifies by its hash -- rather than a new jar under
+ * the old jar's marker, which nothing would ever question. Throws when the
+ * marker exists and cannot be removed, so the caller does not copy.
+ */
+export function removeScrcpyServerVersionMarker(depsPath: string): void {
+    fs.rmSync(path.join(depsPath, 'scrcpy-server', VERSION_MARKER), { force: true });
 }
 
 /**

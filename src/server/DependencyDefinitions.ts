@@ -351,9 +351,11 @@ export function getDependencyDefinitions(
             fallbackVersion: SERVER_VERSION,
             checkInstalled: async (depsPath) => {
                 // The JAR file presence gates "installed at all"; the actual version
-                // comes from the .version marker (or SERVER_VERSION as fallback for
-                // legacy seed installs that predate the marker). Pre-fix this
-                // returned SERVER_VERSION unconditionally even when the on-disk
+                // comes from the .version marker. A seed install that predates the
+                // marker is given one at boot (repairScrcpyServerVersionMarker), and
+                // a jar still without one is identified by its pinned hash, so
+                // SERVER_VERSION answers only for a jar nothing can name. Pre-fix
+                // this returned SERVER_VERSION unconditionally even when the on-disk
                 // binary had been replaced by an updater download — UI showed
                 // "Update available" forever in a loop. See scrcpyServerVersion.ts.
                 const file = path.join(depsPath, 'scrcpy-server', 'scrcpy-server');
@@ -391,8 +393,9 @@ export function getDependencyDefinitions(
                 return compareVersions(tag, SERVER_VERSION) > 0 ? SERVER_VERSION : tag;
             },
             // Authoritative, so a server installed ABOVE the supported version
-            // (someone who took v5.0 before the cap) is offered the supported
-            // one back, instead of "newer than latest, stay put".
+            // (a scrcpy release newer than this build's SERVER_VERSION) is
+            // offered the supported one back, instead of "newer than latest,
+            // stay put".
             latestIsAuthoritative: true,
             getDownloadUrl: (version) => {
                 return `https://github.com/Genymobile/scrcpy/releases/download/v${version}/${scrcpyServerAssetName(version)}`;

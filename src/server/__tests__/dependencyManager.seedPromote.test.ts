@@ -1,10 +1,16 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVER_VERSION } from '../../common/Constants';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyManager } from '../DependencyManager';
+
+// The seed must match a pinned hash since 2026-10-08, so it is the vendored jar.
+const SEED = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'assets', 'scrcpy-server'),
+);
 
 vi.mock('../service/elevatedRunner', () => ({
     launcherIsAvailable: vi.fn(async () => true),
@@ -29,7 +35,7 @@ describe('DependencyManager.autoInstallMissing — the promoted seed counts as i
         fs.mkdirSync(depsPath);
         seedFile = path.join(root, 'seed', 'scrcpy-server', 'scrcpy-server');
         fs.mkdirSync(path.dirname(seedFile), { recursive: true });
-        fs.writeFileSync(seedFile, 'seed-jar-bytes');
+        fs.writeFileSync(seedFile, SEED);
     });
 
     afterEach(() => {
@@ -58,7 +64,7 @@ describe('DependencyManager.autoInstallMissing — the promoted seed counts as i
 
         await mgr.autoInstallMissing();
 
-        expect(fs.readFileSync(path.join(depsPath, 'scrcpy-server', 'scrcpy-server'), 'utf8')).toBe('seed-jar-bytes');
+        expect(fs.readFileSync(path.join(depsPath, 'scrcpy-server', 'scrcpy-server')).equals(SEED)).toBe(true);
         expect(update).not.toHaveBeenCalledWith('scrcpy-server');
         expect(mgr.getByName('scrcpy-server')!.installedVersion).toBe(SERVER_VERSION);
     });

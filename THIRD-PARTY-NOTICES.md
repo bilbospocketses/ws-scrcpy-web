@@ -38,7 +38,7 @@ This project bundles the [scrcpy](https://github.com/Genymobile/scrcpy) server c
 
 ```
 Copyright (c) 2018 Genymobile
-Copyright (c) 2018-2025 Romain Vimont
+Copyright (c) 2018-2026 Romain Vimont
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
