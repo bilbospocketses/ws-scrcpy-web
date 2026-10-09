@@ -358,11 +358,11 @@ describe('local https panel', () => {
 // While the server says it is not installed, generate and the subject controls
 // that only feed it are disabled, with a line pointing at the Dependencies tab.
 describe('local https panel: generate waits for mkcert', () => {
-    const mkcertRow = (installedVersion: string | null) => ({
+    const mkcertRow = (installedVersion: string | null, status?: string) => ({
         name: 'mkcert',
         displayName: 'mkcert',
         installedVersion,
-        status: installedVersion === null ? 'not-installed' : 'up-to-date',
+        status: status ?? (installedVersion === null ? 'not-installed' : 'up-to-date'),
     });
 
     /** Answers /api/dependencies from `deps()` (re-read every call), everything else with the TLS state. */
@@ -501,6 +501,33 @@ describe('local https panel: generate waits for mkcert', () => {
         expect(await fetchMkcertInstalled(answer({ status: 'none' }))).toBeNull();
         expect(await fetchMkcertInstalled(answer([], 403))).toBeNull();
         expect(await fetchMkcertInstalled(answer([]))).toBeNull();
+    });
+
+    it('fetchMkcertInstalled says "not installed" only when the server said so', async () => {
+        const answer = (body: unknown) =>
+            vi.fn(async () => new Response(JSON.stringify(body))) as unknown as typeof fetch;
+        // The server's own verdicts.
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null, 'not-installed')]))).toBe(false);
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null, 'error')]))).toBe(false);
+        // The boot window: before checkAll reaches mkcert every dependency is
+        // `unknown` with a null version. That is "cannot tell", not "missing".
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null, 'unknown')]))).toBeNull();
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null, 'checking')]))).toBeNull();
+        expect(await fetchMkcertInstalled(answer([{ name: 'mkcert', installedVersion: null }]))).toBeNull();
+        // An installed version wins whatever the status says.
+        expect(await fetchMkcertInstalled(answer([mkcertRow('v0.1.0', 'error')]))).toBe(true);
+    });
+
+    it('in the boot window (mkcert still unknown) generate stays enabled and no notice is shown', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(null, 'unknown')]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(false);
+        expect(c.subject.disabled).toBe(false);
+        expect(c.notice.hidden).toBe(true);
     });
 });
 

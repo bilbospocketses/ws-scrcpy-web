@@ -1,4 +1,5 @@
 import type { AppConfigEnvelope } from '../../../../common/ConfigEvents';
+import { DependencyStatus } from '../../../../common/DependencyTypes';
 import type { ServiceStatusResponse } from '../../../../common/ServiceEvents';
 import { authClient } from '../../AuthClient';
 import { canSeeSection } from '../../adminGate';
@@ -533,6 +534,15 @@ function setNotice(el: HTMLParagraphElement, text: string | null): void {
  * installs a missing mkcert itself (createCertService.ts's backstop), so a
  * wrong "enabled" costs a slower first generate, while a wrong "disabled"
  * would lock a working feature behind a read that happened to fail.
+ *
+ * "Not installed" (false) needs the server to have SAID so: status
+ * `not-installed`, or `error` with no installed version. A null
+ * `installedVersion` alone is not enough: until the boot's `checkAll` reaches
+ * mkcert, every dependency reads `unknown` with a null version
+ * (DependencyManager's initial state), and treating that as missing disabled
+ * generate while the Dependencies tab showed Unknown with no install button to
+ * fix it. `unknown`, `checking` and the rest answer null, and the panel fails
+ * open.
  */
 export async function fetchMkcertInstalled(fetchFn: typeof fetch): Promise<boolean | null> {
     try {
@@ -540,11 +550,14 @@ export async function fetchMkcertInstalled(fetchFn: typeof fetch): Promise<boole
         if (!res.ok) return null;
         const deps = (await res.json()) as unknown;
         if (!Array.isArray(deps)) return null;
-        const mkcert = (deps as Array<{ name?: unknown; installedVersion?: unknown }>).find(
+        const mkcert = (deps as Array<{ name?: unknown; installedVersion?: unknown; status?: unknown }>).find(
             (d) => d !== null && typeof d === 'object' && d.name === 'mkcert',
         );
         if (!mkcert) return null;
-        return typeof mkcert.installedVersion === 'string' && mkcert.installedVersion.length > 0;
+        if (typeof mkcert.installedVersion === 'string' && mkcert.installedVersion.length > 0) return true;
+        if (mkcert.status === DependencyStatus.NotInstalled) return false;
+        if (mkcert.status === DependencyStatus.Error && (mkcert.installedVersion ?? null) === null) return false;
+        return null;
     } catch {
         return null;
     }
