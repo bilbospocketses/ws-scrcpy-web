@@ -1106,15 +1106,47 @@ pub fn write_stop_marker(data_root: &Path) -> std::io::Result<PathBuf> {
 ///
 /// Refreshed on every supervisor startup so the helper tracks the
 /// currently-installed launcher version. Best-effort — caller logs +
-/// continues on failure. Returns the helper path on success.
-pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<PathBuf> {
+/// continues on failure. Returns what the refresh did on success.
+///
+/// Item 173 (2026-10-08): after an update the PREVIOUS update's
+/// operation-server is usually still running from the helper when the new
+/// launcher starts (it is what launched it, and it lives on for its 30 s
+/// lifetime / 15 s wind-down). Overwriting a running image fails on Windows
+/// with ERROR_SHARING_VIOLATION (os error 32), which left the helper the OLD
+/// build until the launcher next restarted, so the next update or uninstall
+/// ran it. Windows does allow RENAMING a running image, so `install_helper_copy`
+/// moves the busy copy aside and puts the new one in its place: the helper
+/// matches `current/` before this launcher spawns Node, and therefore before
+/// anything can spawn the helper again. The moved-aside copy is deleted by a
+/// later refresh, once its process has exited.
+pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<HelperRefresh> {
     let current = std::env::current_exe()?;
+    refresh_helper_from(&current, data_root)
+}
 
+/// What `refresh_helper_binary` did to the canonical helper.
+#[derive(Debug, PartialEq, Eq)]
+pub enum HelperRefresh {
+    /// Copied over the previous helper (or into an empty slot).
+    Copied(PathBuf),
+    /// The previous helper was still running, so it was renamed to `aside`
+    /// and the new build copied to `path` (Windows only; see
+    /// `install_helper_copy`).
+    MovedAside { path: PathBuf, aside: PathBuf },
+}
+
+/// `refresh_helper_binary` with the source binary as a parameter, so tests can
+/// refresh from a file of their own instead of the test runner.
+pub(crate) fn refresh_helper_from(
+    source: &Path,
+    data_root: &Path,
+) -> std::io::Result<HelperRefresh> {
     // Canonical (new) location.
     let new_dir = data_root.join("control").join("operation-server");
     std::fs::create_dir_all(&new_dir)?;
+    remove_stale_helpers(&new_dir);
     let new_path = new_dir.join("ws-scrcpy-web-launcher.exe");
-    std::fs::copy(&current, &new_path)?;
+    let outcome = install_helper_copy(source, &new_path)?;
 
     // Legacy location — dual-write so existing post-stop.bat files
     // (referencing <dataRoot>/upgrade-server/launcher.exe) keep working
@@ -1122,10 +1154,103 @@ pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<PathBuf> {
     // failure does not propagate.
     let legacy_dir = data_root.join("control").join("upgrade-server");
     let _ = std::fs::create_dir_all(&legacy_dir);
+    remove_stale_helpers(&legacy_dir);
     let legacy_path = legacy_dir.join("ws-scrcpy-web-launcher.exe");
-    let _ = std::fs::copy(&current, &legacy_path);
+    let _ = install_helper_copy(source, &legacy_path);
 
-    Ok(new_path)
+    Ok(outcome)
+}
+
+/// Pure: is `raw` the OS's "this executable is running, so it cannot be
+/// overwritten" code? Windows reports ERROR_SHARING_VIOLATION (32); Linux
+/// reports ETXTBSY (26). Each number means something else on the other
+/// platform (32 is EPIPE on Linux), so the platform is a parameter and
+/// `helper_busy_error` passes the one this build runs on.
+pub(crate) fn is_helper_busy_code(raw: Option<i32>, windows: bool) -> bool {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ETXTBSY: i32 = 26;
+    raw == Some(if windows {
+        ERROR_SHARING_VIOLATION
+    } else {
+        ETXTBSY
+    })
+}
+
+/// True when a helper copy failed because the destination is a running image.
+pub(crate) fn helper_busy_error(e: &std::io::Error) -> bool {
+    is_helper_busy_code(e.raw_os_error(), cfg!(windows))
+}
+
+/// Suffix of a helper moved aside because it was running (`<name>.stale-<ms>`).
+const STALE_HELPER_MARK: &str = ".stale-";
+
+/// Copy `source` over `dest`. On Windows, a `dest` that is a running image
+/// cannot be overwritten (os error 32) but can be renamed, so it is moved to
+/// `<dest>.stale-<ms>` and the copy retried. If that second copy fails, the
+/// old helper is moved back, so a failed refresh never leaves NO helper. A
+/// rename that fails returns the ORIGINAL busy error, so the caller still
+/// classifies it as busy. Linux is unchanged: ETXTBSY there is returned as is
+/// (the service-start case, where the helper is the running launcher).
+fn install_helper_copy(source: &Path, dest: &Path) -> std::io::Result<HelperRefresh> {
+    install_helper_copy_with(source, dest, |s, d| std::fs::copy(s, d))
+}
+
+/// `install_helper_copy` with the copy as a parameter, so a test can make the
+/// SECOND copy fail and see the old helper put back.
+fn install_helper_copy_with(
+    source: &Path,
+    dest: &Path,
+    mut copy: impl FnMut(&Path, &Path) -> std::io::Result<u64>,
+) -> std::io::Result<HelperRefresh> {
+    match copy(source, dest) {
+        Ok(_) => Ok(HelperRefresh::Copied(dest.to_path_buf())),
+        Err(e) if cfg!(windows) && helper_busy_error(&e) => {
+            let aside = stale_helper_path(dest);
+            if std::fs::rename(dest, &aside).is_err() {
+                return Err(e);
+            }
+            match copy(source, dest) {
+                Ok(_) => Ok(HelperRefresh::MovedAside {
+                    path: dest.to_path_buf(),
+                    aside,
+                }),
+                Err(copy_err) => {
+                    let _ = std::fs::rename(&aside, dest);
+                    Err(copy_err)
+                }
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// `<dest>.stale-<unix ms>` — unique per refresh, so a second busy refresh
+/// never collides with a copy still running from an earlier one.
+fn stale_helper_path(dest: &Path) -> PathBuf {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut name = dest.as_os_str().to_os_string();
+    name.push(format!("{STALE_HELPER_MARK}{ms}"));
+    PathBuf::from(name)
+}
+
+/// Delete helpers an earlier refresh moved aside. One whose process is still
+/// running cannot be deleted yet and is left for the next refresh.
+fn remove_stale_helpers(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .contains(STALE_HELPER_MARK)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Resolve the canonical helper path under `<dataRoot>/control/operation-server/`.
@@ -1266,6 +1391,185 @@ mod tests {
                 "upgrade-server/launcher.exe should also be written (dual-write compat)"
             );
         }
+    }
+
+    // ---- Item 173: refreshing a helper that is still running ----
+
+    fn helper_paths(data_root: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        (
+            data_root
+                .join("control")
+                .join("operation-server")
+                .join("ws-scrcpy-web-launcher.exe"),
+            data_root
+                .join("control")
+                .join("upgrade-server")
+                .join("ws-scrcpy-web-launcher.exe"),
+        )
+    }
+
+    fn stale_files_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.to_string_lossy().contains(super::STALE_HELPER_MARK))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn helper_busy_code_is_the_platforms_own_code() {
+        // Windows: ERROR_SHARING_VIOLATION (32), the code all four upgrade-path
+        // installs logged on 2026-10-08. Linux: ETXTBSY (26).
+        assert!(super::is_helper_busy_code(Some(32), true));
+        assert!(super::is_helper_busy_code(Some(26), false));
+        // Each number is something else on the other platform (32 is EPIPE on
+        // Linux), and access-denied / not-found are real failures on both.
+        assert!(!super::is_helper_busy_code(Some(26), true));
+        assert!(!super::is_helper_busy_code(Some(32), false));
+        for other in [Some(2), Some(5), Some(13), None] {
+            assert!(!super::is_helper_busy_code(other, true), "{other:?}");
+            assert!(!super::is_helper_busy_code(other, false), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn refresh_copies_the_source_to_both_helper_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("new-build.bin");
+        std::fs::write(&source, b"new build").expect("write source");
+        let data_root = tmp.path().join("data");
+        let (canonical, legacy) = helper_paths(&data_root);
+
+        let outcome = super::refresh_helper_from(&source, &data_root).expect("refresh");
+
+        assert_eq!(outcome, super::HelperRefresh::Copied(canonical.clone()));
+        assert_eq!(std::fs::read(&canonical).unwrap(), b"new build");
+        assert_eq!(std::fs::read(&legacy).unwrap(), b"new build");
+    }
+
+    #[test]
+    fn refresh_deletes_helpers_an_earlier_refresh_moved_aside() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("new-build.bin");
+        std::fs::write(&source, b"new build").expect("write source");
+        let data_root = tmp.path().join("data");
+        let (canonical, legacy) = helper_paths(&data_root);
+        for helper in [&canonical, &legacy] {
+            let dir = helper.parent().unwrap();
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join("ws-scrcpy-web-launcher.exe.stale-1"), b"old").unwrap();
+        }
+
+        super::refresh_helper_from(&source, &data_root).expect("refresh");
+
+        assert!(stale_files_in(canonical.parent().unwrap()).is_empty());
+        assert!(stale_files_in(legacy.parent().unwrap()).is_empty());
+    }
+
+    /// The 2026-10-08 report, reproduced: the previous update's operation-server
+    /// is still running from the helper when the new launcher refreshes it.
+    #[cfg(windows)]
+    #[test]
+    fn refresh_replaces_a_helper_that_is_still_running() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_root = tmp.path().join("data");
+        let (canonical, legacy) = helper_paths(&data_root);
+        std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        // A real console exe, so the "running helper" is a real mapped image
+        // (a read-only attribute or a share_mode handle is not the same lock).
+        std::fs::copy(r"C:\Windows\System32\PING.EXE", &canonical).expect("seed old helper");
+        let mut old_helper = std::process::Command::new(&canonical)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the old helper");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            old_helper.try_wait().unwrap().is_none(),
+            "old helper must be running"
+        );
+
+        let source = tmp.path().join("new-build.exe");
+        std::fs::copy(r"C:\Windows\System32\whoami.exe", &source).expect("seed new build");
+        // Precondition: a plain copy fails exactly as the field logs said.
+        let plain = std::fs::copy(&source, &canonical).expect_err("plain copy must be refused");
+        assert_eq!(plain.raw_os_error(), Some(32), "{plain}");
+
+        let outcome = super::refresh_helper_from(&source, &data_root).expect("refresh");
+
+        let aside = match outcome {
+            super::HelperRefresh::MovedAside { path, aside } => {
+                assert_eq!(path, canonical);
+                aside
+            }
+            other => panic!("expected MovedAside, got {other:?}"),
+        };
+        let new_bytes = std::fs::read(&source).unwrap();
+        assert_eq!(
+            std::fs::read(&canonical).unwrap(),
+            new_bytes,
+            "helper is the new build"
+        );
+        assert_eq!(std::fs::read(&legacy).unwrap(), new_bytes);
+        assert!(aside.exists(), "the running copy was moved, not deleted");
+        assert!(
+            old_helper.try_wait().unwrap().is_none(),
+            "moving it aside does not disturb the running helper"
+        );
+
+        let _ = old_helper.kill();
+        let _ = old_helper.wait();
+        // Once its process has gone, the next refresh deletes the moved copy.
+        assert_eq!(
+            super::refresh_helper_from(&source, &data_root).expect("second refresh"),
+            super::HelperRefresh::Copied(canonical.clone())
+        );
+        assert!(!aside.exists());
+        assert!(stale_files_in(canonical.parent().unwrap()).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_failed_copy_after_moving_aside_puts_the_old_helper_back() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest = tmp.path().join("ws-scrcpy-web-launcher.exe");
+        std::fs::write(&dest, b"old build").unwrap();
+        let mut calls = 0;
+        let err = super::install_helper_copy_with(tmp.path(), &dest, |_, _| {
+            calls += 1;
+            if calls == 1 {
+                Err(std::io::Error::from_raw_os_error(32))
+            } else {
+                Err(std::io::Error::other("disk full"))
+            }
+        })
+        .expect_err("the second copy failed");
+        assert_eq!(err.to_string(), "disk full");
+        assert_eq!(calls, 2);
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            b"old build",
+            "never left with no helper"
+        );
+        assert!(stale_files_in(tmp.path()).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_busy_helper_that_cannot_be_moved_reports_the_busy_error() {
+        // The rename fails (here: nothing to rename), so the caller sees the
+        // original sharing violation and can still classify it as busy.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest = tmp.path().join("ws-scrcpy-web-launcher.exe");
+        let err = super::install_helper_copy_with(tmp.path(), &dest, |_, _| {
+            Err(std::io::Error::from_raw_os_error(32))
+        })
+        .expect_err("busy");
+        assert!(super::helper_busy_error(&err), "{err}");
     }
 
     #[test]
