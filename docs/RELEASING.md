@@ -133,7 +133,7 @@ $repo    = 'C:\path\to\ws-scrcpy-web'      # your clone
 $wt      = 'C:\wsw-update-test\build'       # outside the repo; deleted at the end
 $feed    = 'C:\wsw-update-test\feed'        # the local feed folder
 $ver     = '0.5.1-beta.2'                   # higher than the installed build
-$channel = 'beta'                           # 'beta' for a -beta.N version, 'stable' otherwise
+$channel = 'beta'                           # the channel the installed FROM build reads (step 3)
 
 git -C $repo worktree add --detach $wt <commit>
 node "$wt\scripts\bump-version.mjs" $ver
@@ -155,8 +155,9 @@ What each part guards against:
 
 - **`--config "$wt\.cargo\config.toml"`.** Cargo finds `.cargo/config.toml` from the directory you run it in, not from `--manifest-path`, so without it the exes are built without `+crt-static` and need the Visual C++ runtime, which a clean Windows install does not have.
 - **`fetch-node.mjs`.** It stages the bundled Node runtime the first run starts from. A package without it is not the package users get.
-- **`--channel`.** A beta build reads the beta and the stable feed and a stable build reads only the stable one (`feedChannels` in `src/server/UpdateService.ts`), and Velopack looks for `releases.<channel>.json` in the feed. Pack a beta version as `beta` and a stable one as `stable`, as `release.yml` does.
+- **`--channel`.** Pack with the channel the installed **FROM** build reads, not the one the new version would get. With `VELOPACK_FEED_URL` set, the app skips its release lookup and the beta-reads-stable-too rule (`feedChannels` in `src/server/UpdateService.ts` applies only WITHOUT the override), and Velopack reads exactly one file from the feed: `releases.<channel>.json` for the FROM install's configured channel, the one Settings → Updates shows. That channel follows the installed build's own version unless it was pinned by saving it there. So a `0.5.1-beta.x` install (channel `beta`) updating to a local `0.5.1` packed `--channel stable` finds no update. To test beta → stable, either choose `stable` on the FROM install's Updates tab and save first, or pack the stable version `--channel beta`. (`release.yml` packs by the new version's own channel because, without the override, a beta install reads both feeds.)
 - **`--instLocation PerMachine`.** This is what ships. `Either` is not.
+- **The MSI this writes into `$feed` is not used, and must not be installed.** The update reads only the `.nupkg` and `releases.<channel>.json`. `release.yml` also patches the MSI afterwards so it installs to `C:\Program Files\WsScrcpyWeb` (`scripts/msi-default-programfiles.ps1`, its "Default MSI install dir to Program Files" step), and this recipe skips that step, so this MSI would install to the drive root. To install a build you made yourself as the FROM build, run `./scripts/msi-default-programfiles.ps1 -Msi <msi>` on it first.
 
 Every script in that block locates the repo from its own path, and `npm --prefix` runs the npm scripts in the worktree, so nothing needs `cd` or `Push-Location`.
 
@@ -165,7 +166,7 @@ Every script in that block locates the repo from its own path, and `npm --prefix
 - **Local mode:** `[Environment]::SetEnvironmentVariable('VELOPACK_FEED_URL', $feed, 'User')`, then exit the app from the tray and start it again from the Start menu, so the new launcher inherits the variable.
 - **Service mode:** the same at **`'Machine'`** scope, from an elevated shell, then restart the computer. The service gets its environment from the service manager, not from your shell, so a variable set only in your session never reaches it.
 
-**4. Update.** Settings → Updates → check for updates offers `$ver`; apply it. After the restart the Settings footer reads `v$ver`. Then read `launcher.log` for the post-update rows in smoke-test.md (6.8 local, 6.10 service): one tray, the hand-off marker consumed, the operation-server helper refreshed with no error.
+**4. Update.** Settings → Updates (check that the channel shown is the one you packed with) → check for updates offers `$ver`; apply it. After the restart the Settings footer reads `v$ver`. Then read `launcher.log` for the post-update rows in smoke-test.md (6.8 local, 6.10 service): one tray, the hand-off marker consumed, the operation-server helper refreshed with no error.
 
 **5. Clean up.** Remove the variable (`[Environment]::SetEnvironmentVariable('VELOPACK_FEED_URL', $null, 'User')`, or `'Machine'`) and the worktree (`git -C $repo worktree remove --force $wt`), and delete the feed folder.
 
