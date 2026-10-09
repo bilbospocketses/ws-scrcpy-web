@@ -8,6 +8,7 @@ import {
     fetchMkcertInstalled,
     listenerStatusNotice,
     recheckLocalHttpsMkcert,
+    SUBJECT_HELP_HREF,
     subPrivilegedPortNotice,
     TRUST_HELP_HREF,
 } from '../tabs/LocalHttpsTab';
@@ -238,14 +239,24 @@ describe('local https panel', () => {
             candidateIps: ['192.168.86.3'],
             platform: 'win32',
         });
-        const guide =
-            'ip address: other devices reach this computer by its address on your network. ' +
-            'hostname: use a name your network or dns resolves to this computer.';
+        // 0.5.3: one short line plus a link to the explainer page, replacing the
+        // two-sentence "ip address: … hostname: …" summary.
         for (const el of [elIp, elHost]) {
             const note = el.querySelector<HTMLElement>('[data-tls-subject-guide]');
             expect(note).not.toBeNull();
             expect(note!.hidden).toBe(false);
-            expect(note!.textContent).toBe(guide);
+            expect(note!.textContent).toBe(
+                'the certificate must name the address or name other devices type to reach this computer. ' +
+                    'ip address or hostname? how it works (opens in a new tab)',
+            );
+            expect(note!.textContent).not.toMatch(/dns resolves to this computer/);
+            const links = note!.querySelectorAll<HTMLAnchorElement>('a');
+            expect(links).toHaveLength(1);
+            expect(links[0]!.getAttribute('href')).toBe(SUBJECT_HELP_HREF);
+            expect(SUBJECT_HELP_HREF).toBe('help/certificate-subject.html');
+            expect(links[0]!.target).toBe('_blank');
+            expect(links[0]!.rel).toBe('noopener noreferrer');
+            expect(links[0]!.textContent).toMatch(/opens in a new tab/);
         }
         // The old note named `allowedHosts`, a config.json key no control here
         // is labelled with (0.5.1). It must not come back in another wording.

@@ -75,6 +75,10 @@ const EXPIRY_SOON_RE =
 // Since 0.5.3 the per-OS install steps live on the help page; the panel links to section 4.
 const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-certificate-establishing-trust';
 const CA_FILE_NAME = 'ws-scrcpy-web-local-ca.crt'; // src/common/CaDownload.ts
+const SUBJECT_HELP_HREF = 'help/certificate-subject.html';
+// public/help/certificate-subject.html
+const HELP_TITLE = 'TLS Certificates: The Subject Name Explained — ws-scrcpy-web';
+const HELP_H1 = 'Understanding TLS Certificates: The "Subject Name" Explained Simply';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -407,6 +411,64 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         await expect(guide).toHaveAttribute('target', '_blank');
         await expect(guide).toHaveAttribute('rel', 'noopener noreferrer');
         await expect(guide).toContainText('opens in a new tab');
+        expect(writes.writes).toEqual([]);
+    });
+});
+
+test.describe('local https fast tier: the help page (smoke §21.16)', () => {
+    test('21.16 the subject line and the install-guide line each open public/help/certificate-subject.html in a new tab, themed, at the right place', async ({
+        page,
+        context,
+        baseURL,
+    }) => {
+        const writes = await guardTlsWrites(page);
+        await stubTlsState(page, readyState({ httpsListener: BOUND_LISTENER }));
+        await page.goto('/');
+        const panel = await openLocalHttpsPanel(page);
+
+        // Under the subject radios: one short line and a link to the explainer.
+        const subjectLink = panel.locator('[data-tls-subject-guide] a');
+        await expect(subjectLink).toHaveAttribute('href', SUBJECT_HELP_HREF);
+        await expect(subjectLink).toHaveAttribute('target', '_blank');
+        await expect(subjectLink).toHaveAttribute('rel', 'noopener noreferrer');
+        await expect(subjectLink).toContainText('opens in a new tab');
+
+        let popupPromise = context.waitForEvent('page');
+        await subjectLink.click();
+        let popup = await popupPromise;
+        await popup.waitForLoadState();
+        expect(popup.url()).toBe(`${baseURL}/${SUBJECT_HELP_HREF}`);
+        await expect(popup).toHaveTitle(HELP_TITLE);
+        await expect(popup.locator('h1')).toHaveText(HELP_H1);
+        // Themed before paint from the app's own key, like subnets.html.
+        await expect(popup.locator('html')).toHaveAttribute('data-theme', /^(dark|light)$/);
+        await expect(popup.locator('h2')).toHaveCount(5);
+        for (const h2 of await popup.locator('h2').all()) await expect(h2).toHaveAttribute('id', /.+/);
+        // The explainer's own link lands on section 4.
+        await popup.locator('a[href="#4-installing-a-certificate-establishing-trust"]').first().click();
+        await expect(popup).toHaveURL(/#4-installing-a-certificate-establishing-trust$/);
+        await popup.close();
+
+        // Under the download: the install guide, opened straight at section 4.
+        popupPromise = context.waitForEvent('page');
+        await panel.locator('[data-tls-trust-help] a').click();
+        popup = await popupPromise;
+        await popup.waitForLoadState();
+        expect(popup.url()).toBe(`${baseURL}/${TRUST_HELP_HREF}`);
+        await expect(popup.locator('#4-installing-a-certificate-establishing-trust')).toBeInViewport();
+        for (const id of [
+            'windows',
+            'macos',
+            'linux',
+            'ubuntu-debian',
+            'fedora-rhel',
+            'android',
+            'ios-ipados',
+            'firefox',
+        ]) {
+            await expect(popup.locator(`#${id}`), id).toHaveCount(1);
+        }
+        await popup.close();
         expect(writes.writes).toEqual([]);
     });
 });

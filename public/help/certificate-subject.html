@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TLS Certificates: The Subject Name Explained — ws-scrcpy-web</title>
+<script>
+// Apply stored theme before paint to avoid flash. Shares the main app's
+// localStorage key so switching themes in the app carries over on reload.
+(function() {
+    try {
+        var t = localStorage.getItem('ws-scrcpy-web-theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+    } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+    }
+})();
+</script>
+<style>
+:root {
+    --mono: ui-monospace, Consolas, "SF Mono", "Liberation Mono", monospace;
+}
+:root, [data-theme="dark"] {
+    --bg: #2a2a2a;
+    --panel: #1f1f1f;
+    --text: #e0e0e0;
+    --muted: #a8a8a8;
+    --accent: hsl(218, 63%, 70%);
+    --border: #444444;
+}
+[data-theme="light"] {
+    --bg: #ffffff;
+    --panel: #f6f8fa;
+    --text: #212529;
+    --muted: #495057;
+    --accent: #0969da;
+    --border: #d0d7de;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px; line-height: 1.6; }
+main { max-width: 780px; margin: 0 auto; padding: 32px 24px 64px; }
+h1 { font-size: 28px; margin: 0 0 8px; }
+h2 { font-size: 20px; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+h3 { font-size: 17px; margin: 28px 0 8px; }
+h4 { font-size: 15px; margin: 20px 0 8px; }
+p { margin: 0 0 12px; }
+a { color: var(--accent); }
+li { margin: 0 0 6px; }
+code, .mono { font-family: var(--mono); font-size: 0.95em; background: var(--panel); padding: 2px 6px; border-radius: 4px; }
+pre { background: var(--panel); padding: 12px 16px; border-radius: 6px; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
+/* A code block's own panel is the background; the inline-code chip inside it would double up. */
+pre code { background: none; padding: 0; font-size: inherit; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-family: var(--mono); font-size: 13px; }
+/* The analogy table is prose, not numbers: the body font reads better. */
+table.prose { font-family: inherit; font-size: 14px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+blockquote { margin: 0 0 12px; padding: 4px 16px; border-left: 3px solid var(--border); color: var(--muted); }
+blockquote p { margin: 0 0 4px; }
+.muted { color: var(--muted); }
+.back { display: inline-block; margin-top: 32px; color: var(--accent); text-decoration: none; }
+.back:hover { text-decoration: underline; }
+.footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Understanding TLS Certificates: The "Subject Name" Explained Simply</h1>
+<p>If you have ever seen the small padlock icon next to a website address in your browser, you have seen a <strong>TLS certificate</strong> at work.</p>
+<p>A TLS certificate acts like a digital ID card or passport for a computer server on the internet or private network. It ensures two main things:</p>
+<ol>
+<li><strong>Privacy:</strong> The conversation between your computer and the server is encrypted (scrambled so eavesdroppers cannot read it).</li>
+<li><strong>Identity Verification:</strong> You are actually talking to the exact computer you intended to reach, not an imposter.</li>
+</ol>
+
+<h2 id="1-what-is-the-subject-name">1. What is the "Subject Name"?</h2>
+<p>Think of a TLS certificate as a government-issued passport:</p>
+<ul>
+<li>A passport lists your <strong>Legal Name</strong> to prove who you are.</li>
+<li>A TLS certificate lists a <strong>Subject Name</strong> (or <strong>Subject Alternative Name / SAN</strong>) to prove which server address it belongs to.</li>
+</ul>
+<p>When your computer connects to a server, the server shows its certificate. Your computer inspects the <strong>Subject Name</strong> on that certificate and asks:</p>
+<blockquote><p><em>"Does the name or address I typed in the web browser's address bar match the name officially stamped on this ID card?"</em></p></blockquote>
+<ul>
+<li><strong>If it matches:</strong> The connection proceeds securely (green lock / secure badge). <strong><em>When the browser connecting to the website trusts the certificate. See the <a href="#4-installing-a-certificate-establishing-trust">Installing a Certificate (Establishing Trust)</a> section below.</em></strong></li>
+<li><strong>If it doesn't match:</strong> Your browser flashes a warning saying, <em>"Your connection is not private"</em> or <em>"Certificate name mismatch."</em></li>
+</ul>
+
+<h2 id="2-addresses-vs-names-the-real-world-analogy">2. Addresses vs. Names: The Real-World Analogy</h2>
+<p>To understand how connections work, imagine sending mail:</p>
+<table class="prose">
+<thead><tr><th>Concept</th><th>Real-World Analogy</th><th>Computer Example</th></tr></thead>
+<tbody>
+<tr><td><strong>IP Address</strong></td><td>Exact GPS coordinates (37.7749° N, 122.4194° W)</td><td><code>192.168.1.50</code> or <code>142.250.190.46</code></td></tr>
+<tr><td><strong>Hostname</strong></td><td>A nickname for a building (e.g., "Headquarters")</td><td><code>mailserver</code> or <code>fileshare</code></td></tr>
+<tr><td><strong>FQDN (Full Name)</strong></td><td>The complete, unique mailing address (e.g., "100 Main St, Austin, TX, USA")</td><td><code>mail.company.com</code></td></tr>
+<tr><td><strong>DNS (Name Resolution)</strong></td><td>The phone book or contacts list on your phone</td><td>Translates <code>google.com</code> → <code>142.250.190.46</code></td></tr>
+</tbody>
+</table>
+
+<h2 id="3-how-the-connection-works-step-by-step">3. How the Connection Works (Step-by-Step)</h2>
+
+<h3 id="scenario-a-connecting-using-a-domain-name-fqdn">Scenario A: Connecting Using a Domain Name (FQDN)</h3>
+<p>This is what happens when you visit <code>https://bank.example.com</code>.</p>
+<ol>
+<li><strong>You type the name:</strong> You enter <code>bank.example.com</code> into your address bar.</li>
+<li><strong>Name Resolution (DNS):</strong> Your computer does not know where <code>bank.example.com</code> physically lives on the network, so it asks a DNS server (the internet's address book):
+<blockquote><p><em>"What is the IP address for bank.example.com?"</em></p><p>DNS replies: <em>"It's at <code>203.0.113.10</code>."</em></p></blockquote></li>
+<li><strong>Reaching the Server:</strong> Your computer contacts the computer sitting at <code>203.0.113.10</code>.</li>
+<li><strong>Showing the ID:</strong> The server hands over its TLS certificate.</li>
+<li><strong>The Verification Check:</strong> Your computer looks at the certificate's <strong>Subject Name</strong>.
+<ul>
+<li>It sees: <code>Subject: bank.example.com</code>.</li>
+<li>Your computer says: <em>"I asked for <code>bank.example.com</code>, and this certificate says <code>bank.example.com</code>. Perfect!"</em></li>
+<li>The secure connection is established.</li>
+</ul></li>
+</ol>
+
+<h3 id="scenario-b-connecting-using-a-short-hostname-internal-network">Scenario B: Connecting Using a Short Hostname (Internal Network)</h3>
+<p>Inside an office or home network, people often use short nicknames instead of full domain names (e.g., connecting to a printer or internal server named <code>backup-server</code>).</p>
+<ol>
+<li><strong>You type the nickname:</strong> You go to <code>https://backup-server</code>.</li>
+<li><strong>Local Name Resolution:</strong> Your office router or local directory looks up the name <code>backup-server</code> and finds its local address (e.g., <code>10.0.0.15</code>).</li>
+<li><strong>The Certificate Check:</strong>
+<ul>
+<li>If the certificate's Subject Name specifically lists <code>backup-server</code>, the connection succeeds.</li>
+<li><strong>Common Issue:</strong> If the certificate only lists the full name (<code>backup-server.local</code> or <code>backup-server.company.com</code>), your computer throws an error because the short nickname you typed does not match what is printed on the certificate.</li>
+</ul></li>
+</ol>
+
+<h3 id="scenario-c-connecting-directly-to-an-ip-address">Scenario C: Connecting Directly to an IP Address</h3>
+<p>Sometimes, technical administrators connect directly to an IP address (for example, typing <code>https://192.168.1.1</code> to open a home router's settings).</p>
+<ol>
+<li><strong>No Lookup Needed:</strong> Because you provided the exact numerical coordinates, your computer skips the address book (DNS) entirely and goes straight to <code>192.168.1.1</code>.</li>
+<li><strong>The Certificate Check:</strong> The server hands over its certificate, and your computer looks for an <strong>IP Address entry</strong> in the certificate's Subject Alternative Names.</li>
+<li><strong>The Outcome:</strong>
+<ul>
+<li><strong>If the certificate has <code>IP: 192.168.1.1</code> embedded inside it:</strong> The check passes.</li>
+<li><strong>If the certificate only has domain names (e.g., <code>router.lan</code>):</strong> Your computer warns you of a mismatch, because you typed numbers (<code>192.168.1.1</code>), but the ID card only claims the text name (<code>router.lan</code>).</li>
+</ul></li>
+</ol>
+
+<h2 id="4-installing-a-certificate-establishing-trust">4. Installing a Certificate (Establishing Trust)</h2>
+<p>Matching the name in the address bar is only half of the identity check. Your operating system and browser must also <strong>trust who issued the ID card</strong>.</p>
+<ul>
+<li><strong>Public Certificates:</strong> When you visit sites like Google or your bank, their certificates are signed by well-known, globally recognized Certificate Authorities (CAs). Operating systems and browsers come pre-loaded with these trusted issuers.</li>
+<li><strong>Private / Internal Certificates:</strong> For local home labs, intranet servers, or private appliances, you create your own Certificate Authority. Because your devices do not recognize this new authority out of the box, you must install the root certificate once on every computer connecting to it.</li>
+</ul>
+<p>The certificate ws-scrcpy-web downloads (Settings → Local HTTPS → <strong>download ca certificate</strong>) is named <code>ws-scrcpy-web-local-ca.crt</code>.</p>
+<p>Follow the instructions below for your specific operating system or browser:</p>
+<p class="muted">Jump to: <a href="#windows">Windows</a> · <a href="#macos">macOS</a> · <a href="#linux">Linux</a> · <a href="#android">Android</a> · <a href="#ios-ipados">iOS / iPadOS</a> · <a href="#firefox">Firefox</a></p>
+
+<h3 id="windows">Windows</h3>
+<ol>
+<li>Double-click the downloaded certificate file (<code>.crt</code>).</li>
+<li>Click <strong>Install Certificate...</strong>.</li>
+<li>Under <strong>Store Location</strong>, select:
+<ul>
+<li><strong>Local Machine</strong> <em>(Recommended)</em>: Makes the certificate trusted for all accounts on the PC (requires an administrator confirmation).</li>
+<li><strong>Current User</strong>: Makes the certificate trusted only for your current sign-in account.</li>
+</ul></li>
+<li>Click <strong>Next</strong>, choose <strong>Place all certificates in the following store</strong>, and click <strong>Browse...</strong>.</li>
+<li>Select <strong>Trusted Root Certification Authorities</strong> and click <strong>OK</strong>.</li>
+<li>Click <strong>Next</strong>, then <strong>Finish</strong>. If a security confirmation warning appears, click <strong>Yes</strong>.</li>
+<li>Restart your web browser.</li>
+</ol>
+
+<h3 id="macos">macOS</h3>
+<ol>
+<li>Open <strong>Keychain Access</strong> (press <code>Cmd + Space</code>, type <em>Keychain Access</em>, and press <code>Enter</code>).</li>
+<li>In the left sidebar, choose the <strong>System</strong> keychain.</li>
+<li>Drag and drop your downloaded certificate file directly into the list.</li>
+<li>Double-click the newly added certificate to open its settings window.</li>
+<li>Expand the <strong>Trust</strong> section.</li>
+<li>Set <strong>When using this certificate</strong> to <strong>Always Trust</strong>.</li>
+<li>Close the window and authenticate with your administrator password or Touch ID when prompted.</li>
+<li>Restart Safari or your browser.</li>
+</ol>
+
+<h3 id="linux">Linux</h3>
+<p>Linux manages system certificates through background command-line utilities. Both <strong>GNOME</strong> and <strong>KDE</strong> desktop environments rely on these underlying system stores for Chromium-based browsers, cURL, and system tools.</p>
+
+<h4 id="ubuntu-debian">Ubuntu / Debian Variants (Ubuntu Desktop, Pop!_OS, Linux Mint)</h4>
+<ol>
+<li>The ws-scrcpy-web download already ends with <code>.crt</code>, which is what this folder needs. (A certificate obtained elsewhere that ends in <code>.pem</code> or <code>.cer</code> must be renamed to end in <code>.crt</code> first.)</li>
+<li>Copy the file into the system CA folder:
+<pre><code>sudo cp ws-scrcpy-web-local-ca.crt /usr/local/share/ca-certificates/</code></pre></li>
+<li>Update the system trust database:
+<pre><code>sudo update-ca-certificates</code></pre></li>
+</ol>
+
+<h4 id="fedora-rhel">Fedora / RHEL Variants (Fedora Workstation, CentOS Stream, Rocky Linux)</h4>
+<ol>
+<li>Copy the certificate file into the source anchors folder:
+<pre><code>sudo cp ws-scrcpy-web-local-ca.crt /etc/pki/ca-trust/source/anchors/</code></pre></li>
+<li>Update the system trust database:
+<pre><code>sudo update-ca-trust</code></pre></li>
+</ol>
+<p><em>(Note for GNOME &amp; KDE desktop users: While tools like GNOME's "Passwords and Keys" or KDE's "Kleopatra" display keys, running the commands above ensures all system software and desktop browsers pick up trust immediately.)</em></p>
+
+<h3 id="android">Android</h3>
+<ol>
+<li>Download the certificate file to the device (or transfer it over USB/local share).</li>
+<li>Open <strong>Settings</strong> → <strong>Security &amp; privacy</strong> (or <strong>Security</strong>).</li>
+<li>Tap <strong>More security settings</strong> → <strong>Encryption &amp; credentials</strong> (or <strong>Credentials</strong>).</li>
+<li>Tap <strong>Install a certificate</strong> → <strong>CA certificate</strong>.</li>
+<li>Read and tap <strong>Install anyway</strong> on the warning prompt, then verify your identity with your PIN, fingerprint, or pattern.</li>
+<li>Select your downloaded certificate file from the file picker.</li>
+</ol>
+
+<h3 id="ios-ipados">iOS / iPadOS</h3>
+<p>Apple requires a mandatory two-step installation and trust procedure:</p>
+<ol>
+<li><strong>Step 1: Install the profile</strong>
+<ul>
+<li>Download the certificate in Safari or AirDrop it to your device.</li>
+<li>Tap <strong>Allow</strong> when prompted to download a configuration profile.</li>
+<li>Open <strong>Settings</strong>, where a <strong>Profile Downloaded</strong> prompt will appear near the top (or go to <strong>Settings</strong> → <strong>General</strong> → <strong>VPN &amp; Device Management</strong>).</li>
+<li>Tap the downloaded profile, tap <strong>Install</strong> in the top-right corner, enter your device passcode, and confirm.</li>
+</ul></li>
+<li><strong>Step 2: Turn on Full Trust</strong>
+<ul>
+<li>Go to <strong>Settings</strong> → <strong>General</strong> → <strong>About</strong>.</li>
+<li>Scroll down to the very bottom and tap <strong>Certificate Trust Settings</strong>.</li>
+<li>Under <strong>Enable full trust for root certificates</strong>, find your certificate and turn the toggle switch to <strong>ON</strong>.</li>
+<li>Tap <strong>Continue</strong> to confirm the prompt.</li>
+</ul></li>
+</ol>
+
+<h3 id="firefox">Using Mozilla Firefox?</h3>
+<p>Unlike Chrome, Edge, and Safari (which read directly from Windows, macOS, or Linux system certificate stores), <strong>Mozilla Firefox</strong> uses its own isolated certificate database:</p>
+<ol>
+<li>Open Firefox and go to <strong>Settings</strong> (or type <code>about:preferences#privacy</code> in the address bar).</li>
+<li>Click <strong>Privacy &amp; Security</strong> in the left sidebar.</li>
+<li>Scroll down to the <strong>Certificates</strong> section and click <strong>View Certificates...</strong>.</li>
+<li>In the Certificate Manager popup, select the <strong>Authorities</strong> tab.</li>
+<li>Click <strong>Import...</strong> at the bottom.</li>
+<li>Choose your downloaded certificate file.</li>
+<li>In the prompt that opens, check the box for <strong>Trust this CA to identify websites</strong>.</li>
+<li>Click <strong>OK</strong>, close preferences, and refresh your target website.</li>
+</ol>
+
+<h2 id="5-key-takeaways">5. Key Takeaways</h2>
+<ol>
+<li><strong>The Rule of Matching:</strong> Whatever you type in the address bar must appear on the certificate's Subject Alternative Name (SAN) list.</li>
+<li><strong>DNS finds the location; the Certificate proves identity:</strong> DNS translates a friendly name into an IP address so your computer can reach the machine. The certificate proves that the machine at that address is legitimately authorized to represent that name.</li>
+<li><strong>Trust + Matching = Secure:</strong> Both requirements must be satisfied: the address must match what's printed on the ID, and the root authority that issued it must be installed in your device's trusted store.</li>
+<li><strong>IP addresses are harder to certify:</strong> Public certificate authorities rarely issue certificates for raw public IP addresses and never issue them for private LAN IPs (such as <code>192.168.x.x</code>). Private IP setups require self-issued certificates imported via the steps in <a href="#4-installing-a-certificate-establishing-trust">Section 4</a>.</li>
+</ol>
+
+<a class="back" href="../">&larr; Close tab</a>
+
+<div class="footer">
+Written for ws-scrcpy-web. No third-party content.
+</div>
+</main>
+<script>
+// Attach the close-tab handler instead of an inline onclick attribute (avoids
+// the inline event-handler CSP smell; the page already uses an inline script),
+// as subnets.html does (#107).
+document.querySelector('.back')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.close();
+});
+</script>
+</body>
+</html>

@@ -303,6 +303,9 @@ export function listenerStatusNotice(state: TlsCertState): string | null {
  */
 export const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-certificate-establishing-trust';
 
+/** The certificate-subject explainer the subject radios link to (0.5.3); same page, from the top. */
+export const SUBJECT_HELP_HREF = 'help/certificate-subject.html';
+
 /** Local copy of the notice-row shape every other tab already uses for a status line. */
 function buildNoticeRow(): HTMLParagraphElement {
     const p = document.createElement('p');
@@ -574,9 +577,21 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     subjectGuideNotice.className = 'settings-status';
     subjectGuideNotice.style.gridColumn = '1 / -1';
     subjectGuideNotice.setAttribute('data-tls-subject-guide', '');
-    subjectGuideNotice.textContent =
-        'ip address: other devices reach this computer by its address on your network. ' +
-        'hostname: use a name your network or dns resolves to this computer.';
+    // 0.5.3: one short line and a link to a page with room to explain it
+    // (public/help/certificate-subject.html), instead of a two-sentence
+    // summary squeezed under the radios. Relative, like TRUST_HELP_HREF.
+    subjectGuideNotice.appendChild(
+        document.createTextNode(
+            'the certificate must name the address or name other devices type to reach this computer. ',
+        ),
+    );
+    const subjectHelpLink = document.createElement('a');
+    subjectHelpLink.className = 'settings-help-link';
+    subjectHelpLink.href = SUBJECT_HELP_HREF;
+    subjectHelpLink.target = '_blank';
+    subjectHelpLink.rel = 'noopener noreferrer';
+    subjectHelpLink.textContent = 'ip address or hostname? how it works (opens in a new tab)';
+    subjectGuideNotice.appendChild(subjectHelpLink);
     body.appendChild(subjectGuideNotice);
 
     // ---- port -- POSTs to POST /api/tls/https-port (task 11); see the class
