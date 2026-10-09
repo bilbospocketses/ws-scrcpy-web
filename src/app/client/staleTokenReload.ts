@@ -1,4 +1,5 @@
 import { isStaleTokenRefusal } from './staleToken';
+import { showStatusBanner } from './statusBanner';
 
 /**
  * Item 174 (2026-10-08): after a local-mode update, a tab left open from the
@@ -15,47 +16,67 @@ import { isStaleTokenRefusal } from './staleToken';
  */
 export const STALE_TOKEN_PROBE_URL = '/api/auth/me';
 
+/** How long the probe may take before it counts as "no answer" (the server is busy or restarting). */
+export const STALE_TOKEN_PROBE_TIMEOUT_MS = 5000;
+
 /** Reloads for a stale token are not repeated inside this window (see `reloadForStaleToken`). */
 export const STALE_TOKEN_RELOAD_GUARD_MS = 60_000;
 const RELOAD_MARK_KEY = 'ws-scrcpy-web.staleTokenReloadAt';
 
 /**
- * True when this page's token belongs to a process that has gone. A network
- * failure (the server is restarting) or any other answer is false: keep
- * retrying as before.
+ * What the probe learned: `stale` (this page's token belongs to a process
+ * that has gone), `ok` (the token works), or `unknown` (no answer in time, a
+ * network failure while the server restarts, or any other reply). Only `stale`
+ * stops the retry loop.
  */
-export async function probeStaleToken(fetchFn: typeof fetch = fetch): Promise<boolean> {
+export type TokenProbe = 'stale' | 'ok' | 'unknown';
+
+export async function probeStaleToken(
+    fetchFn: typeof fetch = fetch,
+    timeoutMs: number = STALE_TOKEN_PROBE_TIMEOUT_MS,
+): Promise<TokenProbe> {
     try {
-        const res = await fetchFn(STALE_TOKEN_PROBE_URL, { cache: 'no-store' });
-        if (res.ok) return false;
-        return isStaleTokenRefusal(res.status, await res.json().catch(() => null));
+        const res = await fetchFn(STALE_TOKEN_PROBE_URL, {
+            cache: 'no-store',
+            signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (res.ok) return 'ok';
+        return isStaleTokenRefusal(res.status, await res.json().catch(() => null)) ? 'stale' : 'unknown';
     } catch {
-        return false;
+        return 'unknown';
     }
 }
 
+type MarkStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
 export interface StaleTokenReloadDeps {
-    storage: Pick<Storage, 'getItem' | 'setItem'> | null;
+    storage: MarkStorage | null;
     now: () => number;
     reload: () => void;
 }
 
-function defaultDeps(): StaleTokenReloadDeps {
-    let storage: StaleTokenReloadDeps['storage'] = null;
+function sessionStore(): MarkStorage | null {
     try {
-        storage = window.sessionStorage;
+        return window.sessionStorage;
     } catch {
         // Storage can be disabled; then the reload is simply unguarded.
+        return null;
     }
-    return { storage, now: () => Date.now(), reload: () => window.location.reload() };
+}
+
+function defaultDeps(): StaleTokenReloadDeps {
+    return { storage: sessionStore(), now: () => Date.now(), reload: () => window.location.reload() };
 }
 
 /**
  * Reload so the document response hands this tab the running process's token.
- * Returns false WITHOUT reloading when this tab already reloaded for a stale
- * token inside `STALE_TOKEN_RELOAD_GUARD_MS`: a reload that did not fix it (a
- * browser refusing the cookie, say) must not become a reload loop. The caller
- * then stops retrying instead.
+ *
+ * Returns false WITHOUT reloading when this tab reloaded for a stale token
+ * inside `STALE_TOKEN_RELOAD_GUARD_MS` and has not connected since: that reload
+ * did not help (a browser refusing the cookie, say), and repeating it would be
+ * a reload loop. "Connected since" is what `clearStaleTokenReloadMark` records,
+ * so a SECOND restart shortly after a reload that worked reloads again rather
+ * than freezing the page.
  */
 export function reloadForStaleToken(deps: StaleTokenReloadDeps = defaultDeps()): boolean {
     const now = deps.now();
@@ -70,4 +91,35 @@ export function reloadForStaleToken(deps: StaleTokenReloadDeps = defaultDeps()):
     }
     deps.reload();
     return true;
+}
+
+/**
+ * The page reached the server with its token (a websocket message arrived, or
+ * the probe answered 200): any earlier stale-token reload worked, so the guard
+ * must not hold against the next one.
+ */
+export function clearStaleTokenReloadMark(storage: MarkStorage | null = sessionStore()): void {
+    try {
+        storage?.removeItem(RELOAD_MARK_KEY);
+    } catch {
+        // Nothing to clear.
+    }
+}
+
+/** The text of the notice shown when the retry loop gives up (lowercase, per the app's UI text rule). */
+export const STALE_TOKEN_NOTICE_TEXT =
+    'this page lost its connection to the server and could not get it back. reload the page to reconnect.';
+
+/**
+ * Tell the user the device list stopped retrying, with a reload action, rather
+ * than leaving a silent dead page. One notice per page, whichever tracker
+ * gives up first.
+ */
+export function showStaleTokenNotice(reload: () => void = () => window.location.reload()): HTMLElement {
+    const existing = document.querySelector<HTMLElement>('[data-stale-token-notice]');
+    if (existing) return existing;
+    const banner = showStatusBanner(STALE_TOKEN_NOTICE_TEXT, 'reload', reload);
+    banner.setAttribute('data-stale-token-notice', '');
+    banner.setAttribute('role', 'alert');
+    return banner;
 }

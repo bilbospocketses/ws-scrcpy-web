@@ -9,7 +9,13 @@ import type { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import Util from '../Util';
 import { html } from '../ui/HtmlTag';
 import { ManagerClient } from './ManagerClient';
-import { probeStaleToken, reloadForStaleToken } from './staleTokenReload';
+import {
+    clearStaleTokenReloadMark,
+    probeStaleToken,
+    reloadForStaleToken,
+    showStaleTokenNotice,
+    type TokenProbe,
+} from './staleTokenReload';
 import type { Tool } from './Tool';
 
 const TAG = '[BaseDeviceTracker]';
@@ -76,6 +82,9 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     private created = false;
     private messageId = 0;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    // Item 174: set once this connection has delivered a message, so the
+    // stale-token reload mark is cleared once per connection, not per message.
+    private connectedSinceClose = false;
     // §34: tracks the last-rendered serialized descriptor per udid so a refresh
     // can skip rebuilding rows whose descriptor is unchanged (diff/patch instead
     // of clear-and-rebuild). Cleared on destroy with the row nodes.
@@ -323,6 +332,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
             return;
         }
         console.log(TAG, `Connection closed: ${event.reason}`);
+        this.connectedSinceClose = false;
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             // Re-check destroyed: destroy() may have run between scheduling and
@@ -339,34 +349,45 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
      * refused handshake reaches the page only as a 1006 close, the same as
      * "server down", so a tab left open across a restart used to retry every
      * 2 s forever, each attempt logged by the server. On a stale token the loop
-     * stops and the page reloads for the new token (or, if this tab already
-     * reloaded for that within the guard window, just stops).
+     * stops and the page reloads for the new token. If this tab already reloaded
+     * for that within the guard window and has not reached the server since,
+     * the reload did not help: the loop stops and a notice with a reload button
+     * says so. A probe that answers 200 means the token works, so it clears the
+     * guard, as a message on the socket does (`onSocketMessage`).
      */
     private async reconnect(): Promise<void> {
-        if (await this.isTokenStale()) {
-            if (this.destroyed) {
-                return;
-            }
+        const probe = await this.probeToken();
+        if (this.destroyed) {
+            return;
+        }
+        if (probe === 'stale') {
             if (!reloadForStaleToken()) {
                 console.warn(
                     TAG,
                     'websocket refused: this page holds a stale token and a reload did not fix it; not retrying',
                 );
+                showStaleTokenNotice();
             }
             return;
         }
-        if (this.destroyed) {
-            return;
+        if (probe === 'ok') {
+            clearStaleTokenReloadMark();
         }
         this.openNewConnection();
     }
 
     /** Seam for tests; the real probe is `probeStaleToken`. */
-    protected isTokenStale(): Promise<boolean> {
+    protected probeToken(): Promise<TokenProbe> {
         return probeStaleToken();
     }
 
     protected onSocketMessage(event: MessageEvent): void {
+        if (!this.connectedSinceClose) {
+            // Item 174: this connection reached the server with the page's
+            // token, so an earlier stale-token reload worked.
+            this.connectedSinceClose = true;
+            clearStaleTokenReloadMark();
+        }
         let message: Message;
         try {
             message = JSON.parse(event.data);
