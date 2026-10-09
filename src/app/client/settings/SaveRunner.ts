@@ -5,7 +5,10 @@ export interface BatchResult {
     applied: string[];
     failed?: { id: string; error: string };
     restartRequired?: boolean;
+    /** The new http port, when the batch moved it. */
     redirectPort?: number;
+    /** The new https port, when the batch moved it (after 0.5.3). */
+    redirectHttpsPort?: number;
 }
 
 /**

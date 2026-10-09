@@ -21,7 +21,7 @@ afterEach(() => {
 
 const CHANGES = [
     { id: 'channel', label: 'Update channel', from: 'stable', to: 'beta' },
-    { id: 'webPort', label: 'Web port', from: 8000, to: 8010 },
+    { id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 },
 ];
 
 function button(label: string): HTMLButtonElement {
@@ -58,8 +58,8 @@ describe('SettingsSummaryModal', () => {
     });
 
     it('falls back to the raw value when a change carries no display text', () => {
-        void SettingsSummaryModal.confirm([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
-        expect(document.querySelector('dialog')?.textContent).toContain('Web port: 8000 → 8010');
+        void SettingsSummaryModal.confirm([{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }]);
+        expect(document.querySelector('dialog')?.textContent).toContain('HTTP port: 8000 → 8010');
     });
 
     /**
@@ -80,7 +80,26 @@ describe('SettingsSummaryModal', () => {
 
     it('warns that a webPort change restarts the server', () => {
         void SettingsSummaryModal.confirm(CHANGES);
-        expect(document.querySelector('dialog')?.textContent).toContain('restart');
+        expect(document.querySelector('.settings-summary__restart')?.textContent).toBe(
+            'Changing the HTTP port will restart the server. This page will reload on the new port ' +
+                'automatically — the app is not crashing.',
+        );
+    });
+
+    it('warns that an httpsPort change restarts the server, without promising a reload', () => {
+        void SettingsSummaryModal.confirm([{ id: 'httpsPort', label: 'HTTPS port', from: 8443, to: 9443 }]);
+        const warnings = [...document.querySelectorAll('.settings-summary__restart')].map((p) => p.textContent);
+        expect(warnings).toEqual(['Changing the HTTPS port will restart the server; any active streams will drop.']);
+    });
+
+    it('says it once when both ports change: the HTTP port wording, which covers the reload', () => {
+        void SettingsSummaryModal.confirm([
+            { id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 },
+            { id: 'httpsPort', label: 'HTTPS port', from: 8443, to: 9443 },
+        ]);
+        const warnings = [...document.querySelectorAll('.settings-summary__restart')].map((p) => p.textContent);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('Changing the HTTP port will restart the server.');
     });
 
     it('does NOT warn about a restart when the port did not change', () => {

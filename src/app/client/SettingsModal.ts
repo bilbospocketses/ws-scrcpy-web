@@ -11,19 +11,22 @@ import { SettingsSummaryModal } from './settings/SettingsSummaryModal';
 import { type Change, StagedSettingsStore } from './settings/StagedSettingsStore';
 import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
-import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
+import { applyEmbeddingContainerMode, buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
 import {
     applyLocalHttpsContainerMode,
     applyLocalHttpsDependencyInstalled,
     applyLocalHttpsServiceStatus,
     applyLocalHttpsServiceStatusFailed,
     buildLocalHttpsTab,
+    TLS_CERT_CHANGED_EVENT,
 } from './settings/tabs/LocalHttpsTab';
 import {
     applyServerContainerMode,
+    applyServerHostMode,
     applyServerServiceStatus,
     buildServerTab,
     refreshServer,
+    refreshServerHttps,
 } from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
 import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
@@ -226,7 +229,7 @@ function labelFor(id: string, changes: Change[]): string {
  * ALREADY applied before it stopped.
  *
  * Named with the change's LABEL, not its wire id: the user has just confirmed a
- * summary reading "Web port: 8000 → 80", so answering with `webPort` makes them
+ * summary reading "HTTP port: 8000 → 80", so answering with `webPort` makes them
  * translate an internal identifier back to the row they touched. The id is the
  * fallback for a failure naming something that was not in this batch.
  *
@@ -298,10 +301,14 @@ const COMMIT_WHEN_APPLIED: ReadonlySet<string> = new Set([FRAME_ANCESTORS_ADD_ID
  *    whatever this browser is already on (`sameOriginUrl`) — a literal
  *    localhost would send every off-box client to its own machine. Without this
  *    a port change restarts the server and leaves the browser on a dead port.
+ *    Which port, and whether the page only reloads, is `restartRedirectUrl`'s
+ *    call; `base` is the page's own address (a parameter so tests can be on
+ *    https).
  */
 export async function performStagedSave(
     store: StagedSettingsStore,
     deps: SaveDeps = liveSaveDeps,
+    base: string = window.location.href,
 ): Promise<SettingsAction> {
     const changes = store.changes();
     // Belt and braces — the Save button is disabled when nothing is staged. An
@@ -327,13 +334,30 @@ export async function performStagedSave(
     // and Save comes back to life offering to send it a second time.
     store.commit();
 
-    // Both halves required: a `redirectPort` without a restart is an echo, and
-    // a restart without a port has nowhere to send the browser — better to
-    // close than to navigate to `:undefined`.
-    if (res.restartRequired && typeof res.redirectPort === 'number') {
-        return { kind: 'redirect', url: sameOriginUrl(res.redirectPort) };
-    }
+    const url = restartRedirectUrl(res, base);
+    if (url !== null) return { kind: 'redirect', url };
     return { kind: 'close' };
+}
+
+/**
+ * Where the page goes after a save that restarts the server, or null when
+ * nothing restarts (a port named without a restart is an echo).
+ *
+ * The page follows the listener it is served by (M5, after 0.5.3): an http
+ * page follows a moved http port (`redirectPort`), an https page a moved https
+ * port (`redirectHttpsPort`). When its own port did not move -- an https page
+ * saving only the http port, an http page saving only the https port -- it
+ * stays on its own port but still reloads after the restart delay, rather
+ * than sitting on a connection the restart is about to drop.
+ */
+export function restartRedirectUrl(res: BatchResult, base: string = window.location.href): string | null {
+    if (!res.restartRequired) return null;
+    const current = new URL(base);
+    const port = current.protocol === 'https:' ? res.redirectHttpsPort : res.redirectPort;
+    if (typeof port === 'number') return sameOriginUrl(port, base);
+    // Its own port: the one in the URL, or the scheme's default when it has none.
+    const own = current.port ? Number(current.port) : current.protocol === 'https:' ? 443 : 80;
+    return sameOriginUrl(own, base);
 }
 
 /**
@@ -488,6 +512,13 @@ export class SettingsModal extends Modal {
      */
     private localHttpsTabEl: HTMLElement | null = null;
     /**
+     * The Embedding tab's section, captured the same way: in a container the
+     * constructor tells it so (`applyEmbeddingContainerMode()`), and its https
+     * note then names the reverse proxy alone. Stays null when the role cannot
+     * see Embedding.
+     */
+    private embeddingTabEl: HTMLElement | null = null;
+    /**
      * The Updates tab's root element, captured the same way and for the same
      * reason as `serviceTabEl`. Its /api/updates/status read is held until
      * container mode is known, so the constructor's post-probe block is what
@@ -554,8 +585,15 @@ export class SettingsModal extends Modal {
         // An install from the Dependencies tab bubbles up to here; the Local
         // HTTPS tab's panel re-checks mkcert so generate enables without a
         // reopen. On the dialog itself, so the listener goes with it.
+        // The Server tab's https port is gated on mkcert too, so it re-reads.
         this.dialog.addEventListener(DEPENDENCY_INSTALLED_EVENT, () => {
             if (this.localHttpsTabEl) void applyLocalHttpsDependencyInstalled(this.localHttpsTabEl);
+            if (this.serverTabEl && !this.docker) void refreshServerHttps(this.serverTabEl);
+        });
+        // A certificate generated or revoked on the Local HTTPS tab opens or
+        // closes the Server tab's https port.
+        this.dialog.addEventListener(TLS_CERT_CHANGED_EVENT, () => {
+            if (this.serverTabEl && !this.docker) void refreshServerHttps(this.serverTabEl);
         });
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
         // Resolve the current user's role first so admin-only sections can be gated.
@@ -633,11 +671,21 @@ export class SettingsModal extends Modal {
                         // decision 2026-09-30): its tab shows only the
                         // reverse-proxy note, and nothing there fetches.
                         if (this.localHttpsTabEl) applyLocalHttpsContainerMode(this.localHttpsTabEl);
+                        // ...so the Embedding tab's https note names the
+                        // reverse proxy alone.
+                        if (this.embeddingTabEl) applyEmbeddingContainerMode(this.embeddingTabEl);
                         return;
                     }
+                    // A host: the Server tab's port rows, built hidden so none of
+                    // their copy flashes in a container, can show now.
+                    if (this.serverTabEl) applyServerHostMode(this.serverTabEl);
                     if (this.canUse('dependencies') && this.dependenciesTabEl) {
                         void refreshDependencies(this.dependenciesTabEl);
                     }
+                    // The Server tab's https port: held until here, past the
+                    // container branch, because it reads /api/tls/state, which a
+                    // container refuses (and its row is hidden there anyway).
+                    if (this.canUse('webPort') && this.serverTabEl) void refreshServerHttps(this.serverTabEl);
                     if (this.canUse('service') && this.serviceTabEl) {
                         void refreshService(this.serviceTabEl, {
                             // renderServiceState (inside ServiceTab.ts) learns the
@@ -696,6 +744,15 @@ export class SettingsModal extends Modal {
             // Settings closes, and its answer then reads as cancel.
             askChild: (ask, unanswered) => this.askChild(ask, unanswered),
             openChild: (open) => this.openChild(open),
+            // Read at click time: the strip is built just below, after ctx.
+            // Focus follows to the newly selected tab's button, so a keyboard
+            // user whose link just vanished with its tab is not dropped on <body>.
+            showTab: (id) => {
+                const strip = this.tabStrip;
+                if (!strip) return;
+                strip.activate(id);
+                strip.getElement().querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+            },
         };
         const tabs: TabDef[] = [];
         if (canSeeSection(this.role, 'users')) {
@@ -703,7 +760,15 @@ export class SettingsModal extends Modal {
         }
         // Next to Users: both answer "who is allowed to do what with this server".
         if (canSeeSection(this.role, 'embedOrigins')) {
-            tabs.push({ id: 'embedding', label: 'Embedding', build: () => buildEmbeddingTab(ctx, store) });
+            tabs.push({
+                id: 'embedding',
+                label: 'Embedding',
+                build: () => {
+                    const el = buildEmbeddingTab(ctx, store);
+                    this.embeddingTabEl = el; // so the container branch can reword its https note
+                    return el;
+                },
+            });
         }
         // Built unconditionally; applyDockerGating() swaps them for the locked
         // container copy if the probe comes back true. Their refresh calls are
@@ -826,7 +891,7 @@ export class SettingsModal extends Modal {
         save.className = 'settings-btn settings-btn-primary settings-save';
         save.textContent = 'save';
         // Starts disabled: a freshly opened dialog has staged nothing, and the
-        // tabs' baselines are not even known yet (the web port and the update
+        // tabs' baselines are not even known yet (the ports and the update
         // settings arrive on the refreshes the constructor drives).
         save.disabled = true;
         save.addEventListener('click', () => void this.onSaveClick());
@@ -1063,7 +1128,7 @@ export class SettingsModal extends Modal {
     // constructor's post-probe block, via `this.serviceTabEl`.
 
     // Server tab (the beta.62 consolidation of the old "App" section: reset,
-    // change password, log out, web port, install-for-all-users, stop & exit,
+    // change password, log out, the http and https ports, install-for-all-users, stop & exit,
     // uninstall) moved to settings/tabs/ServerTab.ts, along with the pure
     // helpers only it uses. `refreshServer()` is triggered right after
     // `fillBody`, and `applyServerServiceStatus()` from the Service tab's

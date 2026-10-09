@@ -84,13 +84,13 @@ function footerButton(dialog: HTMLDialogElement | null, label: string): HTMLButt
     return btn as HTMLButtonElement;
 }
 
-/** Open Settings, stage a web-port change, and return the dialog. */
+/** Open Settings, stage an http port change, and return the dialog. */
 async function openDirtySettings(): Promise<{ modal: SettingsModal; dialog: HTMLDialogElement }> {
     const modal = new SettingsModal();
     await settle();
     const dialog = document.querySelector('dialog.settings-modal') as HTMLDialogElement;
     const input = dialog.querySelector<HTMLInputElement>('input[type="number"]');
-    expect(input, 'the web port input').not.toBeNull();
+    expect(input, 'the http port input').not.toBeNull();
     if (input) {
         input.value = '9000';
         input.dispatchEvent(new Event('change', { bubbles: true }));

@@ -56,12 +56,19 @@ export class SettingsSummaryModal extends Modal {
         }
         container.appendChild(list);
 
+        // Either port restarts the server (SettingsBatchApi), but only the HTTP
+        // port moves this page: it follows the HTTP port to its new value.
         if (this.changes.some((c) => c.id === 'webPort')) {
             const warning = document.createElement('p');
             warning.className = 'settings-summary__restart';
             warning.textContent =
-                'Changing the web port will restart the server. This page will reload on the new port ' +
+                'Changing the HTTP port will restart the server. This page will reload on the new port ' +
                 'automatically — the app is not crashing.';
+            container.appendChild(warning);
+        } else if (this.changes.some((c) => c.id === 'httpsPort')) {
+            const warning = document.createElement('p');
+            warning.className = 'settings-summary__restart';
+            warning.textContent = 'Changing the HTTPS port will restart the server; any active streams will drop.';
             container.appendChild(warning);
         }
     }

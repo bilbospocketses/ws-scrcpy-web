@@ -113,11 +113,13 @@ describe('the origins the tab stages are exactly what the server stores', () => 
     // three only agree if the client's builder and `parseFrameAncestorOrigin`
     // normalize identically: a staged origin must survive it unchanged.
     it.each([
-        ['localhost', '5159', 'both'],
+        ['localhost', '5159', 'http'],
+        ['localhost', '5159', 'https'],
         ['LocalHost', '', 'http'],
         ['tools.example.com', '80', 'http'],
         ['tools.example.com', '443', 'https'],
-        ['tools.example.com', '80', 'both'],
+        // http & https takes no port (BOTH_SCHEMES_PORT_ERROR): each scheme's default.
+        ['tools.example.com', '', 'both'],
         ['192.168.1.50', '8080', 'https'],
         ['192.168.1.50', '', 'both'],
     ] as const)('%s port %s %s', (address, port, scheme) => {

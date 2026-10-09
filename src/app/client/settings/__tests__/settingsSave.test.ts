@@ -16,6 +16,7 @@ import {
     performDirtyClose,
     performStagedSave,
     RESTART_REDIRECT_DELAY_MS,
+    restartRedirectUrl,
     type SaveDeps,
     SettingsDirtyCloseModal,
     SettingsModal,
@@ -88,7 +89,7 @@ describe('runSave treats a non-ok response as a failure', () => {
     it('surfaces failed.id and failed.error from a rejected-apply 400', async () => {
         stubFetch(400, { ok: false, applied: ['channel'], failed: { id: 'webPort', error: 'port 80 is in use' } });
 
-        const result = await runSave([{ id: 'webPort', label: 'Web port', from: 8000, to: 80 }]);
+        const result = await runSave([{ id: 'webPort', label: 'HTTP port', from: 8000, to: 80 }]);
 
         expect(result.ok).toBe(false);
         expect(result.failed?.id).toBe('webPort');
@@ -158,7 +159,7 @@ describe('runSave treats a non-ok response as a failure', () => {
 /** A store with one staged change: web port 8000 -> 80. */
 function stagedStore(): StagedSettingsStore {
     const store = new StagedSettingsStore();
-    store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
+    store.register({ id: 'webPort', label: 'HTTP port', initial: 8000 });
     store.set('webPort', 80);
     return store;
 }
@@ -203,7 +204,7 @@ describe('performStagedSave', () => {
         // Both the order and the payload. `confirm` renders from the same list
         // that is sent, so the user cannot confirm one thing and save another.
         expect(deps.calls).toEqual(['confirm(webPort)', 'save(webPort)']);
-        expect(deps.confirm).toHaveBeenCalledWith([{ id: 'webPort', label: 'Web port', from: 8000, to: 80 }]);
+        expect(deps.confirm).toHaveBeenCalledWith([{ id: 'webPort', label: 'HTTP port', from: 8000, to: 80 }]);
     });
 
     it('sends nothing when the summary is cancelled, and keeps the changes staged', async () => {
@@ -262,12 +263,12 @@ describe('performStagedSave', () => {
         const message = 'port 8123 is in use; the system service binds its port exactly, so pick a free one';
         stubFetch(409, { ok: false, applied: [], failed: { id: 'webPort', error: message } });
         const store = new StagedSettingsStore();
-        store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
+        store.register({ id: 'webPort', label: 'HTTP port', initial: 8000 });
         store.set('webPort', 8123);
 
         const action = await performStagedSave(store, mockDeps({ save: runSave }));
 
-        expect(action).toEqual({ kind: 'failed', message: `couldn't save Web port: ${message}` });
+        expect(action).toEqual({ kind: 'failed', message: `couldn't save HTTP port: ${message}` });
         expect(store.changes()).toHaveLength(1);
     });
 
@@ -286,9 +287,9 @@ describe('performStagedSave', () => {
         // of them leaves the user unable to act on it.
         //
         // The LABEL, as the summary showed it — not the wire id. The user just
-        // confirmed "Web port: 8000 → 80"; answering with `webPort` makes them
+        // confirmed "HTTP port: 8000 → 80"; answering with `webPort` makes them
         // translate an internal identifier back to the row they touched.
-        expect(action.kind === 'failed' && action.message).toContain('Web port');
+        expect(action.kind === 'failed' && action.message).toContain('HTTP port');
         expect(action.kind === 'failed' && action.message).not.toContain('webPort');
         expect(action.kind === 'failed' && action.message).toContain('port 80 is in use');
     });
@@ -415,6 +416,22 @@ describe('performStagedSave', () => {
         expect(store.get('webPort')).toBe(80);
     });
 
+    // Smoke 21.2 (after 0.5.3): a port saved from another machine is refused by
+    // the batch's operator gate as a whole, with no setting to name.
+    it('reports an off-box refusal as the changes not being saved, with the server reason', async () => {
+        const deps = mockDeps({
+            save: vi.fn(async () => ({
+                ok: false,
+                applied: [],
+                failed: { id: '', error: 'admin actions are limited to this machine' },
+            })),
+        });
+        expect(await performStagedSave(stagedStore(), deps)).toEqual({
+            kind: 'failed',
+            message: "couldn't save the changes: admin actions are limited to this machine",
+        });
+    });
+
     it('redirects to the SAME origin on the new port when the server restarts', async () => {
         const deps = mockDeps({
             save: vi.fn(async () => ({
@@ -435,13 +452,68 @@ describe('performStagedSave', () => {
         expect(url.hostname).toBe(window.location.hostname);
     });
 
-    it('does not redirect when a restart is required but no port came back', async () => {
+    // After 0.5.3: a restart that names none of the page's ports (an http page
+    // saving only the https port, say) reloads the page on its own port once
+    // the server is back, rather than leaving it on a connection the restart
+    // drops -- and never navigates to `:undefined` / `:NaN`.
+    it('reloads on its own port when a restart is required but its port did not move', async () => {
         const deps = mockDeps({
-            save: vi.fn(async () => ({ ok: true, applied: ['webPort'], restartRequired: true })),
+            save: vi.fn(async () => ({
+                ok: true,
+                applied: ['httpsPort'],
+                restartRequired: true,
+                redirectHttpsPort: 9443,
+            })),
         });
 
-        // Better to close than to navigate to `:undefined` / `:NaN`.
+        const action = await performStagedSave(stagedStore(), deps, 'http://192.168.1.5:8000/some/page?x=1');
+        expect(action).toEqual({ kind: 'redirect', url: 'http://192.168.1.5:8000/' });
+    });
+
+    it('closes when nothing restarts', async () => {
+        const deps = mockDeps({ save: vi.fn(async () => ({ ok: true, applied: ['webPort'] })) });
         expect(await performStagedSave(stagedStore(), deps)).toEqual({ kind: 'close' });
+    });
+});
+
+/**
+ * M5 (after 0.5.3): after a port save the page follows the listener it is
+ * served by, keeping its own scheme and host.
+ */
+describe('restartRedirectUrl', () => {
+    const both = {
+        ok: true,
+        applied: ['httpsPort', 'webPort'],
+        restartRequired: true,
+        redirectPort: 8010,
+        redirectHttpsPort: 9443,
+    };
+
+    it('sends an http page to the new http port', () => {
+        expect(restartRedirectUrl(both, 'http://lan-box:8000/x')).toBe('http://lan-box:8010/');
+    });
+
+    it('sends an https page to the new https port', () => {
+        expect(restartRedirectUrl(both, 'https://lan-box:8443/x')).toBe('https://lan-box:9443/');
+    });
+
+    it('keeps an https page on its port when only the http port moved, reloading it', () => {
+        const res = { ok: true, applied: ['webPort'], restartRequired: true, redirectPort: 8010 };
+        expect(restartRedirectUrl(res, 'https://lan-box:8443/x')).toBe('https://lan-box:8443/');
+    });
+
+    it('keeps an http page on its port when only the https port moved, reloading it', () => {
+        const res = { ok: true, applied: ['httpsPort'], restartRequired: true, redirectHttpsPort: 9443 };
+        expect(restartRedirectUrl(res, 'http://lan-box:8000/x')).toBe('http://lan-box:8000/');
+    });
+
+    it('reloads a page on a default port (a reverse proxy) without inventing a port', () => {
+        const res = { ok: true, applied: ['webPort'], restartRequired: true, redirectPort: 8010 };
+        expect(restartRedirectUrl(res, 'https://proxy.example/app')).toBe('https://proxy.example/');
+    });
+
+    it('is null when nothing restarts', () => {
+        expect(restartRedirectUrl({ ok: true, applied: ['webPort'], redirectPort: 8010 }, 'http://h:8000/')).toBeNull();
     });
 
     it('waits 4 seconds before following the restart', () => {
@@ -615,12 +687,12 @@ describe('StagedSettingsStore.subscribe', () => {
         // The tabs re-register from their refreshes, which is what turns an
         // untouched-but-unknown field clean. Save has to follow that too.
         const store = new StagedSettingsStore();
-        store.register({ id: 'webPort', label: 'Web port', initial: null });
+        store.register({ id: 'webPort', label: 'HTTP port', initial: null });
         store.set('webPort', 8000);
         const seen: boolean[] = [];
         store.subscribe(() => seen.push(store.isDirty()));
 
-        store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
+        store.register({ id: 'webPort', label: 'HTTP port', initial: 8000 });
 
         expect(seen).toEqual([false]);
     });
@@ -670,7 +742,7 @@ describe('StagedSettingsStore.subscribe', () => {
  * never opened.
  */
 describe('liveSaveDeps', () => {
-    const CHANGES: Change[] = [{ id: 'webPort', label: 'Web port', from: 8000, to: 9000 }];
+    const CHANGES: Change[] = [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 9000 }];
 
     it('routes confirm through the change summary', async () => {
         const spy = vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(false);
@@ -778,7 +850,7 @@ describe('the restart redirect actually navigates', () => {
     /** Stage a new web port and click Save. */
     async function saveWebPort(value: string): Promise<void> {
         const input = document.querySelector<HTMLInputElement>('dialog.settings-modal input[type="number"]');
-        expect(input, 'the web port input').not.toBeNull();
+        expect(input, 'the http port input').not.toBeNull();
         if (input) {
             input.value = value;
             input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -796,7 +868,7 @@ describe('the restart redirect actually navigates', () => {
         new SettingsModal();
         await settle();
         const input = document.querySelector<HTMLInputElement>('dialog.settings-modal input[type="number"]');
-        expect(input, 'the web port input').not.toBeNull();
+        expect(input, 'the http port input').not.toBeNull();
         if (input) {
             input.value = '9000';
             input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -937,10 +1009,10 @@ describe('the dialog-level Save button', () => {
         return document.querySelector<HTMLButtonElement>('dialog.settings-modal .modal-footer button.settings-save');
     }
 
-    /** The Server tab's web-port field, staged by a bubbling `change`. */
+    /** The Server tab's http port field, staged by a bubbling `change`. */
     function stageWebPort(value: string): void {
         const input = document.querySelector<HTMLInputElement>('dialog.settings-modal input[type="number"]');
-        expect(input, 'the web port input').not.toBeNull();
+        expect(input, 'the http port input').not.toBeNull();
         if (input) {
             input.value = value;
             input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1147,7 +1219,7 @@ describe('the dialog-level Save button', () => {
         expect(
             document.querySelector('dialog.settings-modal .settings-save-status')?.textContent,
             'the refusal, named and explained',
-        ).toBe("couldn't save Web port: port 9000 is in use");
+        ).toBe("couldn't save HTTP port: port 9000 is in use");
         expect(document.querySelector('dialog.settings-modal')?.hasAttribute('open'), 'the dialog').toBe(true);
         expect(saveButton()?.disabled, 'Save after a refusal').toBe(false);
 

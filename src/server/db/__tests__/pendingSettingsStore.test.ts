@@ -13,7 +13,7 @@ beforeEach(() => {
 });
 
 const CHANGES = [
-    { id: 'webPort', label: 'Web port', from: 8000, to: 8010 },
+    { id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 },
     { id: 'channel', label: 'Update channel', from: 'stable', to: 'beta' },
 ];
 

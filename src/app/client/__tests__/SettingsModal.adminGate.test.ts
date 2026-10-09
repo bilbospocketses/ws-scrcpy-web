@@ -60,7 +60,7 @@ describe('SettingsModal admin gating', () => {
             expect(text).not.toContain('service');
         });
 
-        it('does NOT show the web port row', async () => {
+        it('does NOT show the http port row', async () => {
             vi.spyOn(authClient, 'me').mockResolvedValue({
                 authEnabled: true,
                 user: { username: 'bob', role: 'user' },
@@ -71,7 +71,7 @@ describe('SettingsModal admin gating', () => {
             await flush();
 
             const text = bodyText();
-            expect(text).not.toContain('web port');
+            expect(text).not.toContain('http port');
         });
 
         it('does NOT show stop-server or uninstall rows', async () => {
@@ -133,7 +133,7 @@ describe('SettingsModal admin gating', () => {
             expect(text).toContain('service');
         });
 
-        it('shows the web port row', async () => {
+        it('shows the http port row', async () => {
             vi.spyOn(authClient, 'me').mockResolvedValue({
                 authEnabled: false,
                 user: { username: 'admin', role: 'admin' },
@@ -144,7 +144,7 @@ describe('SettingsModal admin gating', () => {
             await flush();
 
             const text = bodyText();
-            expect(text).toContain('web port');
+            expect(text).toContain('http port');
         });
 
         it('shows the reset all my settings row', async () => {
@@ -173,7 +173,7 @@ describe('SettingsModal admin gating', () => {
             const text = bodyText();
             // Fail-open = full admin view (server still enforces 403)
             expect(text).toContain('updates');
-            expect(text).toContain('web port');
+            expect(text).toContain('http port');
             expect(text).toContain('reset all my settings');
         });
     });

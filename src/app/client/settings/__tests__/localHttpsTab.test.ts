@@ -138,6 +138,28 @@ describe('Local HTTPS tab (0.5.3: its own tab, right after Server)', () => {
         expect(el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.disabled).toBe(false);
     });
 
+    it('the mkcert callout is the first thing in the tab, above the heading, and its link opens Dependencies', async () => {
+        vi.stubGlobal(
+            'fetch',
+            hostFetch(() => null),
+        );
+        const showTab = vi.fn();
+        const el = buildLocalHttpsTab({ ...ctx, showTab });
+        applyLocalHttpsServiceStatus(el, { supported: true, platform: 'win32', status: 'not-installed' });
+        await flush();
+        const notice = el.querySelector<HTMLElement>('[data-tls-mkcert-notice]')!;
+        expect(notice.hidden).toBe(false);
+        // The first element of the whole tab, in document order, and before the h3.
+        expect(el.querySelector('*')).toBe(el.firstElementChild);
+        expect(el.firstElementChild?.firstElementChild).toBe(notice);
+        const heading = el.querySelector('h3.settings-section-heading')!;
+        expect(notice.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(headings(el)).toEqual(['Local HTTPS']);
+
+        notice.querySelector<HTMLButtonElement>('.settings-inline-link')!.click();
+        expect(showTab).toHaveBeenCalledWith('dependencies');
+    });
+
     it('a dependency install before the panel exists is a harmless no-op', async () => {
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);

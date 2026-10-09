@@ -36,6 +36,13 @@ export interface TabContext {
     askChild: AskChild;
     /** Open a non-question dialog (Users) as a child of Settings (`Modal.openChild`). */
     openChild<T>(open: () => T): T;
+    /**
+     * Switch the Settings dialog to the tab with this id (`TabStrip.activate`;
+     * a no-op for an id that was never built). The Local HTTPS tab's mkcert
+     * callout uses it to send the user to `dependencies`. Optional, so a tab
+     * built on its own (its unit tests) needs no dialog behind it.
+     */
+    showTab?: (id: string) => void;
 }
 
 export type AskChild = <T>(ask: () => Promise<T>, unanswered: T) => Promise<T>;
@@ -94,6 +101,46 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
 
 /** The staged field's summary label: `Allowed embedders: none added → add http://…`. */
 export const EMBED_ADD_LABEL = 'Allowed embedders';
+
+/** Under the add row while `http & https` is chosen, whose port box is then disabled. */
+export const EMBED_BOTH_SCHEMES_NOTE =
+    'uses 80 for http and 443 for https; for other ports, add each scheme separately.';
+
+/**
+ * Under the add row, always: an https page cannot frame this app over http
+ * (browsers block mixed content in a frame), so pre-approving an https
+ * embedder only works once this app is served over https as well. The last
+ * sentence names the way to get there, which differs in a container, where
+ * Local HTTPS is not supported (`embedHttpsNote`).
+ */
+const EMBED_HTTPS_NOTE_LEAD =
+    'an https page can only embed this app when this app is served over https too; browsers block an http frame inside an https page. ';
+
+/** The https note for a host install, or for a container (`container`), where only a reverse proxy can serve https. */
+export function embedHttpsNote(container: boolean): string {
+    return (
+        EMBED_HTTPS_NOTE_LEAD +
+        (container
+            ? 'serve this app over https from your reverse proxy first.'
+            : 'set up local https or a reverse proxy first.')
+    );
+}
+
+/**
+ * Per-instance container switches, keyed by the section `buildEmbeddingTab`
+ * returned (the same WeakMap shape as the other tabs' appliers): container mode
+ * is learned after every tab is built.
+ */
+const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
+
+/**
+ * Tell an Embedding tab it is running in a container, so its https note names
+ * the reverse proxy alone (Local HTTPS is not supported there). A no-op if
+ * `section` was never built through `buildEmbeddingTab`.
+ */
+export function applyEmbeddingContainerMode(section: HTMLElement): void {
+    containerModeAppliers.get(section)?.();
+}
 
 /**
  * The field's baseline. ONE frozen instance, deliberately: the store compares
@@ -199,6 +246,10 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
     });
 
     void refreshEmbedOrigins(view);
+    containerModeAppliers.set(section, () => {
+        const note = view.adder.querySelector<HTMLElement>('[data-embed-https-note]');
+        if (note) note.textContent = embedHttpsNote(true);
+    });
     return section;
 }
 
@@ -337,6 +388,12 @@ function setAdderVisible(adder: HTMLElement, visible: boolean): void {
  * twice. If every origin one add would stage is a duplicate, nothing changes
  * and the line says so; with `http & https`, the new one is staged and the line
  * names the one that was skipped.
+ *
+ * `http & https` takes no port (after 0.5.3): one port cannot be the default
+ * of both schemes, and port 80 with it used to stage `https://host:80`. While
+ * it is chosen the port box is emptied and disabled, with a note saying how to
+ * add another port; switching back re-enables the box, empty. Below it all, a
+ * standing note that an https embedder needs this app on https too.
  */
 function buildAddRow(view: EmbeddingView): HTMLElement {
     const wrap = document.createElement('div');
@@ -350,6 +407,15 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     address.setAttribute('data-embed-address', '');
     address.autocomplete = 'off';
     address.spellcheck = false;
+    // The one box that gives way: it starts from 9rem and grows into what the
+    // others leave, so at the dialog's default width the whole row -- address,
+    // port, scheme and add -- fits on one line. `.settings-input`'s 100% width
+    // and 240px cap would make it ask for more than that line has, and a
+    // wrapping row then breaks before anything shrinks.
+    address.style.flex = '1 1 9rem';
+    address.style.width = 'auto';
+    address.style.minWidth = '9rem';
+    address.style.maxWidth = 'none';
 
     // A text box, not type="number": a number input reports an entry it cannot
     // parse as '', which would read as "blank" and silently drop the port.
@@ -357,7 +423,9 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     port.type = 'text';
     port.inputMode = 'numeric';
     port.className = 'settings-input';
+    port.style.width = '80px';
     port.style.maxWidth = '80px';
+    port.style.flexShrink = '0';
     port.placeholder = '80';
     port.setAttribute('aria-label', 'embedder port');
     port.setAttribute('data-embed-port', '');
@@ -365,7 +433,12 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
 
     const scheme = document.createElement('select');
     scheme.className = 'settings-input';
-    scheme.style.maxWidth = '130px';
+    // Sized to its longest option ("http & https"), never squeezed below it:
+    // `.settings-input` is `width: 100%`, which let the flex row shrink the
+    // list until that option read "http & htt…".
+    scheme.style.width = 'auto';
+    scheme.style.maxWidth = 'none';
+    scheme.style.flexShrink = '0';
     scheme.setAttribute('aria-label', 'embedder scheme');
     scheme.setAttribute('data-embed-scheme', '');
     const schemeText: Record<EmbedderScheme, string> = { http: 'http', https: 'https', both: 'http & https' };
@@ -383,10 +456,25 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     addBtn.textContent = 'add';
     addBtn.setAttribute('data-embed-add-button', '');
     addBtn.disabled = true;
+    addBtn.style.flexShrink = '0';
 
     const controls = document.createDocumentFragment();
     controls.append(address, port, scheme, addBtn);
-    wrap.appendChild(buildRow('add an embedder', controls));
+    const addRow = buildRow('add an embedder', controls);
+    // Only on a genuinely narrow dialog, where even the address box at its
+    // 9rem minimum does not fit, do the controls wrap onto a second line
+    // rather than overflow.
+    const addControls = addRow.querySelector<HTMLElement>('.settings-control');
+    if (addControls) addControls.style.flexWrap = 'wrap';
+    wrap.appendChild(addRow);
+
+    const bothNote = document.createElement('p');
+    bothNote.className = 'settings-status';
+    bothNote.style.gridColumn = '1 / -1';
+    bothNote.setAttribute('data-embed-both-note', '');
+    bothNote.textContent = EMBED_BOTH_SCHEMES_NOTE;
+    bothNote.hidden = true;
+    wrap.appendChild(bothNote);
 
     const message = document.createElement('p');
     message.className = 'settings-status';
@@ -395,6 +483,23 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     message.setAttribute('role', 'status');
     message.hidden = true;
     wrap.appendChild(message);
+
+    // Always shown. The host wording until the dialog learns it is in a
+    // container (applyEmbeddingContainerMode).
+    const httpsNote = document.createElement('p');
+    httpsNote.className = 'settings-status';
+    httpsNote.style.gridColumn = '1 / -1';
+    httpsNote.setAttribute('data-embed-https-note', '');
+    httpsNote.textContent = embedHttpsNote(false);
+    wrap.appendChild(httpsNote);
+
+    /** `http & https` empties and disables the port box; the other two give it back, empty. */
+    const applySchemeToPort = (): void => {
+        const both = scheme.value === 'both';
+        if (both || port.disabled) port.value = '';
+        port.disabled = both;
+        bothNote.hidden = !both;
+    };
 
     const say = (text: string, isError: boolean): void => {
         message.textContent = text;
@@ -429,7 +534,10 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     };
     address.addEventListener('input', validate);
     port.addEventListener('input', validate);
-    scheme.addEventListener('change', validate);
+    scheme.addEventListener('change', () => {
+        applySchemeToPort();
+        validate();
+    });
 
     const add = (): void => {
         const result = read();

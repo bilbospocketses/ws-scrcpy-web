@@ -223,6 +223,18 @@ const REFUSED: Case[] = [
             }),
     },
     {
+        // The Server tab's https port (after 0.5.3): Local HTTPS's port, so it is
+        // refused with the /api/tls/* copy. Not host-safe: on a host it moves the
+        // port and writes the restart marker under the real data root.
+        name: 'POST /api/settings/batch { httpsPort }',
+        remedy: /reverse proxy/,
+        hostSafe: false,
+        run: () =>
+            call(new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn() }), 'POST', '/api/settings/batch', {
+                changes: [{ id: 'httpsPort', from: 8443, to: 9443 }],
+            }),
+    },
+    {
         name: 'POST /api/settings/batch { channel }',
         remedy: /docker owns this setting/,
         run: () =>
@@ -357,6 +369,31 @@ describe('container mode still allows what a container needs', () => {
         expect(body).toMatchObject({ supported: false, docker: true });
         expect(body.unsupportedReason).toMatch(/container/);
         expect(factory).not.toHaveBeenCalled();
+    });
+});
+
+describe('container mode refuses a staged https port with the Local HTTPS copy', () => {
+    it('answers what POST /api/tls/https-port answers, word for word, and writes nothing', async () => {
+        setup(true);
+        const viaBatch = call(
+            new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn() }),
+            'POST',
+            '/api/settings/batch',
+            {
+                changes: [{ id: 'httpsPort', from: 8443, to: 9443 }],
+            },
+        );
+        await viaBatch.handled;
+        const viaTls = call(tlsApi(), 'POST', '/api/tls/https-port', { port: 9443 });
+        await viaTls.handled;
+        expect(viaBatch.status()).toBe(409);
+        expect(viaBatch.json().error).toBe(containerRefusalMessage('Local HTTPS', 'reverse-proxy'));
+        expect(viaBatch.json().error).toBe(viaTls.json().error);
+        expect(Config.getInstance().httpsPort).toBe(8443);
+        const rows = Config.getInstance().db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as {
+            n: number;
+        };
+        expect(rows.n).toBe(0);
     });
 });
 

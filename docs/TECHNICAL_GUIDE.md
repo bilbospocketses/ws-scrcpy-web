@@ -1419,7 +1419,7 @@ Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancell
 | `src/app/client/AddSubnetModal.ts` | Add-or-edit dialog. Accepts `{ onSubmit, mode?: 'add' \| 'edit', initialValue?: string }`. Edit mode re-titles to "Edit Subnet", switches the button to "save", pre-fills the input, and re-runs validation so a valid pre-filled value leaves save enabled immediately. Live validation via `parseSubnetInput`; error messages embed a clickable link to the subnet cheat sheet when relevant. |
 | `src/app/client/LargeSubnetWarningModal.ts` | Fires when combined scan size > 2,048 hosts. Shows total host count + per-subnet breakdown, user confirms or cancels. Nested-modal readability handled by a CSS `:has()` rule in `src/style/modal.css` that makes the topmost stacked dialog use a fully opaque frame (instead of compounding the glassmorphism of both layers). |
 | `src/app/client/ScanProgressChip.ts` | Lifecycle chip with four states: `scanning`, `draining`, `complete`, `cancelled`. Full-width inside its slot with `min-height: 32px` so all three label states occupy the same footprint regardless of which child button (cancel / × / none) is visible. `setScanning` is a no-op after the chip leaves `scanning` state — prevents stale `scan.progress` messages arriving during drain from resurrecting the scanning label. Drain label holds for a minimum 1200 ms before transitioning to `cancelled` (the real drain can complete in ~300 ms, which is too fast to read). Auto-dismisses 5 s after `complete` / 10 s after `cancelled`, via the `onDismiss?` callback restoring the panel's default info text. |
-| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate-subject radios links to the top, the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust`. Same back-link as the cheat sheet. |
+| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate subject links to the top (its `click here for help on how this works` link, after 0.5.3), the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust`. Same back-link as the cheat sheet. |
 | `public/help/subnets.html` | Subnet/CIDR cheat sheet. Opens in a new tab from `ScanNetworkModal` (the "New to CIDR?" link) and from `AddSubnetModal` validation-error messages. Back-link uses `window.close()` so the tab actually closes instead of navigating the new tab back to the app (which would accumulate stale tabs on repeat cheat-sheet visits). |
 
 #### 14.2.5 Config Tuning Knobs
@@ -2041,10 +2041,10 @@ The unit body (`renderUnitFile`) is `Type=simple`, `Restart=on-failure` / `Resta
 - `WsScrcpyWeb.AppImage` → labeled **`bin_t`** (persistent `semanage fcontext` + `restorecon`) so `init_t` may exec it. `dependencies/` beside it starts **empty and root-owned**, and the service provisions node, adb and scrcpy-server into it itself, as root, so it runs its **own** deps instead of reaching into a user's home (never a copy of the user's tree: D14, below).
 - **A root helper runs from `/opt`, never from `/var/lib` (FD1, FD2).** The launcher keeps its helper copy in `<dataRoot>/control/operation-server/`, which for the system service is under `/var/lib`, labeled `var_lib_t`. `init_t` may not *execute* `var_lib_t`, so a `systemd-run --system` unit started from that copy dies `status=203/EXEC` with the AVC `{ execute } … init_t … var_lib_t`. On stock Fedora 44 that broke the system-service uninstall (row 14.5) and the root self-update (row 6.6), and the failed update left the service stopped. The two root call sites (`UpdateService.applyUpdate`'s system-service branch and `ServiceApi.handleAppUninstall`) therefore pass the helper through `stageSystemHelper` (`src/server/service/systemHelper.ts`). It copies the helper to `/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher` (temp sibling + rename, mode 0755), which inherits the tree's `bin_t`, and runs `restorecon` where SELinux is present. It does nothing unless it is root on Linux, and if the copy fails it returns the old path with a warning. The `/opt` AppImage itself is not used for these helpers, as the service teardown uses it: the app uninstall kills the app's processes and removes `/opt`, and a helper served from the AppImage's FUSE mount could lose that mount mid-run. A plain ELF under `/opt` keeps running after it is deleted.
 - Config + logs live in **`/var/lib/ws-scrcpy-web`**, which the policy's built-in `/var/lib(/.*)?` rule labels **`var_lib_t`** automatically — **no custom rule** (a `restorecon` is belt-and-suspenders). `/var/opt` was impossible: Fedora's `file_contexts.subs_dist` aliases `/var/opt → /opt`, so semanage rejects a `var_lib_t` rule beneath it — the bug that broke the system install on every SELinux distro since beta.41.
-- The unit's `Environment=` sets `DATA_ROOT=/var/lib/ws-scrcpy-web` + `DEPS_PATH=/opt/ws-scrcpy-web/dependencies` (`buildServiceUnitEnv`), and a seeded `config.json` (`buildSystemSeedConfig`: `installMode=system-service`, `firstRunComplete=true`, the installing user's `webPort`) lands in `/var/lib/ws-scrcpy-web` so the service boots a correct, persistent config on the same port — no stray WelcomeModal, and it survives reboot. **The unit does not pin the port.** Until 2026-10-04 it also set `WS_SCRCPY_WEB_PORT=<install port>`, so a Settings port change (ConfigApi writes `config.json`, exits 75, and the launcher respawns Node with the unit's environment) came back on the install port and wrote it over the user's choice. Now `config.json`'s `webPort` is the only source, and a Linux system service treats it as **exact** (`reconcileWebPort.ts`; the instance is recognized by the unit's own `WS_SCRCPY_SERVICE=1` + `DATA_ROOT=/var/lib/ws-scrcpy-web`, `isLinuxSystemServiceInstance`): no walk forward. During the page's install the user's own copy still holds the port for a moment, so the service fails its bind, exits non-zero, and `Restart=on-failure` brings it back every 2 s (10 starts in 60 s) until the port is free — the job the pin did. The Windows service and the Linux user service still walk forward. Because an exact port held by another program would keep the service down, Settings refuses one before writing anything: on this instance `PATCH /api/config` and `POST /api/settings/batch` answer **409** `port N is in use; the system service binds its port exactly, so pick a free one` (the holder may be another copy of this app) (`api/systemServicePortGuard.ts`, probing with the reconcile's own `findAvailablePort(N, N)`; ports the process itself listens on are not probed). The batch refuses before its WAL row and before any sibling change, in the rejected-apply shape the dialog shows as "couldn't save Web port: …". A unit installed before the change still carries the pin; the system service **ignores** `WS_SCRCPY_WEB_PORT` (one info line), so such an install heals on its first update to this build. The line itself is removed by a later system-service self-update (`linux_apply.rs`, `unpin_system_unit`, then `daemon-reload`) or a reinstall. The whole label step is isolated with a trailing `|| true` so a non-SELinux host doesn't abort the install.
+- The unit's `Environment=` sets `DATA_ROOT=/var/lib/ws-scrcpy-web` + `DEPS_PATH=/opt/ws-scrcpy-web/dependencies` (`buildServiceUnitEnv`), and a seeded `config.json` (`buildSystemSeedConfig`: `installMode=system-service`, `firstRunComplete=true`, the installing user's `webPort`) lands in `/var/lib/ws-scrcpy-web` so the service boots a correct, persistent config on the same port — no stray WelcomeModal, and it survives reboot. **The unit does not pin the port.** Until 2026-10-04 it also set `WS_SCRCPY_WEB_PORT=<install port>`, so a Settings port change (ConfigApi writes `config.json`, exits 75, and the launcher respawns Node with the unit's environment) came back on the install port and wrote it over the user's choice. Now `config.json`'s `webPort` is the only source, and a Linux system service treats it as **exact** (`reconcileWebPort.ts`; the instance is recognized by the unit's own `WS_SCRCPY_SERVICE=1` + `DATA_ROOT=/var/lib/ws-scrcpy-web`, `isLinuxSystemServiceInstance`): no walk forward. During the page's install the user's own copy still holds the port for a moment, so the service fails its bind, exits non-zero, and `Restart=on-failure` brings it back every 2 s (10 starts in 60 s) until the port is free — the job the pin did. The Windows service and the Linux user service still walk forward. Because an exact port held by another program would keep the service down, Settings refuses one before writing anything: on this instance `PATCH /api/config` and `POST /api/settings/batch` answer **409** `port N is in use; the system service binds its port exactly, so pick a free one` (the holder may be another copy of this app) (`api/systemServicePortGuard.ts`, probing with the reconcile's own `findAvailablePort(N, N)`; ports the process itself listens on are not probed). The batch refuses before its WAL row and before any sibling change, in the rejected-apply shape the dialog shows as "couldn't save HTTP port: …". A unit installed before the change still carries the pin; the system service **ignores** `WS_SCRCPY_WEB_PORT` (one info line), so such an install heals on its first update to this build. The line itself is removed by a later system-service self-update (`linux_apply.rs`, `unpin_system_unit`, then `daemon-reload`) or a reinstall. The whole label step is isolated with a trailing `|| true` so a non-SELinux host doesn't abort the install.
 - **Modes never come from the caller's umask (D8).** pkexec keeps the desktop user's umask, which is `0002` on Ubuntu (user-private groups), so every root `mkdir` came out 775 and `assertSafeRootDir` then refused the install's own directories. The one-shot sets `process.umask(0o022)` before it runs (`index.ts`), each root directory is made with `mkdir -p -m 0755`, and the machine-wide install script starts with `umask 022` and `chmod 0755`s `/opt/ws-scrcpy-web`. `ensureSafeRootDir` repairs the one shape an older install left behind, a real `root:root` directory that is group- but not world-writable (`chmod g-w`), and then re-runs `assertSafeRootDir`; a symlink, a non-root owner, a non-root group or a world-writable directory is still refused. A refusal goes to **stderr**, which `ServiceApi` shows the user (it falls back to stdout for an older one-shot).
 - **`/var/lib/ws-scrcpy-web/logs` is created at install (D9).** The unit's `StandardOutput=`/`StandardError=append:` target lives there, and systemd does not create an `append:` target's parent: without it the unit failed at step STDOUT (status 209) on every clean host, while the CLI still exited 0.
-- **The install checks that the unit started (item 159).** `enable --now` returns once systemd queues the start, and `Type=simple` reads `active` the instant it forks, so the CLI used to exit 0 on a unit that could never run. `verifyServiceStarted` now polls `systemctl show` once a second. A systemd setup failure (the main process's last exit was status 200–245, systemd's own codes: 209/STDOUT was D9, 203/EXEC a binary it cannot run) or a `failed` unit fails the install at once. Whether "running" can be proved depends on the port. If the web port was **free** before the start (headless `sudo`), success needs the unit `active`/`running` **and** a TCP connect to `127.0.0.1:<port>`, within 120 s (the first start also provisions the service's dependencies). If it was **held** (the page's install: the user's own copy is still serving and exits 1.5 s after the one-shot returns), the service cannot bind yet and may retry on the busy port, so the install passes after 6 s without a setup failure, and the page's install poll (`classifyInstallPoll`) waits for the service to answer. A failure exits 1 with the reason, the unit's journal tail and the tail of `service.log` on stderr, which `ServiceApi` shows the user (D8). The unit is left installed so `systemctl status` can be read.
+- **The install checks that the unit started (item 159).** `enable --now` returns once systemd queues the start, and `Type=simple` reads `active` the instant it forks, so the CLI used to exit 0 on a unit that could never run. `verifyServiceStarted` now polls `systemctl show` once a second. A systemd setup failure (the main process's last exit was status 200–245, systemd's own codes: 209/STDOUT was D9, 203/EXEC a binary it cannot run) or a `failed` unit fails the install at once. Whether "running" can be proved depends on the port. If the http port was **free** before the start (headless `sudo`), success needs the unit `active`/`running` **and** a TCP connect to `127.0.0.1:<port>`, within 120 s (the first start also provisions the service's dependencies). If it was **held** (the page's install: the user's own copy is still serving and exits 1.5 s after the one-shot returns), the service cannot bind yet and may retry on the busy port, so the install passes after 6 s without a setup failure, and the page's install poll (`classifyInstallPoll`) waits for the service to answer. A failure exits 1 with the reason, the unit's journal tail and the tail of `service.log` on stderr, which `ServiceApi` shows the user (D8). The unit is left installed so `systemctl status` can be read.
 - **The one-shot never opens `Config` or the store (D7b).** Under pkexec (and `sudo`) the env resolves the data root to `/root/.local/share/WsScrcpyWeb`, and `Config.getInstance()` opened `wsscrcpy.db` there. A missing `--port` takes the default `webPort`.
 - **Root never stages or trusts a user-owned dependencies tree (D14).** beta.145 had the desktop caller pass its dependencies as `--deps-source` and the one-shot `cp -a`'d them into `/opt/ws-scrcpy-web/dependencies`; `-a` kept the user's ownership, so the root service exec'd a `node` the desktop user could replace: a local privilege escalation. Now the install copies only the AppImage, removes any existing staged tree and recreates it empty and 0755 (checked by `ensureSafeRootDir`), and the service provisions its own dependencies as root. `--deps-source` is no longer passed or read. For machines installed on 145, the launcher's `root_trust_guard::guard` runs whenever it starts as root: before `resolve_node_with`, it walks `DEPS_PATH` without following links and deletes the whole tree if any entry is not owned by uid 0, is group- or other-writable, or is a symlink that leaves the tree (a walk that fails counts as unsafe). The service then re-provisions, so a 145 system service repairs itself on its first start after updating.
 - **Dependency archives never keep their recorded owners (D16).** Run as root, GNU tar restores each entry's archived owner by default, and nodejs.org's Linux tarballs record uid/gid 1001; libuv's `copyFile` then kept that owner when `copyDirContents` copied the tree into `dependencies/node`. So the root service provisioned a `node` a real uid-1001 account could replace, and `root_trust_guard` removed it on the next start only for the service to recreate it the same way. Both extractions (`DependencyManager.installNodejs`, `NodePtyResolver`) now pass `tarExtractArgs` (`--no-same-owner --no-same-permissions`: the extracting process owns every entry and its umask sets the modes), and, when the process is root on Linux, `ensureRootOwnedTreeIfRoot` walks the extracted tree before it is copied in and the destination after, lchowns anything not root:root, drops group/other write from non-symlinks, and throws if a re-walk still finds one. A no-op for any other user and on Windows.
@@ -2098,7 +2098,7 @@ The supervisor also watches for the `.restart` marker at `<depsPath>/.restart`, 
 - Spawns `ws-scrcpy-web-tray.exe` as a separate process on launcher startup
 - Polls every 10 seconds; if the tray process has exited, respawns it
 - Automatically recovers after user kills, upgrades, or mode changes
-- Passes the current mode (local vs. service) and web port as arguments
+- Passes the current mode (local vs. service) and http port as arguments
 
 On Linux there is no tray supervisor: the tray is a thread inside the launcher (`launcher/src/linux_tray.rs`, section 21.4), spawned from `supervisor::run` right after the Ctrl+C handler and sharing its `stop` flag. A confirmed exit from the tray menu is a stop request, and `wait_with_signal` sends Node **SIGTERM** first (Node's handler runs the same graceful teardown as the Settings button), killing only after `GRACEFUL_STOP_TIMEOUT` (10 s). One Ctrl+C in a terminal therefore reaches Node twice, as the terminal's SIGINT to the process group and the launcher's SIGTERM. Node ignores a repeat signal that comes within 2 s of the first (logged as `Ignoring <signal> <N>ms after the first signal: graceful shutdown is already running`), so the pair cannot cut the teardown short before its SQLite backup; a signal after that still forces the exit (`src/server/util/signalExit.ts`, smoke row 12.10).
 
@@ -3035,10 +3035,14 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   question false for `docker: true` explicitly (`mountsUpdateButton`,
   `showsWelcomeWizard`, `offersSystemWideUpdate`) instead of relying on the server's
   replies happening to keep the control quiet.
-- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the web-port row and makes
-  "reset all my settings" send the per-user reset only, with no first-run `PATCH`.
+- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the http and https port rows (the
+  https port, its notes and the restart note under both, after 0.5.3) and makes "reset all my
+  settings" send the per-user reset only, with no first-run `PATCH`. The https port's
+  `/api/tls/state` read is never made there.
 - **Settings → Local HTTPS** (`applyLocalHttpsContainerMode`, its own tab since 0.5.3) shows only a
   note naming the reverse proxy: no panel, no mkcert note, and no `/api/tls/*` read.
+- **Settings → Embedding** (`applyEmbeddingContainerMode`, after 0.5.3): the note under the add row
+  names the reverse proxy alone as the way to serve the app over https.
 - **No browser is auto-opened** (`openBrowser.ts`, `inContainer`): there is no desktop.
 - **Node.js and mkcert are not managed dependencies** (`hostOnly`, §13.1). The container's list is adb and scrcpy-server, and nothing in it names mkcert.
 - **Local HTTPS is not supported in a container** (user decision, 2026-09-30). A
@@ -3179,7 +3183,8 @@ copy through `TabStrip.replaceTabBody()`, not a direct `replaceWith` — a fresh
 carries no `hidden` attribute, so a direct swap rendered visible beside whatever tab
 was actually active and orphaned the strip's cache. The Server tab stays, and
 `applyServerContainerMode()` (`ServerTab.ts`) applies its two container decisions:
-the web-port row is hidden (the port inside the image is always 8000), and "reset all
+the http port row is hidden (the port inside the image is always 8000), with the https
+port row and its notes beside it (Local HTTPS is not supported there), and "reset all
 my settings" stops sending the first-run reset (§26.5). The Local HTTPS tab stays too:
 `applyLocalHttpsContainerMode()` (`LocalHttpsTab.ts`) shows only a note naming the
 reverse proxy, and a later service status never builds the panel over it.
@@ -3192,6 +3197,7 @@ refused outright with a 400 rather than passed to a writer that might accept it:
 ```ts
 export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'webPort',
+    HTTPS_PORT_ID, // 'httpsPort', the Server tab's https port (after 0.5.3)
     'channel',
     'autoUpdate',
     'updateCheckIntervalMinutes',
@@ -3199,6 +3205,41 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     FRAME_ANCESTORS_ADD_ID, // 'frameAncestorsAdd', src/common/embedderOrigin.ts
 ]);
 ```
+
+**The https port stages beside the http port (after 0.5.3).** Until then it sat on
+the Local HTTPS tab with its own **ok** button and route. The Server tab's
+**https port** row (`ServerTab.ts`) now registers `httpsPort` (label `HTTPS port`)
+and Save sends it in the batch, where `SettingsBatchApi` validates it with
+`validateHttpsPortInput` (1-65535, as `POST /api/tls/https-port` does) and applies
+it with `Config.setHttpsPort`, second to last, straight before `webPort`
+(`orderChanges`). It is not an `AppConfig` key, so like `frameAncestorsAdd` it has
+its own branch in the apply loop. Before the WAL row, a container refuses it with
+the `/api/tls/*` copy, and **both ports are validated** -- the https port with
+`validateHttpsPortInput`, the http port (`webPort`) with `validateWebPortInput` (the rule
+`updateAppConfig` applies) -- so the port changes in a batch land together or not
+at all, and a string `"8443"` cannot slip past the equal-ports check. A batch whose
+resulting http port would equal its https port is refused with **409**
+(`portCollision.ts`), whichever side moved, but **only while Local HTTPS has a
+certificate** (`CertService.getState()` reports `ready`): without one there is no
+https listener to collide with, and an http port of 8443 is accepted as it always
+was. `PATCH /api/config` applies the same rule to a `webPort`, through the same
+helper. The tab refuses the same thing inline on the row being edited, also only
+while a certificate exists, and fixing it from either row stages the other row's
+value. **One restart covers either port moving**: a moved https port schedules the
+same exit-75 restart as a moved http port, and the response names each moved port,
+`redirectPort` (http) and `redirectHttpsPort` (https). The page follows the
+listener it is served by (`restartRedirectUrl`, SettingsModal.ts): an http page to
+the new http port, an https page to the new https port, and a page whose own port
+did not move reloads on it once the server is back. The row is editable once
+`/api/tls/state` reports a certificate (`status: 'ready'`) and mkcert is installed
+or its state cannot be told; an mkcert state the server cannot report does not
+hold the row shut on its own. It reads both on the dialog's non-container path
+(`refreshServerHttps`), and again after a dependency install and after Local HTTPS
+generates or revokes a certificate (the panel bubbles `ws-tls-cert-changed`,
+`TLS_CERT_CHANGED_EVENT`); a staged value is dropped whenever the row closes. Both
+port rows are built hidden and shown by `applyServerHostMode` once the dialog knows
+it is on a host, so nothing of them flashes in a container.
+`POST /api/tls/https-port` stays for external callers; nothing in the UI calls it.
 
 Three things the allowlist implies, all easy to state wrongly:
 
@@ -3245,7 +3286,18 @@ Three things the allowlist implies, all easy to state wrongly:
   would leave Save enabled over nothing. After a successful Save, `commit()`
   makes the staged array the baseline, so the tab notices its field is no longer
   a change, re-registers it empty and re-reads `/api/embed-origins`. Revoke stays
-  an immediate, confirmed `POST /api/embed-origins/revoke`.
+  an immediate, confirmed `POST /api/embed-origins/revoke`. **`http & https`
+  takes no port** (after 0.5.3): one port cannot be both schemes' default, and
+  port 80 with it used to stage `https://host:80`. While it is chosen the port box
+  is emptied and disabled, with a note under the row, and
+  `embedderOriginsFromInput` refuses it with any port (`BOTH_SCHEMES_PORT_ERROR`).
+  That refusal is the form's alone (user decision after 0.5.3): the batch receives
+  only the origins, so it cannot tell a `both` add from two single ones and
+  refuses no scheme/port pair, and a hand-built request can still stage
+  `https://host:80`. A standing
+  note under the add row says an https page can embed the app only when it is
+  served over https too, naming local https or a reverse proxy on a host and the
+  reverse proxy alone in a container (`applyEmbeddingContainerMode`).
 
 **Every staged text/number field refuses bad input the same way**: the typed
 value stays on screen, an inline message says what is wrong, and nothing is
@@ -3452,7 +3504,7 @@ The admin-gated `/api/tls/*` routes (`src/server/api/TlsApi.ts`) are the whole s
 `GET /state`, `POST /generate`, `POST /revoke`, `GET /ca-root` (rate-limited to 10 downloads per 60
 seconds, tracked on the one `TlsApi` instance the composition root constructs — handing out a root CA
 is the shape of a malware-delivery step even though this CA is only dangerous to whoever installs
-it), `POST /exposure`, and `POST /https-port`. The admin gate runs **before** the route table, so a
+it), `POST /exposure`, and `POST /https-port` (kept for external callers; Settings stages the port through `POST /api/settings/batch` since after 0.5.3, §27.4). The admin gate runs **before** the route table, so a
 route added later cannot land ungated.
 
 **Every write also needs proof of operator (since 2026-09-27, item 153), and the reads do not.** The
@@ -3686,9 +3738,9 @@ above all an answer the definition refuses such as an unexpected mkcert release 
 the same `POST /api/dependencies/mkcert/update` the update button uses. A failed install reads `Error`, with
 the button kept as the retry. The Local HTTPS panel reads `GET /api/dependencies` beside `/api/tls/state`:
 while mkcert is not installed, **generate** and the subject controls (the ip/hostname radios, the subject
-field and the address picker) are disabled, and the very top of the Local HTTPS tab carries an orange (`settings-status-warning`, `--warning-color`) note: `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (since 0.5.3; until then a line under the certificate controls). The note names only the certificate controls because they are all mkcert gates. The https port, exposure modes, revoke and the CA download need no mkcert and are left
-alone. A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
-the Local HTTPS tab re-read mkcert, so generate enables without a reopen. When the panel cannot tell (the read
+field and the address picker) are disabled, and the very first element of the Local HTTPS tab, above its heading, is an orange boxed callout (`.settings-callout`: the Dependencies card's border, radius, padding and background, in `--warning-color`): `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (a callout above the heading since after 0.5.3; in 0.5.3 a line under the heading; until then a line under the certificate controls). Its **dependencies tab** is a `<button>` styled as a link (`.settings-inline-link`: bold, underlined, a focus ring), which switches the dialog to the Dependencies tab through the optional `TabContext.showTab`. The note names only the certificate controls because they are all mkcert gates. The exposure modes, revoke and the CA download need no mkcert and are left
+alone; the https port is on the Server tab since after 0.5.3, gated on mkcert AND a certificate (§27.4). A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
+the Local HTTPS tab re-read mkcert, so generate enables without a reopen, and the Server tab re-read its https port's gate. When the panel cannot tell (the read
 failed, was refused, or does not name mkcert) it fails open: generate stays enabled.
 
 `createCertService.ts`'s `ensureMkcertInstalled(exe)` stays as the server-side backstop: called from the
@@ -3809,18 +3861,20 @@ optional.
 
 ### 28.6 Restart semantics, and why they are not symmetric
 
-Two controls in the same panel have opposite truths, and the panel's copy is written to match each
-one rather than a single generic "may require a restart":
+Two controls have opposite truths, and each one's copy is written to match it rather than a single
+generic "may require a restart":
 
 - **Exposure mode (`POST /api/tls/exposure`) needs NO restart.** It writes straight to the database,
   and `HttpServer.ts` re-reads that key fresh on every plain-HTTP request — there is no cache to
   invalidate and no listener to rebind. A mode change takes effect on the very next request.
 - **Enabling HTTPS for the first time, regenerating the certificate, and changing the HTTPS port
-  (`POST /api/tls/https-port`) all DO need a restart.** The listener set (the module-level `buildServerList()` in `Config.ts`, deliberately NOT the private
+  (the Server tab's staged `httpsPort`, or `POST /api/tls/https-port`) all DO need a restart.** The listener set (the module-level `buildServerList()` in `Config.ts`, deliberately NOT the private
   static `Config.buildServers` that calls it) is
   built once at boot with no in-process rebind, so a certificate that did not exist at boot, or a port
-  that has changed, is simply not reflected until the process restarts. `https-port` schedules a
-  restart through the same exit-75 marker path `webPort` already uses.
+  that has changed, is simply not reflected until the process restarts. Both port paths schedule a
+  restart through the same exit-75 marker path `webPort` already uses, and a batch moving both ports
+  schedules one. The Server tab says so under its two port rows: `changing either port restarts the
+  server; any active streams will drop.`
 
   **This claim is now enforced, not merely stated (NF-1).** A regenerate used to look identical to
   success: the bound listener is a genuinely live socket, so `httpsListener.bound` stayed `true` while
@@ -3833,7 +3887,13 @@ one rather than a single generic "may require a restart":
 The two HTTP/HTTPS ports are independent, with independent defaults (the module-level `DEFAULT_HTTPS_PORT = 8443`
 in `Config.ts`): setting the HTTP port to `80` never moves HTTPS, and setting the HTTPS port never moves HTTP.
 If the two are ever set to the same value, `Config.buildServers` skips the HTTPS entry for that boot
-rather than erroring.
+rather than erroring. While a certificate exists, Settings no longer lets them meet: the Server tab
+refuses either port on the other's value (`the http and https ports must differ.`), and
+`POST /api/settings/batch` and `PATCH /api/config` refuse such a change with 409 before anything is
+applied (`portCollision.ts`). Without a certificate there is no https listener, so they are allowed to
+meet (an http port of 8443, the https default, is accepted). A hand-edited `config.json`, or
+`POST /api/tls/https-port`, which does not check the http port, can still set them equal, and the
+boot-time skip covers that.
 
 A present-but-broken certificate can never stop the app from booting. `Config.ts`'s
 `readCertMaterial` validates **content**, not just readability: `tls.createSecureContext({cert, key})`
@@ -3859,5 +3919,7 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, verify them (`createSigstoreVerifier`: `@sigstore/tuf` + `@sigstore/verify`) against the tag-pinned release-workflow identity, and check the statement names the manifest |
 | `tests/e2e/support/githubRefusal.ts` | The e2e refused-lookup rule as a pure function (`isExcusableNullLatest(dep, seqBefore)`), used by row 9.4 on a host and unit-tested in `tests/unit/githubRefusal.test.ts` so the refused branch runs on every build. It excuses a null Latest only for a GitHub-backed dependency whose own `latestLookup` was refused with 403 or 429 by a lookup newer than the one read before the press. The `/rate_limit` re-query it replaced (`githubQuota.ts`, deleted 2026-10-06) raced the hourly reset. The container rows 20.9 and 1.9 excuse nothing since a container stopped listing mkcert (2026-10-01) |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
-| `src/app/client/settings/tabs/LocalHttpsTab.ts` | The Settings → Local HTTPS tab (`buildLocalHttpsTab`) and its panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
+| `src/app/client/settings/tabs/LocalHttpsTab.ts` | The Settings → Local HTTPS tab (`buildLocalHttpsTab`) and its panel; the mkcert callout above the heading and its link to Dependencies; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `TLS_CERT_CHANGED_EVENT`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
+| `src/app/client/settings/tabs/ServerTab.ts` | The http and https port rows (after 0.5.3): the https port's gate on mkcert and a certificate (`refreshServerHttps`), the inline collision refusal, the restart note under both rows, `subPrivilegedPortNotice()` |
+| `src/server/api/SettingsBatchApi.ts` | The `httpsPort` batch id: validation, the container refusal, the 409 for equal ports, the single restart (§27.4) |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design as of 2026-09-18: measured facts, rejected alternatives, the UI notification table. §28.4, §28.2 and §28's route list supersede its mkcert pin, its Windows TLS path and its token-gated CA download |

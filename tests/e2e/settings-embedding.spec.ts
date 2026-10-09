@@ -5,6 +5,11 @@ import { footerSave, reviewDialog, reviewLines, unsavedDialog } from './support/
 
 const ORIGIN = 'http://localhost:5159';
 
+// Copied from src/app/client/settings/tabs/EmbeddingTab.ts (after 0.5.3).
+const BOTH_NOTE = 'uses 80 for http and 443 for https; for other ports, add each scheme separately.';
+const HTTPS_NOTE_HOST =
+    'an https page can only embed this app when this app is served over https too; browsers block an http frame inside an https page. set up local https or a reverse proxy first.';
+
 /** The Embedding tab's add row (0.5.3): address, port, scheme, add, and the line under it. */
 function addRow(settings: Locator) {
     return {
@@ -13,6 +18,8 @@ function addRow(settings: Locator) {
         scheme: settings.getByRole('combobox', { name: 'embedder scheme' }),
         add: settings.locator('[data-embed-add-button]'),
         message: settings.locator('[data-embed-add-message]'),
+        bothNote: settings.locator('[data-embed-both-note]'),
+        httpsNote: settings.locator('[data-embed-https-note]'),
         pending: (origin: string) => settings.locator(`[data-embed-pending="${origin}"]`),
         allPending: settings.locator('[data-embed-pending]'),
     };
@@ -109,6 +116,23 @@ test.describe('settings / embedding', () => {
         const row = addRow(settings);
         await expect(row.scheme).toHaveValue('http');
         await expect(row.port).toHaveAttribute('placeholder', '80');
+        // Under the row, always (after 0.5.3): an https embedder needs this app
+        // on https too. The fast tier is a host, so it names local https.
+        await expect(row.httpsNote).toBeVisible();
+        await expect(row.httpsNote).toHaveText(HTTPS_NOTE_HOST);
+        await expect(row.bothNote).toBeHidden();
+        // At the dialog's default width, at a 1280 x 1000 window, the whole add
+        // row sits on one line: address, port, scheme ("http & https" in full)
+        // and add. Wrapping is only for genuinely narrow windows.
+        await page.setViewportSize({ width: 1280, height: 1000 });
+        const top = async (l: Locator): Promise<number> => (await l.boundingBox())?.y ?? Number.NaN;
+        const center = async (l: Locator): Promise<number> => {
+            const box = await l.boundingBox();
+            return box ? box.y + box.height / 2 : Number.NaN;
+        };
+        await expect.poll(() => center(row.add)).toBeCloseTo(await center(row.address), 0);
+        expect(await center(row.scheme)).toBeCloseTo(await center(row.address), 0);
+        expect(await top(row.httpsNote)).toBeGreaterThan(await top(row.add));
 
         await row.address.fill('localhost');
         await row.port.fill('5159');
@@ -179,7 +203,7 @@ test.describe('settings / embedding', () => {
         await expect(addRow(again).allPending).toHaveCount(0);
     });
 
-    test('10.23 the add row refuses a bad address or port inline, adds two for http & https, and never stages a duplicate', async ({
+    test('10.23 the add row refuses a bad address or port inline, adds two for http & https with its port box disabled, and never stages a duplicate', async ({
         page,
         request,
     }) => {
@@ -239,13 +263,21 @@ test.describe('settings / embedding', () => {
         }
         await expect(row.allPending).toHaveCount(0);
 
-        // http & https with no port: two pending origins; a default port is
-        // stored as no port, the way a browser sends it.
+        // http & https takes no port (after 0.5.3): choosing it empties and
+        // disables the port box, with a note saying how to add another port, and
+        // stages each scheme on its own default. A port typed first is dropped,
+        // never staged as https on the http port.
         await row.address.fill('127.0.0.1');
+        await row.port.fill('80');
         await row.scheme.selectOption({ label: 'http & https' });
+        await expect(row.port).toBeDisabled();
+        await expect(row.port).toHaveValue('');
+        await expect(row.bothNote).toBeVisible();
+        await expect(row.bothNote).toHaveText(BOTH_NOTE);
         await row.add.click();
         await expect(row.pending('http://127.0.0.1')).toBeVisible();
         await expect(row.pending('https://127.0.0.1')).toBeVisible();
+        await expect(row.pending('https://127.0.0.1:80')).toHaveCount(0);
 
         // The same again: already waiting, still two.
         await row.address.fill('127.0.0.1');
@@ -255,8 +287,13 @@ test.describe('settings / embedding', () => {
         );
         await expect(row.allPending).toHaveCount(2);
 
-        // A typed default port is stored as no port.
+        // Back to http: the port box is given back, empty, and the note goes.
         await row.scheme.selectOption({ label: 'http' });
+        await expect(row.port).toBeEnabled();
+        await expect(row.port).toHaveValue('');
+        await expect(row.bothNote).toBeHidden();
+
+        // A typed default port is stored as no port.
         await row.address.fill('tools.example');
         await row.port.fill('80');
         await row.add.click();

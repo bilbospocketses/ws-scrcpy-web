@@ -41,8 +41,10 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
 // Server tab).
 //
 // Consumes GET /api/tls/state, POST /api/tls/generate, GET /api/tls/ca-root,
-// POST /api/tls/revoke, POST /api/tls/https-port and POST /api/tls/exposure,
-// all implemented in `src/server/api/TlsApi.ts` -- read THAT file for the
+// POST /api/tls/revoke and POST /api/tls/exposure, all implemented in
+// `src/server/api/TlsApi.ts` (the https port, and its POST
+// /api/tls/https-port, moved to the Server tab's batch-staged row after
+// 0.5.3) -- read THAT file for the
 // authoritative response shape of each, rather than a summary here that
 // would drift the moment that file's contract changes without this comment
 // changing too (an already-repeated finding on this branch). Every field
@@ -51,10 +53,9 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
 // interface, not a paragraph here, is the up-to-date contract this code
 // actually depends on.
 //
-// The port field and the exposure radios each save through their OWN route
-// (`POST /api/tls/https-port`, `POST /api/tls/exposure` -- task 11), not
-// through `StagedSettingsStore`; see `buildLocalHttpsPanel`'s own doc comment
-// below for why.
+// The exposure radios save through their OWN route (`POST /api/tls/exposure`
+// -- task 11), not through `StagedSettingsStore`; see `buildLocalHttpsPanel`'s
+// own doc comment below for why.
 // ---------------------------------------------------------------------------
 
 /** The subset of CertState (+ the two additions layered on by Task 4/5) this panel reads. */
@@ -84,13 +85,10 @@ interface TlsCertState {
     httpExposure?: 'open' | 'httpsOnly' | 'redirect';
     /**
      * Returned by `GET /api/tls/state` as `httpsSnapshot.configuredPort`
-     * (`TlsApi.ts`, I2/C1's server half) -- the CONFIGURED port, always a
-     * number even in advanced-config mode, independent of
-     * `httpsListener.port` (the actually-BOUND port, present only when
-     * `httpsListener.bound` is true and potentially different). Read
-     * defensively below (`?? 8443`, the same `DEFAULT_HTTPS_PORT` `Config.ts`
-     * itself falls back to) so an older server or a genuinely missing field
-     * degrades to the server's own default rather than crashing.
+     * (`TlsApi.ts`, I2/C1's server half) -- the CONFIGURED port. The panel
+     * no longer reads it: the https port moved to the Server tab, whose row
+     * makes its own /api/tls/state read (ServerTab.ts). Kept here so the
+     * generate/revoke merges below keep carrying it, as they always have.
      */
     httpsPort?: number;
     /**
@@ -141,15 +139,6 @@ export interface LocalHttpsPanelDeps {
      */
     candidateIps: string[];
     /**
-     * `undefined` when not yet known (M2 -- the caller learns this from
-     * `/api/service/status`, which resolves after this tab is already built)
-     * OR genuinely unrecognized. Every platform-gated notice below (5) treats "don't know" as "say nothing" rather
-     * than guessing a specific OS: a hardcoded fallback here previously
-     * defaulted to `'linux'`, which fired notification 5's sub-1024 warning
-     * on Windows whenever the real platform hadn't arrived yet.
-     */
-    platform: NodeJS.Platform | undefined;
-    /**
      * Vestigial (I6): notification 3 no longer branches on this -- there is
      * no JS-observable signal for "does this browser actually trust the
      * served CA" (a click-through self-signed warning and a genuinely
@@ -163,6 +152,12 @@ export interface LocalHttpsPanelDeps {
     caTrusted?: boolean;
     /** The Settings dialog's `askChild`, for the revoke confirm; unbound when built on its own. */
     askChild?: AskChild;
+    /**
+     * Switch the Settings dialog to another tab (`TabContext.showTab`): the
+     * mkcert callout's "dependencies tab" link calls it with `dependencies`.
+     * Absent when the panel is built on its own, and the link then does nothing.
+     */
+    showTab?: (id: string) => void;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -232,23 +227,6 @@ export function certExpiryNotice(state: TlsCertState, now: Date): string | null 
 }
 
 /**
- * Notification 5: a sub-1024 port needs elevated privileges outside win32.
- * M2: an ALLOWLIST (only linux/darwin fire), not a win32-denylist -- an
- * unknown/undefined platform (the caller hasn't learned it yet, or it is
- * genuinely unrecognized) must not fire this, the same "don't know, don't
- * claim" rule applied elsewhere in this file. The previous denylist shape
- * fired for anything that WASN'T literally `'win32'`, which included
- * `undefined` -- exactly the case `buildServerTab`'s wiring hit before this
- * fix, since a hardcoded `?? 'linux'` fallback there manufactured a platform
- * that was never actually known.
- */
-export function subPrivilegedPortNotice(port: number, platform: NodeJS.Platform | string | undefined): string | null {
-    if (platform !== 'linux' && platform !== 'darwin') return null;
-    if (!Number.isFinite(port) || port <= 0 || port >= 1024) return null;
-    return 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
-}
-
-/**
  * C1: the honest listener-state message, replacing the panel's previous
  * unconditional "streaming already works" the moment a certificate exists on
  * disk. `status: 'ready'` says a certificate was minted; it says nothing
@@ -290,7 +268,7 @@ export function listenerStatusNotice(state: TlsCertState): string | null {
         case 'config-override':
             return "this certificate exists, but an advanced server configuration in config.json is overriding it. https will not start until that configuration changes — regenerating won't help.";
         case 'port-collision':
-            return 'the https port is the same as the plain http port, so https could not start. change the https port below to a different value, then restart.';
+            return 'the https port is the same as the plain http port, so https could not start. change the https port on the server tab to a different value; saving it restarts the server.';
         case 'bind-failed':
             return 'the https listener failed to start, possibly because its port is already in use. check the server logs, free the port if needed, and restart.';
     }
@@ -305,6 +283,16 @@ export const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-cer
 
 /** The certificate-subject explainer the subject radios link to (0.5.3); same page, from the top. */
 export const SUBJECT_HELP_HREF = 'help/certificate-subject.html';
+
+/** The always-shown guide under the certificate subject; SUBJECT_HELP_LINK_TEXT follows it. */
+export const SUBJECT_GUIDE_TEXT =
+    'the certificate name must match the ip address or name that you type from the remote device/computer to reach this server. ';
+
+/** The guide's link to SUBJECT_HELP_HREF. */
+export const SUBJECT_HELP_LINK_TEXT = 'click here for help on how this works (opens in a new tab)';
+
+/** The Dependencies tab's id in the Settings dialog (SettingsModal.ts), where mkcert is installed. */
+export const DEPENDENCIES_TAB_ID = 'dependencies';
 
 /** Local copy of the notice-row shape every other tab already uses for a status line. */
 function buildNoticeRow(): HTMLParagraphElement {
@@ -358,14 +346,70 @@ export async function fetchMkcertInstalled(fetchFn: typeof fetch): Promise<boole
 }
 
 /**
- * The orange note at the very top of the Local HTTPS tab while mkcert is not
- * installed (0.5.3; until then a line under the certificate controls). It
- * names only what mkcert gates -- generate and the subject controls
- * (applyMkcertGate) -- since the https port, the exposure modes, revoke and
- * the ca download all work without it.
+ * The orange callout at the very top of the Local HTTPS tab, above its
+ * heading, while mkcert is not installed (0.5.3 put it at the top of the
+ * section; after 0.5.3 it is a boxed callout above the heading, with
+ * "dependencies tab" a link to that tab). It names only what mkcert gates --
+ * generate and the subject controls (applyMkcertGate) -- since the exposure
+ * modes, revoke and the ca download all work without it. This is the
+ * callout's whole textContent, link included.
  */
 export const MKCERT_MISSING_NOTICE =
     'install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.';
+
+/** The words of MKCERT_MISSING_NOTICE that are the link to the Dependencies tab. */
+const MKCERT_NOTICE_LINK_TEXT = 'dependencies tab';
+
+/**
+ * Build the mkcert callout: MKCERT_MISSING_NOTICE with its "dependencies tab"
+ * words as an in-page link, a `<button>` (it acts in the dialog rather than
+ * navigating) styled as a link, so it is reachable from the keyboard.
+ */
+function buildMkcertCallout(showTab: ((id: string) => void) | undefined): HTMLParagraphElement {
+    const callout = document.createElement('p');
+    callout.className = 'settings-callout';
+    callout.setAttribute('data-tls-mkcert-notice', '');
+    callout.hidden = true;
+    const at = MKCERT_MISSING_NOTICE.indexOf(MKCERT_NOTICE_LINK_TEXT);
+    callout.appendChild(document.createTextNode(MKCERT_MISSING_NOTICE.slice(0, at)));
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'settings-inline-link';
+    link.setAttribute('data-tls-mkcert-link', '');
+    link.textContent = MKCERT_NOTICE_LINK_TEXT;
+    link.addEventListener('click', () => showTab?.(DEPENDENCIES_TAB_ID));
+    callout.appendChild(link);
+    callout.appendChild(document.createTextNode(MKCERT_MISSING_NOTICE.slice(at + MKCERT_NOTICE_LINK_TEXT.length)));
+    return callout;
+}
+
+/** Gives each panel's subject fields their own ids, for their `<label for>`. */
+let subjectFieldSeq = 0;
+
+/** A field with a small label above it (the certificate subject's second line). */
+function buildLabeledField(
+    control: HTMLInputElement | HTMLSelectElement,
+    labelText: string,
+): { field: HTMLElement; label: HTMLLabelElement } {
+    const field = document.createElement('div');
+    field.className = 'settings-field';
+    const label = document.createElement('label');
+    label.className = 'settings-field-label';
+    if (!control.id) control.id = `tls-subject-field-${++subjectFieldSeq}`;
+    label.htmlFor = control.id;
+    label.textContent = labelText;
+    field.append(label, control);
+    return { field, label };
+}
+
+/**
+ * Dispatched (bubbling) from the panel's section after a certificate is
+ * generated or revoked. The Settings dialog listens for it on itself and has
+ * the Server tab re-read /api/tls/state, whose https port is enabled only while
+ * a certificate exists -- the same shape as DependencyPanel.ts's
+ * DEPENDENCY_INSTALLED_EVENT.
+ */
+export const TLS_CERT_CHANGED_EVENT = 'ws-tls-cert-changed';
 
 /**
  * Per-panel re-entry for "mkcert may have just been installed", keyed by the
@@ -399,31 +443,20 @@ async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
  * caller (and every test) gets a panel already reflecting the real cert state,
  * rather than a placeholder that fills in later.
  *
- * Deliberately does NOT touch `StagedSettingsStore`. Two controls here look
- * like they should stage into the dialog's batch Save the way `webPort` does,
- * and NEITHER is wired that way -- each has its OWN dedicated "ok" button and
- * route instead (task 11), for the same underlying reason: `httpsPort` and
- * the exposure mode are both deliberately kept OUT of `AppConfig` (see
- * Config.ts's `FlatConfig` doc comment), so `SettingsBatchApi.STAGEABLE_IDS`
- * (an ALLOWLIST backed by `updateAppConfig`) is the wrong path for either --
- * routing them through it would mean either exposing them via
- * GET/PATCH /api/config (the thing that comment says never to do) or teaching
- * the batch endpoint two fields it cannot validate the same way as everything
- * else there.
+ * Deliberately does NOT touch `StagedSettingsStore`. The exposure mode has
+ * its OWN dedicated "ok" button and route (task 11) rather than staging into
+ * the dialog's batch Save: it takes effect at once and needs no restart, so
+ * holding it for Save would only delay it. The https port, which this panel
+ * also held until after 0.5.3, is a staged field on the Server tab now
+ * (`httpsPort`, SettingsBatchApi), beside the http port it must not equal.
  *
- * - The port field's "ok" button POSTs `{ port }` to `POST /api/tls/https-port`
- *   (validated by `validateHttpsPortInput`, Config.ts). The listener set is
- *   built once at boot (`Config.buildServers`) and nothing rebinds it
- *   in-process, so a save ALWAYS schedules a restart (`scheduleRestartForPortChange`,
- *   the same helper and exit-75 signal `SettingsBatchApi` uses for `webPort`)
- *   -- see the always-visible restart notice beside it.
  * - The exposure "ok" button POSTs `{ mode }` to `POST /api/tls/exposure`,
  *   which writes `HTTP_EXPOSURE_KEY` straight to `app_settings`.
  *   `HttpServer.ts`'s `readHttpExposure()` reads that key FRESH on every
  *   plain-HTTP request, so this takes effect for the very next request --
- *   no restart, unlike the port field above. (It still handles a 404
- *   gracefully below, from before this route existed -- harmless now, and
- *   cheap insurance against a client talking to an older server.)
+ *   no restart. (It still handles a 404 gracefully below, from before this
+ *   route existed -- harmless now, and cheap insurance against a client
+ *   talking to an older server.)
  *
  * Every notice in here is one of two kinds, and each renders differently
  * (this repo's convention -- see TRANSIENT_ALERT_*_MS above):
@@ -461,14 +494,13 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // 0.5.1: generate needs mkcert, and installing it is the Dependencies
     // tab's job (its install button). Until then generate and the subject
     // controls that only feed it are disabled (applyMkcertGate below), and this
-    // says why. Since 0.5.3 the note sits at the very TOP of the tab, in the
-    // warning (orange) tone, rather than as a line under the controls: it is
-    // the first thing a user without mkcert needs to read. Revoke, the ca
-    // download, the https port and the exposure modes need no mkcert, so they
-    // stay as they are.
-    const mkcertNotice = buildNoticeRow();
-    mkcertNotice.setAttribute('data-tls-mkcert-notice', '');
-    body.appendChild(mkcertNotice);
+    // says why. It is the first thing a user without mkcert needs to read, so
+    // it is the tab's FIRST element: a boxed callout above the "Local HTTPS"
+    // heading, in the warning (orange) tone, whose "dependencies tab" words
+    // take them to that tab. Revoke, the ca download and the exposure modes
+    // need no mkcert, so they stay as they are.
+    const mkcertNotice = buildMkcertCallout(deps.showTab);
+    section.insertBefore(mkcertNotice, section.firstChild);
 
     // ---- subject: ip vs hostname, and the value itself ----
     const subjectInput = document.createElement('input');
@@ -535,10 +567,24 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         lastIpValue = candidateSelect.value;
     });
 
-    function updateCandidateSelectVisibility(): void {
-        candidateSelect.hidden = !ipRadio.checked || initialCandidateIps.length === 0;
+    // The second line of the subject row: each field with a small label above
+    // it, real `<label for>`s so the fields keep their accessible names. What
+    // the text box's label says follows the radios (`updateSubjectFields`).
+    const candidateField = buildLabeledField(candidateSelect, "this computer's addresses");
+    const subjectField = buildLabeledField(subjectInput, 'ip address');
+
+    /**
+     * Fit the second line to the chosen kind: with ip address, the candidate
+     * picker (when there are candidates) and a box labeled `ip address`; with
+     * hostname, no picker and a box labeled `hostname or domain name`.
+     */
+    function updateSubjectFields(): void {
+        const showCandidates = ipRadio.checked && initialCandidateIps.length > 0;
+        candidateSelect.hidden = !showCandidates;
+        candidateField.field.hidden = !showCandidates;
+        subjectField.label.textContent = ipRadio.checked ? 'ip address' : 'hostname or domain name';
     }
-    updateCandidateSelectVisibility();
+    updateSubjectFields();
 
     // Remembers each mode's last value across a radio flip, so switching kind
     // and back doesn't lose what was typed.
@@ -554,21 +600,28 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         if (!ipRadio.checked) return;
         lastHostValue = subjectInput.value;
         subjectInput.value = lastIpValue;
-        updateCandidateSelectVisibility();
+        updateSubjectFields();
     });
     hostRadio.addEventListener('click', () => {
         if (!hostRadio.checked) return;
         lastIpValue = subjectInput.value;
         subjectInput.value = lastHostValue;
-        updateCandidateSelectVisibility();
+        updateSubjectFields();
     });
 
+    // The radios keep the "certificate subject" row; the fields drop to a row
+    // of their own directly below, with an empty label cell so they line up
+    // under the radios in the controls column.
     const subjectFrag = document.createDocumentFragment();
     subjectFrag.appendChild(ipLabel);
     subjectFrag.appendChild(hostLabel);
-    subjectFrag.appendChild(subjectInput);
-    subjectFrag.appendChild(candidateSelect);
     body.appendChild(buildRow('certificate subject', subjectFrag));
+    const subjectFieldsFrag = document.createDocumentFragment();
+    subjectFieldsFrag.appendChild(candidateField.field);
+    subjectFieldsFrag.appendChild(subjectField.field);
+    const subjectFieldsRow = buildRow('', subjectFieldsFrag);
+    subjectFieldsRow.setAttribute('data-tls-subject-fields', '');
+    body.appendChild(subjectFieldsRow);
 
     // Notification 2 — ALWAYS shown, beside the subject controls: what each
     // subject choice means, in the terms of the two radios just above. Until
@@ -583,98 +636,18 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // 0.5.3: one short line and a link to a page with room to explain it
     // (public/help/certificate-subject.html), instead of a two-sentence
     // summary squeezed under the radios. Relative, like TRUST_HELP_HREF.
-    subjectGuideNotice.appendChild(
-        document.createTextNode(
-            'the certificate must name the address or name other devices type to reach this computer. ',
-        ),
-    );
+    subjectGuideNotice.appendChild(document.createTextNode(SUBJECT_GUIDE_TEXT));
     const subjectHelpLink = document.createElement('a');
     subjectHelpLink.className = 'settings-help-link';
     subjectHelpLink.href = SUBJECT_HELP_HREF;
     subjectHelpLink.target = '_blank';
     subjectHelpLink.rel = 'noopener noreferrer';
-    subjectHelpLink.textContent = 'ip address or hostname? how it works (opens in a new tab)';
+    subjectHelpLink.textContent = SUBJECT_HELP_LINK_TEXT;
     subjectGuideNotice.appendChild(subjectHelpLink);
     body.appendChild(subjectGuideNotice);
 
-    // ---- port -- POSTs to POST /api/tls/https-port (task 11); see the class
-    //      doc's port-field paragraph for why this is its own route rather
-    //      than a staged webPort-style field ----
-    const portInput = document.createElement('input');
-    portInput.type = 'number';
-    portInput.className = 'settings-input';
-    portInput.style.maxWidth = '120px';
-    portInput.setAttribute('data-tls-port', '');
-    // I2: read the SERVER's configured port, not a hardcoded guess -- a user
-    // who set 9443 previously opened this panel to a lying "8443" display,
-    // and one click on this field's own "ok" button would have reset their
-    // port AND restarted the server. Falls back to the app's own
-    // DEFAULT_HTTPS_PORT only when the field is missing (older server) or
-    // genuinely unset.
-    portInput.value = String(initialState.httpsPort ?? 8443);
-
-    const portOkBtn = document.createElement('button');
-    portOkBtn.type = 'button';
-    portOkBtn.className = 'settings-btn settings-btn-primary';
-    portOkBtn.textContent = 'ok';
-    portOkBtn.setAttribute('data-tls-port-ok', '');
-
-    const portFrag = document.createDocumentFragment();
-    portFrag.appendChild(portInput);
-    portFrag.appendChild(portOkBtn);
-    body.appendChild(buildRow('https port', portFrag));
-
-    const portNotice = buildNoticeRow();
-    portNotice.setAttribute('data-tls-port-notice', '');
-    body.appendChild(portNotice);
-    portInput.addEventListener('input', () => {
-        setNotice(portNotice, subPrivilegedPortNotice(Number(portInput.value), deps.platform));
-    });
-
-    // Always visible, unlike the exposure notices below (which appear only
-    // once a narrowed mode is picked): there is no in-process rebind for the
-    // HTTPS listener (see Config.setHttpsPort's doc comment), so EVERY save
-    // here restarts the server -- unlike the exposure mode, which
-    // HttpServer.ts re-reads fresh on every request and needs no restart.
-    const portRestartNotice = document.createElement('p');
-    portRestartNotice.className = 'settings-status';
-    portRestartNotice.style.gridColumn = '1 / -1';
-    portRestartNotice.setAttribute('data-tls-port-restart-note', '');
-    portRestartNotice.textContent = 'changing this restarts the server; any active streams will drop.';
-    body.appendChild(portRestartNotice);
-
-    portOkBtn.addEventListener('click', () => {
-        void (async () => {
-            const port = Number(portInput.value);
-            // Same bounds as validateHttpsPortInput (Config.ts) -- checked
-            // here so an obviously-bad value never reaches the network.
-            if (!Number.isInteger(port) || port < 1 || port > 65535) {
-                showTransientAlert('error', 'port must be an integer between 1 and 65535.');
-                return;
-            }
-            portOkBtn.disabled = true;
-            try {
-                const res = await deps.fetchFn('/api/tls/https-port', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ port }),
-                });
-                const data = (await res.json().catch(() => null)) as { error?: string } | null;
-                if (!res.ok) {
-                    showTransientAlert('error', data?.error ?? `could not save the https port (${res.status}).`);
-                    return;
-                }
-                showTransientAlert(
-                    'success',
-                    'https port saved. the server is restarting for the change to take effect.',
-                );
-            } catch {
-                showTransientAlert('error', 'could not reach the server.');
-            } finally {
-                portOkBtn.disabled = false;
-            }
-        })();
-    });
+    // The https port that sat here until after 0.5.3 is on the Server tab now,
+    // staged for the dialog's Save beside the http port (ServerTab.ts).
 
     // ---- generate / revoke ----
     const generateBtn = document.createElement('button');
@@ -708,7 +681,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         hostRadio.disabled = mkcertMissing;
         subjectInput.disabled = mkcertMissing;
         candidateSelect.disabled = mkcertMissing;
-        setNotice(mkcertNotice, mkcertMissing ? MKCERT_MISSING_NOTICE : null);
+        // Shown and hidden, never emptied: its text, link and all, is fixed.
+        mkcertNotice.hidden = !mkcertMissing;
     }
     applyMkcertGate();
 
@@ -970,6 +944,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // doesn't discard fields it already has.
                 currentState = { ...currentState, ...data };
                 renderCertState(currentState);
+                section.dispatchEvent(new CustomEvent(TLS_CERT_CHANGED_EVENT, { bubbles: true }));
                 // Resolved Decision 2: state the allowedHosts edit plainly
                 // rather than mutate it silently. This is a one-time outcome
                 // of THIS generate, not a standing condition, so it belongs in
@@ -1076,6 +1051,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 } = currentState;
                 currentState = { ...preserved, status: 'none' };
                 renderCertState(currentState);
+                section.dispatchEvent(new CustomEvent(TLS_CERT_CHANGED_EVENT, { bubbles: true }));
                 showTransientAlert(
                     'success',
                     'certificate and ca revoked. restart the server to fully stop the https listener.',
@@ -1362,8 +1338,10 @@ const dependencyInstalledAppliers = new WeakMap<HTMLElement, () => Promise<void>
  * Builds synchronously and fires no network request of its own. What it shows
  * is decided from outside, once `SettingsModal` knows:
  * - on a host, `applyLocalHttpsServiceStatus()` builds the panel the first time
- *   a real `platform` arrives with the /api/service/status response the Service
- *   tab fetched (the panel's sub-1024 port notice needs the platform);
+ *   the /api/service/status response the Service tab fetched arrives -- the
+ *   moment SettingsModal knows this is not a container (the panel's sub-1024
+ *   port notice, which also needed that response's platform, left with the
+ *   https port for the Server tab);
  * - in a container, `applyLocalHttpsContainerMode()` shows ONLY the
  *   reverse-proxy note (Local HTTPS is not supported there, user decision
  *   2026-09-30), and a later service status never builds the panel over it.
@@ -1403,17 +1381,12 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
         root.replaceChildren(buildLocalHttpsContainerNote());
     }
 
-    function applyServiceStatus(resp: ServiceStatusResponse): void {
+    // The response itself is not read: its arrival is the signal (a host, not
+    // a container). Its platform fed the sub-1024 port notice, which left with
+    // the https port for the Server tab after 0.5.3.
+    function applyServiceStatus(_resp: ServiceStatusResponse): void {
         if (decided) return;
         decided = true;
-        // M2: no guessed fallback. `resp.platform` SHOULD be populated by a
-        // real /api/service/status response, but if it somehow isn't,
-        // `undefined` is passed straight through -- every platform-gated
-        // notice already treats "don't know" as "say nothing"
-        // (subPrivilegedPortNotice). A `?? 'linux'`
-        // fallback once fabricated a platform that was never observed, and
-        // fired notification 5's sub-1024 warning on Windows.
-        const platform = resp.platform as NodeJS.Platform | undefined;
         void buildLocalHttpsPanel({
             // C1: wrapped, not passed by reference -- an unbound `fetch` throws
             // "Illegal invocation" in Chrome (same precedent as
@@ -1423,8 +1396,9 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
             // real candidateIps (Task 5's amendment (b)), which
             // buildLocalHttpsPanel prefers over this fallback.
             candidateIps: [],
-            platform,
             askChild: ctx.askChild,
+            // The mkcert callout's link to the Dependencies tab.
+            ...(ctx.showTab ? { showTab: ctx.showTab } : {}),
         }).then((built) => {
             panel = built;
             root.replaceChildren(built);

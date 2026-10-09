@@ -5,7 +5,7 @@ let store: StagedSettingsStore;
 
 beforeEach(() => {
     store = new StagedSettingsStore();
-    store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
+    store.register({ id: 'webPort', label: 'HTTP port', initial: 8000 });
     store.register({ id: 'channel', label: 'Update channel', initial: 'stable' });
 });
 
@@ -18,7 +18,7 @@ describe('StagedSettingsStore', () => {
     it('reports a change as from → to once edited', () => {
         store.set('webPort', 8010);
         expect(store.isDirty()).toBe(true);
-        expect(store.changes()).toEqual([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
+        expect(store.changes()).toEqual([{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }]);
     });
 
     it('setting a value back to its initial clears the change', () => {
@@ -101,7 +101,7 @@ describe('StagedSettingsStore', () => {
             store.commitField('channel');
 
             expect(notified).toBe(1);
-            expect(store.changes()).toEqual([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
+            expect(store.changes()).toEqual([{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }]);
             expect(store.get('channel')).toBe('beta');
             // The new baseline: setting it back is now a change.
             store.set('channel', 'stable');

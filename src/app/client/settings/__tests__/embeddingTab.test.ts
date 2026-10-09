@@ -5,7 +5,14 @@ import { FRAME_ANCESTORS_ADD_ID } from '../../../../common/embedderOrigin';
 import { performDirtyClose, performStagedSave, type SaveDeps } from '../../SettingsModal';
 import type { BatchResult } from '../SaveRunner';
 import { type Change, StagedSettingsStore } from '../StagedSettingsStore';
-import { askUnbound, buildEmbeddingTab, formatEmbedAdditions, pendingEmbedOrigins } from '../tabs/EmbeddingTab';
+import {
+    applyEmbeddingContainerMode,
+    askUnbound,
+    buildEmbeddingTab,
+    embedHttpsNote,
+    formatEmbedAdditions,
+    pendingEmbedOrigins,
+} from '../tabs/EmbeddingTab';
 
 /**
  * Settings → Embedding's pre-approval row (0.5.3). Adding STAGES: the origin
@@ -136,6 +143,19 @@ describe('the add row', () => {
             ['both', 'http & https'],
         ]);
         expect(ui.scheme.value).toBe('http');
+        // Sized to "http & https" and never squeezed below it (it used to read
+        // "http & htt…"); the row wraps on a narrow dialog instead.
+        expect(ui.scheme.style.width).toBe('auto');
+        expect(ui.scheme.style.maxWidth).toBe('none');
+        expect(ui.scheme.style.flexShrink).toBe('0');
+        expect(ui.scheme.closest<HTMLElement>('.settings-control')?.style.flexWrap).toBe('wrap');
+        // The address box is the one that gives way, so the row fits on one
+        // line at the dialog's default width; the others keep their size.
+        expect(ui.address.style.flex).toBe('1 1 9rem');
+        expect(ui.address.style.minWidth).toBe('9rem');
+        expect(ui.address.style.maxWidth).toBe('none');
+        expect(ui.port.style.flexShrink).toBe('0');
+        expect(ui.addBtn.style.flexShrink).toBe('0');
         expect(ui.port.placeholder).toBe('80');
         // A text box: a number input would report "8e3" as '' and read it as blank.
         expect(ui.port.type).toBe('text');
@@ -229,10 +249,10 @@ describe('adding stages, it does not write', () => {
         expect(pendingEmbedOrigins(ui.store)).toEqual(['http://localhost:5159']);
     });
 
-    it('stages two origins for http & https', async () => {
+    it('stages two origins for http & https, each on its default port', async () => {
         const ui = await buildTab();
-        ui.add('localhost', '5159', 'both');
-        expect(pendingEmbedOrigins(ui.store)).toEqual(['http://localhost:5159', 'https://localhost:5159']);
+        ui.add('localhost', '', 'both');
+        expect(pendingEmbedOrigins(ui.store)).toEqual(['http://localhost', 'https://localhost']);
         expect(ui.pendingRows()).toHaveLength(2);
     });
 
@@ -296,12 +316,113 @@ describe('duplicates', () => {
     });
 
     it('with http & https, stages the new half and names the duplicate', async () => {
-        approved = ['http://localhost:5159'];
+        approved = ['http://localhost'];
         const ui = await buildTab();
-        ui.add('localhost', '5159', 'both');
-        expect(pendingEmbedOrigins(ui.store)).toEqual(['https://localhost:5159']);
-        expect(ui.message.textContent).toBe('http://localhost:5159 is already allowed; added https://localhost:5159.');
+        ui.add('localhost', '', 'both');
+        expect(pendingEmbedOrigins(ui.store)).toEqual(['https://localhost']);
+        expect(ui.message.textContent).toBe('http://localhost is already allowed; added https://localhost.');
         expect(ui.message.classList.contains('settings-status-error')).toBe(false);
+    });
+});
+
+// After 0.5.3: http & https means each scheme on its default port, so it takes
+// no port (port 80 with it used to stage https://host:80).
+describe('http & https disables the port box', () => {
+    const bothNote = (ui: Awaited<ReturnType<typeof buildTab>>): HTMLElement =>
+        ui.section.querySelector<HTMLElement>('[data-embed-both-note]')!;
+
+    it('clears and disables the port box, and says why, while http & https is chosen', async () => {
+        const ui = await buildTab();
+        expect(bothNote(ui).hidden).toBe(true);
+        expect(ui.port.disabled).toBe(false);
+
+        ui.address.value = 'localhost';
+        ui.port.value = '5159';
+        ui.port.dispatchEvent(new Event('input'));
+        ui.scheme.value = 'both';
+        ui.scheme.dispatchEvent(new Event('change'));
+
+        expect(ui.port.value).toBe('');
+        expect(ui.port.disabled).toBe(true);
+        expect(bothNote(ui).hidden).toBe(false);
+        expect(bothNote(ui).textContent).toBe(
+            'uses 80 for http and 443 for https; for other ports, add each scheme separately.',
+        );
+        // The cleared box is valid with both: add is offered, nothing to complain about.
+        expect(ui.addBtn.disabled).toBe(false);
+        expect(ui.message.hidden).toBe(true);
+        ui.addBtn.click();
+        expect(pendingEmbedOrigins(ui.store)).toEqual(['http://localhost', 'https://localhost']);
+        expect(writes()).toEqual([]);
+    });
+
+    it('gives the box back, empty, on switching to http or https', async () => {
+        for (const back of ['http', 'https'] as const) {
+            const ui = await buildTab();
+            ui.scheme.value = 'both';
+            ui.scheme.dispatchEvent(new Event('change'));
+            ui.scheme.value = back;
+            ui.scheme.dispatchEvent(new Event('change'));
+            expect(ui.port.disabled, back).toBe(false);
+            expect(ui.port.value, back).toBe('');
+            expect(bothNote(ui).hidden, back).toBe(true);
+            ui.section.remove();
+        }
+    });
+
+    it('leaves a port typed under http alone when switching between http and https', async () => {
+        const ui = await buildTab();
+        ui.port.value = '5159';
+        ui.scheme.value = 'https';
+        ui.scheme.dispatchEvent(new Event('change'));
+        expect(ui.port.value).toBe('5159');
+        expect(ui.port.disabled).toBe(false);
+    });
+
+    it('refuses a port forced into the box with http & https, rather than staging https on it', async () => {
+        const ui = await buildTab();
+        ui.scheme.value = 'both';
+        ui.scheme.dispatchEvent(new Event('change'));
+        // Not reachable by typing (the box is disabled); the guard is what is under test.
+        ui.address.value = 'localhost';
+        ui.port.value = '80';
+        ui.port.dispatchEvent(new Event('input'));
+        expect(ui.addBtn.disabled).toBe(true);
+        expect(ui.message.textContent).toBe(
+            'http & https uses 80 for http and 443 for https; for another port, add each scheme separately.',
+        );
+        ui.port.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+        expect(ui.store.isDirty()).toBe(false);
+    });
+});
+
+describe('the https note under the add row', () => {
+    const httpsNote = (ui: Awaited<ReturnType<typeof buildTab>>): HTMLElement =>
+        ui.section.querySelector<HTMLElement>('[data-embed-https-note]')!;
+
+    it('is always shown, under the add row, naming local https or a reverse proxy', async () => {
+        const ui = await buildTab();
+        const note = httpsNote(ui);
+        expect(note.hidden).toBe(false);
+        expect(ui.adder.contains(note)).toBe(true);
+        expect(note.textContent).toBe(
+            'an https page can only embed this app when this app is served over https too; browsers block an http ' +
+                'frame inside an https page. set up local https or a reverse proxy first.',
+        );
+        ui.scheme.value = 'both';
+        ui.scheme.dispatchEvent(new Event('change'));
+        expect(note.hidden).toBe(false);
+    });
+
+    it('names the reverse proxy alone in a container, where local https is not supported', async () => {
+        const ui = await buildTab();
+        applyEmbeddingContainerMode(ui.section);
+        expect(httpsNote(ui).textContent).toBe(
+            'an https page can only embed this app when this app is served over https too; browsers block an http ' +
+                'frame inside an https page. serve this app over https from your reverse proxy first.',
+        );
+        expect(embedHttpsNote(true)).toBe(httpsNote(ui).textContent);
+        expect(embedHttpsNote(false)).toMatch(/set up local https or a reverse proxy first\.$/);
     });
 });
 
@@ -339,11 +460,11 @@ describe('a list re-read that fails', () => {
 describe('removing a pending entry before Save', () => {
     it('drops it, and the dialog is clean again once nothing is pending', async () => {
         const ui = await buildTab();
-        ui.add('localhost', '5159', 'both');
+        ui.add('localhost', '', 'both');
         expect(ui.pendingRows()).toHaveLength(2);
 
         ui.pendingRows()[0]?.querySelector('button')?.click();
-        expect(pendingEmbedOrigins(ui.store)).toEqual(['https://localhost:5159']);
+        expect(pendingEmbedOrigins(ui.store)).toEqual(['https://localhost']);
         expect(ui.store.isDirty()).toBe(true);
 
         ui.pendingRows()[0]?.querySelector('button')?.click();
@@ -373,7 +494,7 @@ describe('Save, Cancel and discard go through the dialog', () => {
 
     it('Save sends the staged origins as one frameAncestorsAdd change', async () => {
         const ui = await buildTab();
-        ui.add('localhost', '5159', 'both');
+        ui.add('localhost', '', 'both');
         const d = deps();
 
         const action = await performStagedSave(ui.store, d);
@@ -381,7 +502,7 @@ describe('Save, Cancel and discard go through the dialog', () => {
         expect(action).toEqual({ kind: 'close' });
         expect(d.sent).toHaveLength(1);
         expect(d.sent[0]?.map((c) => ({ id: c.id, to: c.to }))).toEqual([
-            { id: FRAME_ANCESTORS_ADD_ID, to: ['http://localhost:5159', 'https://localhost:5159'] },
+            { id: FRAME_ANCESTORS_ADD_ID, to: ['http://localhost', 'https://localhost'] },
         ]);
     });
 
@@ -444,7 +565,7 @@ describe('Save, Cancel and discard go through the dialog', () => {
     // them as pending, and missing from the allowed list.
     it('a batch that applies the origins and then fails on another change drops them from pending and re-reads the list', async () => {
         const ui = await buildTab();
-        ui.store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
+        ui.store.register({ id: 'webPort', label: 'HTTP port', initial: 8000 });
         ui.store.set('webPort', 80);
         ui.add('localhost', '5159');
         // What the server holds once frameAncestorsAdd has been applied.
@@ -460,7 +581,7 @@ describe('Save, Cancel and discard go through the dialog', () => {
 
         expect(await performStagedSave(ui.store, d)).toEqual({
             kind: 'failed',
-            message: "applied Allowed embedders; couldn't save Web port: port 80 is in use",
+            message: "applied Allowed embedders; couldn't save HTTP port: port 80 is in use",
         });
         await flush();
 

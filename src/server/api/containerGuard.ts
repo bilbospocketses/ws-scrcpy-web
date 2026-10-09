@@ -23,7 +23,7 @@ const REMEDY: Record<ContainerRemedy, string> = {
         'serve HTTPS from a reverse proxy in front of the container; that is the only supported way to add HTTPS to the image.',
     'pull-image': 'the image owns the app and its dependencies. Pull a newer image to update.',
     'docker-settings':
-        'docker owns this setting. The web port is always 8000 inside the container; publish a different one with `docker run -p` or compose `ports:`.',
+        'docker owns this setting. The http port is always 8000 inside the container; publish a different one with `docker run -p` or compose `ports:`.',
 };
 
 /**

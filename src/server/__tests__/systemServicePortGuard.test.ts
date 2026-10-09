@@ -156,7 +156,7 @@ describe('POST /api/settings/batch -- the system service refuses a busy web port
         const from = Config.getInstance().getAppConfig().channel;
         return {
             changes: [
-                { id: 'webPort', label: 'Web port', from: 8000, to: webPort },
+                { id: 'webPort', label: 'HTTP port', from: 8000, to: webPort },
                 { id: 'channel', label: 'Update channel', from, to: from === 'beta' ? 'stable' : 'beta' },
             ],
         };
@@ -175,7 +175,7 @@ describe('POST /api/settings/batch -- the system service refuses a busy web port
 
         expect(r.getStatus()).toBe(409);
         // The rejected-apply shape, which the Settings dialog shows as
-        // "couldn't save Web port: <error>" (settingsSave.test.ts).
+        // "couldn't save HTTP port: <error>" (settingsSave.test.ts).
         expect(r.getJson()).toEqual({ ok: false, applied: [], failed: { id: 'webPort', error: inUse(busy) } });
         const cfg = Config.getInstance();
         expect(cfg.getAppConfig().channel).toBe(channelBefore);

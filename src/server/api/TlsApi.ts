@@ -495,6 +495,10 @@ export class TlsApi {
                 return true;
             }
 
+            // Kept for external callers. Settings no longer uses it: since the
+            // https port moved to the Server tab it is staged as `httpsPort`
+            // and saved by POST /api/settings/batch, through the same
+            // validateHttpsPortInput and Config.setHttpsPort.
             if (req.method === 'POST' && pathname === `${PREFIX}/https-port`) {
                 const body = await readJsonBodyStrict<{ port?: unknown }>(req);
                 res.setHeader('Content-Type', 'application/json');

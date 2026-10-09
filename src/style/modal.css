@@ -778,6 +778,17 @@ dialog.settings-modal .settings-input:focus {
     border-color: rgba(0, 0, 0, 0.15);
 }
 
+/*
+ * A disabled field reads as unavailable at a glance (the Server tab's https
+ * port until mkcert and a certificate exist; the Local HTTPS subject controls
+ * until mkcert is installed), matching .settings-btn:disabled below. Without
+ * it the themed background above made a disabled box look editable.
+ */
+dialog.settings-modal .settings-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 dialog.modal .settings-btn {
     border: 0.5px solid var(--text-color, #ddd);
     border-radius: 6px;
@@ -874,6 +885,73 @@ dialog.settings-modal .settings-status[hidden] {
 dialog.settings-modal .settings-help-link {
     color: var(--link-color);
     text-decoration: underline;
+}
+
+/*
+ * A boxed callout at the top of a Settings tab (the Local HTTPS tab's "install
+ * mkcert" notice, above its heading): the Dependencies tab's card look
+ * (home.css .section-card), restated here rather than borrowing home.css
+ * classes inside the dialog, in the warning tone so it stands out from the
+ * tab. No `display` of its own, so `hidden` keeps working (see
+ * .settings-status-warning above); the [hidden] rule below re-asserts it.
+ */
+dialog.settings-modal .settings-callout {
+    margin: 0 0 0.75rem;
+    border: 1px solid var(--device-border-color);
+    border-radius: 8px;
+    padding: 16px;
+    background: var(--device-list-default-color);
+    color: var(--warning-color);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+dialog.settings-modal .settings-callout[hidden] {
+    display: none;
+}
+
+/*
+ * An in-page action that reads as a link inside running text (the callout's
+ * "dependencies tab"): a real <button>, so it is in the tab order, with the
+ * button chrome taken away. It takes its color from the text around it,
+ * bold and underlined so it is a link without relying on color alone.
+ */
+dialog.settings-modal .settings-inline-link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    font-weight: 700;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+dialog.settings-modal .settings-inline-link:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+/*
+ * A field with a small label above it (the Local HTTPS certificate subject's
+ * second line). The label is muted and upright, unlike the italic notes.
+ */
+dialog.settings-modal .settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+dialog.settings-modal .settings-field[hidden] {
+    display: none;
+}
+
+dialog.settings-modal .settings-field-label {
+    font-size: 12px;
+    color: var(--text-color-light);
+    font-style: normal;
 }
 
 /*

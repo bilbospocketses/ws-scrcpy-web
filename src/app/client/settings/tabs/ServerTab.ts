@@ -9,6 +9,7 @@ import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMe
 import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
+import { fetchMkcertInstalled } from './LocalHttpsTab';
 // Type-only, so it is erased at build time and adds no runtime dependency on the
 // sibling tab. `ScopeRadioInputs` is the three-field subset of
 // /api/service/status that BOTH tabs derive state from (Service: the scope
@@ -48,10 +49,94 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
     return row;
 }
 
-/** The staged-field id and summary label for the web port — one definition, so
- *  the build-time registration and the post-read re-baseline cannot disagree. */
+/** The staged-field id and summary label for the http port — one definition, so
+ *  the build-time registration and the post-read re-baseline cannot disagree.
+ *  The id stays `webPort`, the config key's name, so nothing on disk moves. */
 const WEB_PORT_ID = 'webPort';
-const WEB_PORT_LABEL = 'Web port';
+const WEB_PORT_LABEL = 'HTTP port';
+
+/** The staged-field id and summary label for the https port (`SettingsBatchApi`'s `httpsPort`). */
+export const HTTPS_PORT_ID = 'httpsPort';
+const HTTPS_PORT_LABEL = 'HTTPS port';
+
+/** `Config.ts`'s DEFAULT_HTTPS_PORT, for a /api/tls/state that does not name one. */
+const DEFAULT_HTTPS_PORT = 8443;
+
+/** Under the https port while it is unavailable: no mkcert, or no certificate yet. */
+export const HTTPS_PORT_GATE_NOTE =
+    'applies to the certificate local https generates; install mkcert and generate one first.';
+
+/** Below both port rows, always: saving either one restarts the server (SettingsBatchApi). */
+export const PORT_RESTART_NOTE = 'changing either port restarts the server; any active streams will drop.';
+
+/** The inline refusal on whichever port row was just edited onto the other's value. */
+export const PORT_COLLISION_ERROR = 'the http and https ports must differ.';
+
+/**
+ * Notification 5: a sub-1024 port needs elevated privileges outside win32.
+ * It moved here from the Local HTTPS tab with the https port it is about.
+ *
+ * M2: an ALLOWLIST (only linux/darwin fire), not a win32-denylist -- an
+ * unknown/undefined platform (this tab hasn't learned it yet, or it is
+ * genuinely unrecognized) must not fire this. The previous denylist shape
+ * fired for anything that WASN'T literally `'win32'`, which included
+ * `undefined` -- exactly what a hardcoded `?? 'linux'` fallback once
+ * manufactured before the real platform had arrived.
+ */
+export function subPrivilegedPortNotice(port: number, platform: NodeJS.Platform | string | undefined): string | null {
+    if (platform !== 'linux' && platform !== 'darwin') return null;
+    if (!Number.isFinite(port) || port <= 0 || port >= 1024) return null;
+    return 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
+}
+
+/** Ids for the port rows' labels and notes, unique across every dialog opened on the page. */
+let portDomSeq = 0;
+function nextPortDomId(): string {
+    portDomSeq += 1;
+    return `settings-port-${portDomSeq}`;
+}
+
+/**
+ * Name a row's input after its row label (`aria-labelledby`): the label is a
+ * `<span>` in the grid's other column, so it does not name the input by itself.
+ */
+function labelInputByRow(row: HTMLElement, input: HTMLInputElement): void {
+    const label = row.querySelector<HTMLElement>('.settings-label');
+    if (!label) return;
+    if (!label.id) label.id = nextPortDomId();
+    input.setAttribute('aria-labelledby', label.id);
+}
+
+/**
+ * Point `aria-describedby` at whichever of `notes` are showing, or drop it:
+ * a hidden note named there would still be read out.
+ */
+function describeBy(input: HTMLInputElement | null, notes: Array<HTMLElement | null>): void {
+    if (!input) return;
+    const ids = notes.filter((n): n is HTMLElement => n !== null && !n.hidden).map((n) => n.id);
+    if (ids.length > 0) input.setAttribute('aria-describedby', ids.join(' '));
+    else input.removeAttribute('aria-describedby');
+}
+
+/**
+ * What the https port row needs from `GET /api/tls/state` (admin-only, like
+ * this row): whether a certificate exists, and the configured port. `port` is
+ * null when the read failed, so the row keeps whatever it had rather than
+ * showing a guess; a reply that names no port gets the server's own default.
+ */
+async function readTlsPortState(): Promise<{ ready: boolean; port: number | null }> {
+    try {
+        const res = await fetch('/api/tls/state');
+        if (!res.ok) return { ready: false, port: null };
+        const state = (await res.json()) as { status?: unknown; httpsPort?: unknown };
+        return {
+            ready: state.status === 'ready',
+            port: typeof state.httpsPort === 'number' ? state.httpsPort : DEFAULT_HTTPS_PORT,
+        };
+    } catch {
+        return { ready: false, port: null };
+    }
+}
 
 /**
  * Copy for the overlay shown once the app uninstall has been handed off.
@@ -398,18 +483,23 @@ async function onStopServerExit(btn: HTMLButtonElement, askChild: AskChild): Pro
  * the `HTMLElement` its signature promises.
  */
 const refreshers = new WeakMap<HTMLElement, () => Promise<void>>();
+const httpsRefreshers = new WeakMap<HTMLElement, () => Promise<void>>();
 const serviceStatusAppliers = new WeakMap<HTMLElement, (resp: ServiceStatusResponse) => void>();
 const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
+const hostModeAppliers = new WeakMap<HTMLElement, () => void>();
 
 /**
  * The Server tab — the consolidated app/server section (beta.62 folded the old
  * standalone "App" section into it).
  *
- * The web port is the first STAGED field in Settings: editing it calls
+ * The http port is the first STAGED field in Settings: editing it calls
  * `store.set('webPort', …)` and nothing else. There is no per-field Save button
  * any more — the dialog's Save collects every staged change and sends one batch
  * to POST /api/settings/batch, which owns the restart and the redirect a port
- * change triggers. Everything else here is an ACTION (reset, change password,
+ * change triggers. The https port, right below it, is staged the same way
+ * (`httpsPort`); it moved here from the Local HTTPS tab, where it had its own
+ * "ok" button, and it stays disabled until mkcert is installed and a
+ * certificate exists (`refreshServerHttps`). Everything else here is an ACTION (reset, change password,
  * log out, install for all users, stop & exit, uninstall): each fires
  * immediately on click and registers nothing with `store`, so none of them can
  * reach the change summary.
@@ -433,6 +523,27 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     let webPortInput: HTMLInputElement | null = null;
     let webPortRow: HTMLElement | null = null;
     let webPortStatus: HTMLElement | null = null;
+    let httpsPortInput: HTMLInputElement | null = null;
+    let httpsPortRow: HTMLElement | null = null;
+    let httpsPortStatus: HTMLElement | null = null;
+    let httpsPortGateNote: HTMLElement | null = null;
+    let httpsPortPrivilegeNotice: HTMLElement | null = null;
+    let portRestartNote: HTMLElement | null = null;
+    // What the https port's gate was last told (refreshServerHttps). Starts
+    // closed: until /api/tls/state has said a certificate exists, there is
+    // nothing for the port to apply to.
+    let httpsMkcertInstalled: boolean | null = null;
+    let httpsCertReady = false;
+    // Bumped by every https read, so a slow earlier read cannot overwrite a newer one.
+    let httpsReadSeq = 0;
+    // Which row's status line currently shows PORT_COLLISION_ERROR (M9): when
+    // the other row moves off the shared value, that row is re-staged.
+    let httpCollision = false;
+    let httpsCollision = false;
+    // Set once SettingsModal has learned this is a host (applyServerHostMode):
+    // until then the port rows stay hidden, so none of their copy flashes in a
+    // container before the probe answers.
+    let hostMode = false;
     let stopServerButton: HTMLButtonElement | null = null;
     let stopServerNote: HTMLElement | null = null;
     let installAllUsersRow: HTMLElement | null = null;
@@ -612,7 +723,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     //    points (refreshServer, applyServerServiceStatus) are null-safe on every
     //    ref above — they guard with `if (!x) return;`.
     if (canSeeSection(ctx.role, 'webPort')) {
-        // 2. web port — a number input, and nothing else. Editing it STAGES the
+        // 2. http port — a number input, and nothing else. Editing it STAGES the
         //    value; the dialog's Save sends the whole batch. The status line below
         //    the row is empty at rest and carries either a read error or the
         //    range message below — the save states it used to show ("saving…",
@@ -624,29 +735,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         input.max = '65535';
         input.className = 'settings-input';
         input.style.maxWidth = '120px';
-        input.addEventListener('change', () => {
-            // The range guard `onSavePort` used to run, re-homed onto the stage
-            // rather than the save. `min`/`max` above are advisory: nothing
-            // enforces them outside a validating form submit, so an out-of-range
-            // or emptied field would otherwise stage a value that
-            // `Config.validateField` rejects by THROWING — which the batch
-            // endpoint answers as a 400 the user never asked for.
-            //
-            // `Number` + `isInteger`, NOT `parseInt`, so the test here is the
-            // same one `validateField` applies. `parseInt` TRUNCATES: '8010.5'
-            // would stage 8010 while the field still read 8010.5, silently
-            // saving a port the user never typed. `Number` gives NaN for junk
-            // and 0 for an emptied field, and both fail below.
-            const port = Number(input.value);
-            if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-                // Refuse the stage: whatever was last staged stands, and the
-                // message stays up until a valid port replaces it.
-                setServerStatus('port must be between 1024 and 65535', true);
-                return;
-            }
-            setServerStatus('');
-            store.set(WEB_PORT_ID, port);
-        });
+        // The range guard `onSavePort` used to run, re-homed onto the stage
+        // rather than the save (`commitHttpPort`). `min`/`max` above are
+        // advisory: nothing enforces them outside a validating form submit.
+        input.addEventListener('change', () => commitHttpPort());
         webPortInput = input;
 
         // Registered with a null baseline because the real port is not knowable
@@ -656,15 +748,90 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         // fill-in from being reported as a change the user never made.
         store.register({ id: WEB_PORT_ID, label: WEB_PORT_LABEL, initial: null });
 
-        webPortRow = buildRow('web port', input);
+        webPortRow = buildRow('http port', input);
+        labelInputByRow(webPortRow, input);
         body.appendChild(webPortRow);
 
         const status = document.createElement('p');
         status.className = 'settings-status';
         status.style.gridColumn = '1 / -1';
+        status.id = nextPortDomId();
         status.hidden = true;
         webPortStatus = status;
         body.appendChild(status);
+
+        // 2b. https port — the port the Local HTTPS listener binds. Staged like
+        //     the http port (`httpsPort`, saved by the dialog's Save), with the
+        //     server's range (1-65535: it is not held to the http port's 1024
+        //     floor). Editable once a certificate exists and mkcert is installed
+        //     or its state cannot be told (user decision): before that there is
+        //     no listener for it to move, and the note below says what to do.
+        const httpsInput = document.createElement('input');
+        httpsInput.type = 'number';
+        httpsInput.min = '1';
+        httpsInput.max = '65535';
+        httpsInput.className = 'settings-input';
+        httpsInput.style.maxWidth = '120px';
+        httpsInput.setAttribute('data-tls-port', '');
+        httpsInput.disabled = true;
+        httpsInput.addEventListener('input', () => updateHttpsPrivilegeNotice());
+        httpsInput.addEventListener('change', () => commitHttpsPort());
+        httpsPortInput = httpsInput;
+        // A null baseline for the same reason as the http port: the configured
+        // port arrives later, on the /api/tls/state read refreshServerHttps makes.
+        store.register({ id: HTTPS_PORT_ID, label: HTTPS_PORT_LABEL, initial: null });
+
+        httpsPortRow = buildRow('https port', httpsInput);
+        labelInputByRow(httpsPortRow, httpsInput);
+        body.appendChild(httpsPortRow);
+
+        const httpsStatus = document.createElement('p');
+        httpsStatus.className = 'settings-status';
+        httpsStatus.style.gridColumn = '1 / -1';
+        httpsStatus.id = nextPortDomId();
+        httpsStatus.setAttribute('data-https-port-status', '');
+        httpsStatus.hidden = true;
+        httpsPortStatus = httpsStatus;
+        body.appendChild(httpsStatus);
+
+        const gateNote = document.createElement('p');
+        gateNote.className = 'settings-status';
+        gateNote.style.gridColumn = '1 / -1';
+        gateNote.id = nextPortDomId();
+        gateNote.setAttribute('data-https-port-gate-note', '');
+        gateNote.textContent = HTTPS_PORT_GATE_NOTE;
+        gateNote.hidden = true;
+        httpsPortGateNote = gateNote;
+        body.appendChild(gateNote);
+
+        // Notification 5, moved here with the port it is about.
+        const privilegeNotice = document.createElement('p');
+        privilegeNotice.className = 'settings-status settings-status-warning';
+        privilegeNotice.style.gridColumn = '1 / -1';
+        privilegeNotice.id = nextPortDomId();
+        privilegeNotice.setAttribute('data-tls-port-notice', '');
+        privilegeNotice.hidden = true;
+        httpsPortPrivilegeNotice = privilegeNotice;
+        body.appendChild(privilegeNotice);
+
+        // Below both rows: either port's save restarts the server
+        // (SettingsBatchApi schedules one restart for a moved http port, a moved
+        // https port, or both). Shown whenever the rows are.
+        const restartNote = document.createElement('p');
+        restartNote.className = 'settings-status';
+        restartNote.style.gridColumn = '1 / -1';
+        restartNote.id = nextPortDomId();
+        restartNote.setAttribute('data-port-restart-note', '');
+        restartNote.textContent = PORT_RESTART_NOTE;
+        portRestartNote = restartNote;
+        body.appendChild(restartNote);
+
+        // Hidden until the host/container probe has answered (applyHostMode /
+        // applyContainerMode), so a container never shows any of it, even for
+        // the moment before the probe resolves (M6).
+        for (const row of [webPortRow, httpsPortRow]) row.style.display = 'none';
+        restartNote.hidden = true;
+        updatePortDescriptions();
     }
 
     if (canSeeSection(ctx.role, 'serverControls')) {
@@ -717,17 +884,204 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
     function setServerStatus(msg: string, isError = false): void {
         const el = webPortStatus;
-        if (!el) return; // web port row not built (non-admin)
+        if (!el) return; // http port row not built (non-admin)
         el.textContent = msg;
-        // The status line lives BELOW the web-port row and is empty at rest —
+        // The status line lives BELOW the http port row and is empty at rest —
         // hide it when there is no message so it doesn't reserve a blank row.
         el.hidden = msg.length === 0;
         el.classList.toggle('settings-status-error', isError);
+        httpCollision = msg === PORT_COLLISION_ERROR;
+        updatePortDescriptions();
+    }
+
+    /** The https port's own status line — the http port's, one row down. */
+    function setHttpsStatus(msg: string, isError = false): void {
+        const el = httpsPortStatus;
+        if (!el) return;
+        el.textContent = msg;
+        el.hidden = msg.length === 0 || containerMode;
+        el.classList.toggle('settings-status-error', isError);
+        httpsCollision = msg === PORT_COLLISION_ERROR;
+        updatePortDescriptions();
+    }
+
+    /** Each port input's description: whichever of its notes are showing (M8). */
+    function updatePortDescriptions(): void {
+        describeBy(webPortInput, [webPortStatus, portRestartNote]);
+        describeBy(httpsPortInput, [httpsPortStatus, httpsPortGateNote, httpsPortPrivilegeNotice, portRestartNote]);
+    }
+
+    /**
+     * The two listeners cannot share a port, but only while a certificate
+     * exists: without one there is no https listener, and an http port of 8443
+     * (the default https port) is fine, as it always was (user decision after
+     * 0.5.3; the server applies the same rule, portCollision.ts).
+     */
+    function portsCollide(httpPort: unknown, httpsPort: unknown): boolean {
+        return httpsCertReady && typeof httpPort === 'number' && httpPort === httpsPort;
+    }
+
+    /**
+     * Stage the http box's value, or say why not. `Number` + `isInteger`, NOT
+     * `parseInt`, so the test is the one `validateField` applies: `parseInt`
+     * TRUNCATES ('8010.5' would stage 8010), while `Number` gives NaN for junk
+     * and 0 for an emptied field, and both fail. A refused value stages nothing:
+     * whatever was last staged stands, and the message stays up until a valid
+     * port replaces it. Returns whether it staged.
+     */
+    function commitHttpPort(): boolean {
+        const input = webPortInput;
+        if (!input) return false;
+        const port = Number(input.value);
+        if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+            setServerStatus('port must be between 1024 and 65535', true);
+            return false;
+        }
+        // Compared with the https port as staged, so a pair of edits that swap
+        // the ports is judged on the result.
+        if (portsCollide(port, store.get(HTTPS_PORT_ID))) {
+            setServerStatus(PORT_COLLISION_ERROR, true);
+            return false;
+        }
+        setServerStatus('');
+        store.set(WEB_PORT_ID, port);
+        // M9: the https row was refused for sitting on this row's old value;
+        // now that this one moved, stage what it holds without a re-edit.
+        if (httpsCollision && httpsPortInput && !httpsPortInput.disabled) commitHttpsPort();
+        return true;
+    }
+
+    /** As `commitHttpPort`, for the https box, with `validateHttpsPortInput`'s bounds (Config.ts). */
+    function commitHttpsPort(): boolean {
+        const input = httpsPortInput;
+        if (!input) return false;
+        const port = Number(input.value);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            setHttpsStatus('port must be between 1 and 65535', true);
+            return false;
+        }
+        if (portsCollide(store.get(WEB_PORT_ID), port)) {
+            setHttpsStatus(PORT_COLLISION_ERROR, true);
+            return false;
+        }
+        setHttpsStatus('');
+        store.set(HTTPS_PORT_ID, port);
+        if (httpCollision) commitHttpPort();
+        return true;
+    }
+
+    /** Notification 5 for the value in the https box, once the platform is known. */
+    function updateHttpsPrivilegeNotice(): void {
+        const el = httpsPortPrivilegeNotice;
+        const input = httpsPortInput;
+        if (!el || !input) return;
+        const text = subPrivilegedPortNotice(Number(input.value), servicePlatform);
+        el.textContent = text ?? '';
+        el.hidden = text === null || !hostMode;
+        updatePortDescriptions();
+    }
+
+    /**
+     * Is the https port usable? A certificate must exist, and mkcert must not
+     * be known to be missing. An mkcert state the server cannot report (`null`)
+     * does not hold the row shut on its own -- the same fail-open reading the
+     * Local HTTPS tab gives that answer (`fetchMkcertInstalled`): a certificate
+     * on disk is the stronger fact, and nothing re-reads mkcert until a
+     * dependency install, so a read that happened to fail would otherwise
+     * lock the port for the rest of the session (user decision after 0.5.3).
+     */
+    function httpsGateOpen(): boolean {
+        return httpsCertReady && httpsMkcertInstalled !== false;
+    }
+
+    function applyHttpsGate(): void {
+        const open = httpsGateOpen();
+        if (httpsPortInput) httpsPortInput.disabled = !open;
+        if (httpsPortGateNote) httpsPortGateNote.hidden = open || !hostMode;
+        updatePortDescriptions();
+    }
+
+    /**
+     * The probe says this is a host (SettingsModal's non-container path): show
+     * the port rows and their notes, which are built hidden so a container
+     * never flashes them (M6). Idempotent; a no-op once container mode is set.
+     */
+    function applyHostMode(): void {
+        if (containerMode || hostMode) return;
+        hostMode = true;
+        if (webPortRow) webPortRow.style.display = '';
+        if (httpsPortRow) httpsPortRow.style.display = '';
+        if (portRestartNote) portRestartNote.hidden = false;
+        applyHttpsGate();
+        updateHttpsPrivilegeNotice();
+    }
+
+    /**
+     * Read what the https port's gate depends on -- mkcert, from
+     * /api/dependencies (the Local HTTPS tab's read), and the certificate and
+     * configured port, from /api/tls/state -- and apply it. Re-run whenever
+     * either can have changed (a dependency install, a generate or a revoke).
+     *
+     * The port is re-baselined from the server unless the user has an edit
+     * staged on a row that is still open: a re-read must not throw away what
+     * they typed. A staged value on a row that is closed -- the certificate
+     * was revoked, or the read failed and nothing says one exists -- is
+     * dropped, since a disabled box can no longer show or change what Save
+     * would send (M3).
+     */
+    async function runHttpsRefresh(): Promise<void> {
+        const input = httpsPortInput;
+        if (!input || containerMode) return;
+        const seq = ++httpsReadSeq;
+        const [installed, tls] = await Promise.all([
+            // Wrapped, not passed by reference: an unbound `fetch` throws
+            // "Illegal invocation" in Chrome.
+            fetchMkcertInstalled((...args: Parameters<typeof fetch>) => fetch(...args)),
+            readTlsPortState(),
+        ]);
+        if (seq !== httpsReadSeq || containerMode) return;
+        const certChanged = tls.ready !== httpsCertReady;
+        httpsMkcertInstalled = installed;
+        httpsCertReady = tls.ready;
+        const open = httpsGateOpen();
+        const staged = store.changes().find((c) => c.id === HTTPS_PORT_ID);
+        if (tls.port !== null && (!staged || !open)) {
+            store.register({ id: HTTPS_PORT_ID, label: HTTPS_PORT_LABEL, initial: tls.port });
+            input.value = String(tls.port);
+            setHttpsStatus('');
+        } else if (staged && !open) {
+            // No port to re-baseline from: put the staged field back on its own baseline.
+            store.set(HTTPS_PORT_ID, staged.from);
+            input.value = typeof staged.from === 'number' ? String(staged.from) : '';
+            setHttpsStatus('');
+        } else if (!open) {
+            setHttpsStatus('');
+        }
+        updateHttpsPrivilegeNotice();
+        applyHttpsGate();
+        // The equal-ports rule follows the certificate: a refusal on the http
+        // row may no longer hold, or a port staged while there was no
+        // certificate may now collide, so judge the row again.
+        if (httpCollision || certChanged) rejudgeHttpPort();
+    }
+
+    /**
+     * Judge the http row again after the equal-ports rule may have changed (a
+     * certificate appeared or went away). Only a row with something at stake
+     * -- a staged port, or a standing collision refusal -- is touched. A staged
+     * port that now collides is refused inline AND taken back off the stage:
+     * left there, Save would send it and the server would answer 409. It comes
+     * back by itself once the https port moves (M9).
+     */
+    function rejudgeHttpPort(): void {
+        const staged = store.changes().find((c) => c.id === WEB_PORT_ID);
+        if (!staged && !httpCollision) return;
+        if (!commitHttpPort() && httpCollision && staged) store.set(WEB_PORT_ID, staged.from);
     }
 
     async function runRefresh(): Promise<void> {
         const input = webPortInput;
-        if (!input) return; // web port row not built (non-admin)
+        if (!input) return; // http port row not built (non-admin)
         try {
             const r = await fetch('/api/config');
             if (!r.ok) {
@@ -741,7 +1095,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
             // permanently dirty and push a webPort write into every batch save.
             store.register({ id: WEB_PORT_ID, label: WEB_PORT_LABEL, initial: env.config.webPort });
             input.value = String(env.config.webPort);
-            // No at-rest hint: the status line below the web-port row stays empty
+            // No at-rest hint: the status line below the http port row stays empty
             // unless the read itself fails.
         } catch {
             setServerStatus("couldn't reach server", true);
@@ -793,9 +1147,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
      * "stop server & exit" is left alone: it is correct in a container (row 20.6).
      *
      * Two more container decisions live here (row 20.19):
-     * - the web-port row is hidden: the port inside the image is always 8000,
+     * - the http port row is hidden: the port inside the image is always 8000,
      *   docker's port mapping picks the one users reach, and the server refuses
-     *   the field;
+     *   the field. The https port row goes with it, notes and all: Local HTTPS
+     *   is not supported in a container, and the server refuses that field too;
      * - "reset all my settings" stops sending the first-run reset (see
      *   buildResetControl).
      * The third, Local HTTPS shown as a reverse-proxy note, belongs to the Local
@@ -806,6 +1161,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         applyAppRows(appSectionButtonsState({ platform: 'linux', docker: true }), 'container');
         if (webPortRow) webPortRow.style.display = 'none';
         if (webPortStatus) webPortStatus.hidden = true;
+        if (httpsPortRow) httpsPortRow.style.display = 'none';
+        for (const note of [httpsPortStatus, httpsPortGateNote, httpsPortPrivilegeNotice, portRestartNote]) {
+            if (note) note.hidden = true;
+        }
     }
 
     /**
@@ -819,6 +1178,8 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
      */
     function applyServiceStatus(resp: ServiceStatusResponse): void {
         servicePlatform = resp.platform;
+        // The https port's sub-1024 notice waits on the platform (M2).
+        updateHttpsPrivilegeNotice();
         if (stopServerButton) {
             const stop = stopServerButtonState(resp);
             stopServerButton.disabled = stop.disabled;
@@ -832,20 +1193,34 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     }
 
     refreshers.set(section, runRefresh);
+    httpsRefreshers.set(section, runHttpsRefresh);
     serviceStatusAppliers.set(section, applyServiceStatus);
     containerModeAppliers.set(section, applyContainerMode);
+    hostModeAppliers.set(section, applyHostMode);
     return section;
 }
 
 /**
  * Externally trigger the /api/config read for a Server tab `buildServerTab`
- * already built — it fills the web-port input and baselines the staged field.
+ * already built — it fills the http port input and baselines the staged field.
  * A no-op if `section` was never built through `buildServerTab`.
  */
 export async function refreshServer(section: HTMLElement): Promise<void> {
     const run = refreshers.get(section);
     if (!run) return;
     await run();
+}
+
+/**
+ * Re-read what the Server tab's https port depends on -- whether mkcert is
+ * installed and whether a certificate exists -- and enable or disable the row
+ * to match, prefilling it with the configured port. `SettingsModal` calls it
+ * once container mode is known (never in a container), after a dependency
+ * install, and after Local HTTPS generates or revokes a certificate. A no-op if
+ * `section` was never built through `buildServerTab`, or has no https row.
+ */
+export async function refreshServerHttps(section: HTMLElement): Promise<void> {
+    await httpsRefreshers.get(section)?.();
 }
 
 /**
@@ -869,4 +1244,15 @@ export function applyServerServiceStatus(section: HTMLElement, resp: ServiceStat
  */
 export function applyServerContainerMode(section: HTMLElement): void {
     containerModeAppliers.get(section)?.();
+}
+
+/**
+ * Tell a Server tab it is on a host, not in a container: it shows its http and
+ * https port rows and their notes, which are built hidden so that none of them
+ * flashes in a container before the probe answers. SettingsModal calls it on
+ * its non-container path, before `refreshServerHttps`. A no-op if `section`
+ * was never built through `buildServerTab`, or after container mode.
+ */
+export function applyServerHostMode(section: HTMLElement): void {
+    hostModeAppliers.get(section)?.();
 }
