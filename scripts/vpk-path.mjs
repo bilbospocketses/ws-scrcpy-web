@@ -2,8 +2,8 @@
 // scripts/vpk-path.mjs
 //
 // THE single resolver for the Velopack CLI (`vpk`). Every call site — the
-// `package:pack` npm script, scripts/package-linux.mjs, scripts/test-update-flow.ps1
-// and both release.yml legs — goes through here. Five copies of a path
+// `package:pack` npm script, scripts/package-linux.mjs, the manual update-flow test in
+// docs/RELEASING.md and both release.yml legs — goes through here. Five copies of a path
 // expression is how one of them drifts back to PATH later.
 //
 // WHY THIS EXISTS:

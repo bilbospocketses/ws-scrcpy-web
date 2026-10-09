@@ -347,9 +347,8 @@ export class UpdateService {
 
     /**
      * The feed override, if any: env `VELOPACK_FEED_URL` > opts override. With
-     * one set, no release is resolved -- the update-flow sandbox
-     * (scripts/test-update-flow.ps1) and the qa-harness pin their own feed this
-     * way.
+     * one set, no release is resolved -- the manual update-flow test
+     * (docs/RELEASING.md) and the qa-harness pin their own feed this way.
      */
     private overrideFeed(): UpdateFeed | null {
         const url = process.env['VELOPACK_FEED_URL'] || this.feedUrlOverride;

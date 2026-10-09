@@ -366,7 +366,7 @@ A few advanced switches are only available via environment variables:
 | Variable | Purpose |
 |----------|---------|
 | `DEPS_PATH` | Override the location of the `dependencies/` folder (used by the installer to point at the per-user data dir while the app itself lives under `current/`). |
-| `VELOPACK_FEED_URL` | Force the Velopack auto-updater to use a custom feed URL (mostly useful for the local update-flow sandbox test). |
+| `VELOPACK_FEED_URL` | Force the Velopack auto-updater to use a custom feed: a plain local folder path, or an http(s) URL (mostly useful for the manual update-flow test in `docs/RELEASING.md`). |
 | `WS_SCRCPY_RELEASE_URL_BASE` | Linux only: fetch the in-app update's AppImage and `SHA256SUMS` from `<base>/v<version>/<asset>` instead of GitHub's release downloads (a test or mirror seam; the SHA-256 check still runs). |
 | `WS_SCRCPY_MKCERT_URL_BASE` | Read mkcert's latest-release lookup, downloads and attestation lookup from `<base>/releases/latest`, `<base>/releases/download/<tag>/<asset>` and `<base>/attestations/sha256:<digest>` instead of GitHub (a test or mirror seam; the build-provenance check still runs against the fork's own release workflow). |
 | `WS_SCRCPY_NODE_DIST_BASE` | Read Node.js's release index, archive and checksum list from `<base>/index.json`, `<base>/v<version>/<archive>` and `<base>/v<version>/SHASUMS256.txt` instead of `https://nodejs.org/dist` (a test or mirror seam; the SHA-256 check still runs). |
