@@ -1,5 +1,12 @@
 export enum DependencyStatus {
     Unknown = 'unknown',
+    /**
+     * A dependency fetched on first use (`deferInstall`) that is not installed
+     * yet: nothing is wrong, nothing has needed it. The panel offers to install
+     * it. A boot-installed dependency that is missing stays `Unknown` or
+     * `Error`, which is what the first-run banner looks for. 0.5.1.
+     */
+    NotInstalled = 'not-installed',
     UpToDate = 'up-to-date',
     UpdateAvailable = 'update-available',
     Checking = 'checking',

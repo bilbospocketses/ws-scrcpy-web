@@ -1,8 +1,29 @@
-import type { DependencyInfo, UpdateResult } from '../../common/DependencyTypes';
+import { type DependencyInfo, DependencyStatus, type UpdateResult } from '../../common/DependencyTypes';
 import { escapeHtml } from '../htmlEscape';
 import { isStaleTokenRefusal } from './staleToken';
 
 const POLL_INTERVAL_MS = 15_000;
+
+/**
+ * Dispatched (bubbling) from the panel's element after an install or update
+ * succeeds, with `{ name }` as its detail. The Settings dialog listens for it
+ * on itself and tells the Server tab, whose Local HTTPS panel keeps generate
+ * disabled until mkcert is installed (0.5.1) -- without it, installing mkcert
+ * here would leave generate greyed out until the dialog was reopened.
+ */
+export const DEPENDENCY_INSTALLED_EVENT = 'ws-dependency-installed';
+
+/**
+ * Whether the row offers **install** rather than **update**: a dependency
+ * fetched on first use (`deferInstall`, mkcert) that is not installed. That
+ * is the server's `not-installed` status, and also its `error` status when
+ * the copy is still missing -- an install that failed -- so the same button
+ * is the retry, rather than leaving a red badge with nothing to press.
+ */
+function offersInstall(dep: DependencyInfo): boolean {
+    if (dep.status === DependencyStatus.NotInstalled) return true;
+    return dep.status === DependencyStatus.Error && dep.deferInstall === true && dep.installedVersion === null;
+}
 
 export class DependencyPanel {
     private container: HTMLElement;
@@ -106,11 +127,16 @@ export class DependencyPanel {
         }
     }
 
-    private async updateDep(name: string): Promise<void> {
+    /**
+     * Install and update are one request (`POST /api/dependencies/:name/update`
+     * runs the same download, verification and install either way); `install`
+     * only changes what the button and a failure say.
+     */
+    private async updateDep(name: string, install = false): Promise<void> {
         const btn = this.container.querySelector(`[data-update="${name}"]`) as HTMLButtonElement;
         if (btn) {
             btn.disabled = true;
-            btn.textContent = 'Updating...';
+            btn.textContent = install ? 'installing...' : 'Updating...';
         }
         this.busy = true;
         // §25b — using-declaration replaces the prior try/finally clearing
@@ -127,15 +153,18 @@ export class DependencyPanel {
             const result: UpdateResult = await res.json();
             if (result.success) {
                 await this.load();
+                this.container.dispatchEvent(
+                    new CustomEvent(DEPENDENCY_INSTALLED_EVENT, { bubbles: true, detail: { name } }),
+                );
                 if (result.requiresRestart) {
                     this.showRestartPrompt();
                 }
             } else {
-                alert(`Update failed: ${result.errorMessage}`);
+                alert(`${install ? 'Install' : 'Update'} failed: ${result.errorMessage}`);
                 await this.load();
             }
         } catch {
-            alert('Update request failed');
+            alert(`${install ? 'Install' : 'Update'} request failed`);
             await this.load();
         }
     }
@@ -211,7 +240,8 @@ export class DependencyPanel {
             `;
             const updateBtn = row.querySelector('[data-update]') as HTMLButtonElement | null;
             if (updateBtn) {
-                updateBtn.addEventListener('click', () => this.updateDep(dep.name));
+                const install = updateBtn.hasAttribute('data-install');
+                updateBtn.addEventListener('click', () => this.updateDep(dep.name, install));
             }
             this.tableBody.appendChild(row);
         }
@@ -245,26 +275,40 @@ export class DependencyPanel {
             case 'checking':
                 return '<span class="dep-badge dep-info">Checking...</span>';
             case 'updating':
-                return '<span class="dep-badge dep-info">Updating...</span>';
+                return dep.installedVersion === null
+                    ? '<span class="dep-badge dep-info">Installing...</span>'
+                    : '<span class="dep-badge dep-info">Updating...</span>';
             case 'error':
                 return `<span class="dep-badge dep-error" title="${escapeHtml(dep.errorMessage || '')}">Error</span>`;
+            case 'not-installed':
+                // Neutral, not a warning: a first-use dependency nothing has
+                // needed yet. The install button beside it is the action.
+                return '<span class="dep-badge dep-not-installed">Not installed</span>';
             default:
                 return '<span class="dep-badge dep-unknown">Unknown</span>';
         }
     }
 
     private actionButton(dep: DependencyInfo): string {
+        const devTooltip =
+            'In-app updates require an installed build. ' +
+            'In dev mode, populate dependencies/ via scripts/fetch-node.mjs.';
         if (dep.status === 'update-available') {
             if (!dep.canUpdate) {
-                const tooltip =
-                    'In-app updates require an installed build. ' +
-                    'In dev mode, populate dependencies/ via scripts/fetch-node.mjs.';
-                return `<button class="dep-btn dep-update" disabled title="${tooltip}">update (dev)</button>`;
+                return `<button class="dep-btn dep-update" disabled title="${devTooltip}">update (dev)</button>`;
             }
             return `<button class="dep-btn dep-update" data-update="${escapeHtml(dep.name)}">update</button>`;
         }
+        if (offersInstall(dep)) {
+            if (!dep.canUpdate) {
+                return `<button class="dep-btn dep-update" disabled title="${devTooltip}">install (dev)</button>`;
+            }
+            // `data-update` wires it to the same request as update (see
+            // `updateDep`); `data-install` is what tells the two apart.
+            return `<button class="dep-btn dep-update" data-update="${escapeHtml(dep.name)}" data-install>install</button>`;
+        }
         if (dep.status === 'updating') {
-            return '<button class="dep-btn" disabled>updating...</button>';
+            return `<button class="dep-btn" disabled>${dep.installedVersion === null ? 'installing...' : 'updating...'}</button>`;
         }
         return '';
     }

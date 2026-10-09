@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DependencyInfo, DependencyStatus } from '../../common/DependencyTypes';
-import { DependencyPanel } from './DependencyPanel';
+import { DEPENDENCY_INSTALLED_EVENT, DependencyPanel } from './DependencyPanel';
 
 const dep = (o: Partial<DependencyInfo>): DependencyInfo => ({
     name: 'adb',
@@ -75,6 +75,140 @@ describe('DependencyPanel Latest cell', () => {
             }),
         );
         expect(cell.textContent).toBe('4.1');
+    });
+});
+
+// 0.5.1: a first-use dependency (mkcert) that is not installed reads "Not
+// installed" with an install button, instead of an Unknown pill and nothing to
+// press (installing it used to happen only by clicking generate on the Server tab).
+describe('DependencyPanel install button for a first-use dependency', () => {
+    const mkcert = (o: Partial<DependencyInfo> = {}): DependencyInfo =>
+        dep({
+            name: 'mkcert',
+            displayName: 'mkcert',
+            status: DependencyStatus.NotInstalled,
+            deferInstall: true,
+            canUpdate: true,
+            latestVersion: '1.4.4-bt.3',
+            ...o,
+        });
+
+    const rowFor = (d: DependencyInfo): HTMLTableRowElement => {
+        const panel = new DependencyPanel();
+        (panel as any).render([d]);
+        return panel.getElement().querySelector<HTMLTableRowElement>('tbody tr.dep-row')!;
+    };
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('shows a Not installed badge, not Unknown, and an enabled install button', () => {
+        const row = rowFor(mkcert());
+        const badge = row.querySelector('.dep-status .dep-badge')!;
+        expect(badge.textContent).toBe('Not installed');
+        expect(badge.classList.contains('dep-not-installed')).toBe(true);
+        expect(row.querySelector('.dep-unknown')).toBeNull();
+        const btn = row.querySelector<HTMLButtonElement>('.dep-action button')!;
+        expect(btn.textContent).toBe('install');
+        expect(btn.disabled).toBe(false);
+        expect(btn.getAttribute('data-update')).toBe('mkcert');
+        expect(btn.hasAttribute('data-install')).toBe(true);
+    });
+
+    it('in dev mode (canUpdate false) keeps a disabled install button with the dev tooltip', () => {
+        const btn = rowFor(mkcert({ canUpdate: false })).querySelector<HTMLButtonElement>('.dep-action button')!;
+        expect(btn.disabled).toBe(true);
+        expect(btn.textContent).toBe('install (dev)');
+        expect(btn.title).toMatch(/In-app updates require an installed build/);
+        expect(btn.hasAttribute('data-update')).toBe(false);
+    });
+
+    it('offers install again after a failed install, while the copy is still missing', () => {
+        const row = rowFor(mkcert({ status: DependencyStatus.Error, errorMessage: 'refused' }));
+        expect(row.querySelector('.dep-status .dep-badge')!.textContent).toBe('Error');
+        expect(row.querySelector<HTMLButtonElement>('.dep-action button')!.textContent).toBe('install');
+    });
+
+    it('offers no install for a boot-installed dependency that is missing (the first-run banner owns that)', () => {
+        const row = rowFor(dep({ status: DependencyStatus.Error, canUpdate: true }));
+        expect(row.querySelector('.dep-action button')).toBeNull();
+        const unknown = rowFor(dep({ status: DependencyStatus.Unknown, canUpdate: true }));
+        expect(unknown.querySelector('.dep-status .dep-badge')!.textContent).toBe('Unknown');
+        expect(unknown.querySelector('.dep-action button')).toBeNull();
+    });
+
+    it('says Installing..., not Updating..., while a missing dependency is being fetched', () => {
+        const row = rowFor(mkcert({ status: DependencyStatus.Updating }));
+        expect(row.querySelector('.dep-status .dep-badge')!.textContent).toBe('Installing...');
+        expect(row.querySelector<HTMLButtonElement>('.dep-action button')!.textContent).toBe('installing...');
+    });
+
+    it('install POSTs the same update endpoint, re-reads the list and announces the install', async () => {
+        const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+            if (url === '/api/dependencies/mkcert/update' && init?.method === 'POST') {
+                return {
+                    ok: true,
+                    json: async () => ({ success: true, newVersion: '1.4.4-bt.3', requiresRestart: false }),
+                };
+            }
+            return {
+                ok: true,
+                json: async () => [mkcert({ status: DependencyStatus.UpToDate, installedVersion: '1.4.4-bt.3' })],
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const panel = new DependencyPanel();
+        document.body.appendChild(panel.getElement());
+        const announced = vi.fn();
+        document.body.addEventListener(DEPENDENCY_INSTALLED_EVENT, (e) => announced((e as CustomEvent).detail));
+        (panel as any).render([mkcert()]);
+
+        const btn = panel.getElement().querySelector<HTMLButtonElement>('button[data-install]')!;
+        btn.click();
+        expect(btn.textContent).toBe('installing...');
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(fetchMock).toHaveBeenCalledWith('/api/dependencies/mkcert/update', { method: 'POST' });
+        expect(fetchMock).toHaveBeenCalledWith('/api/dependencies');
+        expect(announced).toHaveBeenCalledWith({ name: 'mkcert' });
+        // Re-rendered from the re-read: installed now, so no install button.
+        const badge = panel.getElement().querySelector('.dep-status .dep-badge')!;
+        expect(badge.textContent).toBe('Up to date');
+        expect(panel.getElement().querySelector('button[data-install]')).toBeNull();
+        panel.getElement().remove();
+    });
+
+    it('a failed install says install failed, re-reads, and announces nothing', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (url: string) =>
+                url === '/api/dependencies/mkcert/update'
+                    ? {
+                          ok: false,
+                          json: async () => ({
+                              success: false,
+                              errorMessage: 'no attestation',
+                              requiresRestart: false,
+                          }),
+                      }
+                    : { ok: true, json: async () => [mkcert({ status: DependencyStatus.Error })] },
+            ),
+        );
+        const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+        const panel = new DependencyPanel();
+        const announced = vi.fn();
+        panel.getElement().addEventListener(DEPENDENCY_INSTALLED_EVENT, announced);
+        (panel as any).render([mkcert()]);
+
+        panel.getElement().querySelector<HTMLButtonElement>('button[data-install]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(alertSpy).toHaveBeenCalledWith('Install failed: no attestation');
+        expect(announced).not.toHaveBeenCalled();
+        // Still missing, so the install button is back as the retry.
+        expect(panel.getElement().querySelector('button[data-install]')).not.toBeNull();
     });
 });
 

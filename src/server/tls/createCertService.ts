@@ -85,11 +85,20 @@ export function ensureCaRootDirSync(caRoot: string): void {
 /**
  * M2: mkcert is fetched "on first use" rather than at boot — see
  * `deferInstall`'s doc comment on the mkcert `DependencyDefinition` and
- * `DependencyManager.autoInstallMissing`'s skip for it. This IS that first
- * use: called from `run` (below) right before every spawn, so a certificate
- * generate() click is what actually triggers the download, and only when
- * the binary genuinely isn't there yet (`fs.existsSync` is the entire cost
- * on every call after the first).
+ * `DependencyManager.autoInstallMissing`'s skip for it. Called from `run`
+ * (below) right before every spawn, and it downloads only when the binary
+ * genuinely isn't there yet (`fs.existsSync` is the entire cost on every call
+ * after the first).
+ *
+ * Since 0.5.1 this is no longer how the UI installs mkcert: the Dependencies
+ * panel has an **install** button, and the Local HTTPS panel disables
+ * generate until mkcert is installed. Kept as the server-side backstop,
+ * because the panel's view can be wrong or absent: it fails open (generate
+ * stays enabled) when it cannot read `/api/dependencies`, its view is only as
+ * fresh as its last read, and `POST /api/tls/generate` is an API any admin
+ * client can call without the panel at all. Without this, each of those
+ * would spawn a binary that does not exist and fail with a generic error
+ * instead of installing it through the same attested path.
  *
  * Goes through `getDependencyManager()`'s singleton — the SAME instance
  * `index.ts`'s boot sequence and `DependencyApi` use — so an on-demand

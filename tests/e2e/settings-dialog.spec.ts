@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { APIRequestContext, BrowserContext, Locator, Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import { openSettings, openSettingsTab, settingsRow } from './support/auth';
@@ -42,6 +44,13 @@ import {
  */
 
 const onOff = (v: boolean): string => (v ? 'on' : 'off');
+
+/** The version the spec-owned server reads, from the same package.json it does. */
+function repoVersion(): string {
+    const configFile = test.info().config.configFile;
+    const repoRoot = configFile ? path.dirname(configFile) : process.cwd();
+    return (JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as { version: string }).version;
+}
 
 /** Settings → Updates on a page whose status read says "installed", controls rendered. */
 async function openUpdatesTab(page: Page): Promise<{ settings: Locator; updates: Locator }> {
@@ -115,6 +124,10 @@ test.describe('settings dialog: the staged save (smoke 13.4-13.6, 13.9)', () => 
         const c = updatesControls(updates);
         await expect(c.auto).toBeChecked({ checked: before.autoUpdate });
         await expect(footerSave(settings)).toBeDisabled();
+        // The running version, on Save's line at the left (0.5.1). It comes
+        // from /api/config, not the stubbed updates status, so it is the
+        // server's own package.json version, not INSTALLED_VERSION.
+        await expect(settings.locator('.modal-footer .settings-version')).toHaveText(`v${repoVersion()}`);
 
         const newOwner = before.githubOwner === 'e2e-164c-owner-a' ? 'e2e-164c-owner-b' : 'e2e-164c-owner-a';
         await c.auto.click();

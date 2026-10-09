@@ -85,6 +85,21 @@ export interface FirstRunStatus {
      * source address, so this has to come from the server.
      */
     callerIsLocal?: boolean;
+    /**
+     * The running app's version (package.json, via `getAppVersion()`), for the
+     * Settings dialog's footer. Composed by ConfigApi like `adminScope`.
+     *
+     * Here rather than read off `/api/updates/status` because that one cannot
+     * serve every caller: it is never initialised in a container (its
+     * `currentVersion` is empty there), and its full answer needs the operator
+     * gate, which a non-admin or an unreachable remote admin fails. This
+     * envelope is the one read every Settings dialog already makes.
+     *
+     * It discloses nothing new: a token-less `GET /api/updates/status` already
+     * answers the running version off-box (D15). Optional so an older server
+     * and a newer frontend interoperate -- absent means "say nothing".
+     */
+    appVersion?: string;
 }
 
 /** Envelope shape returned by GET /api/config. */

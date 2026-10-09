@@ -5,8 +5,10 @@ import {
     buildLocalHttpsPanel,
     certExpiryNotice,
     certSubjectMismatchNotice,
+    fetchMkcertInstalled,
     firefoxTrustNote,
     listenerStatusNotice,
+    recheckLocalHttpsMkcert,
     subPrivilegedPortNotice,
     trustInstructionsFor,
 } from '../tabs/ServerTab';
@@ -173,8 +175,8 @@ describe('local https panel', () => {
         expect(notice.textContent).toMatch(/must resolve on every machine/i);
     });
 
-    it('shows a persistent allowedHosts note for the current hostname cert, not just at generate time (I9)', async () => {
-        // Unlike the transient "added X to allowedHosts" alert (which fires
+    it('shows a persistent accepted-name note for the current hostname cert, not just at generate time (I9)', async () => {
+        // Unlike the transient "now also accepts connections addressed to X" alert (which fires
         // once, at generate time), this reflects the STANDING fact that a
         // hostname-kind cert's subject is registered -- true on every load,
         // not only right after a generate.
@@ -200,7 +202,10 @@ describe('local https panel', () => {
         const notice = elHost.querySelector<HTMLElement>('[data-tls-allowed-host-notice]')!;
         expect(notice.hidden).toBe(false);
         expect(notice.textContent).toContain(payload);
-        expect(notice.textContent).toMatch(/registered in allowedHosts/i);
+        expect(notice.textContent).toBe(`this server accepts connections addressed to ${payload}.`);
+        // It says what happens, not the name of a config.json key no control in
+        // Settings is labelled with.
+        expect(notice.textContent).not.toMatch(/allowedHosts/i);
         expect(notice.querySelector('img')).toBeNull();
     });
 
@@ -220,7 +225,7 @@ describe('local https panel', () => {
         expect(subjectEl.textContent).toBe('<img src=x onerror=alert(1)>');
     });
 
-    it('always shows the allowedHosts note (notification 2), for both ip and hostname subjects', async () => {
+    it('always shows the subject guide (notification 2), for both ip and hostname subjects', async () => {
         const elIp = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
@@ -234,8 +239,19 @@ describe('local https panel', () => {
             candidateIps: ['192.168.86.3'],
             platform: 'win32',
         });
-        expect(elIp.textContent).toMatch(/allowedHosts takes domain names only/i);
-        expect(elHost.textContent).toMatch(/allowedHosts takes domain names only/i);
+        const guide =
+            'ip address: other devices reach this computer by its address on your network. ' +
+            'hostname: use a name your network or dns resolves to this computer.';
+        for (const el of [elIp, elHost]) {
+            const note = el.querySelector<HTMLElement>('[data-tls-subject-guide]');
+            expect(note).not.toBeNull();
+            expect(note!.hidden).toBe(false);
+            expect(note!.textContent).toBe(guide);
+        }
+        // The old note named `allowedHosts`, a config.json key no control here
+        // is labelled with (0.5.1). It must not come back in another wording.
+        expect(elIp.textContent).not.toMatch(/allowedHosts takes domain names only/i);
+        expect(elIp.querySelector('[data-tls-subject-guide]')!.textContent).not.toMatch(/allowedHosts/i);
     });
 
     it('warns inside 30 days of expiry (notification 9), silent well outside it', async () => {
@@ -338,6 +354,183 @@ describe('local https panel', () => {
     });
 });
 
+// 0.5.1: generate needs mkcert, which is installed from the Dependencies tab.
+// While the server says it is not installed, generate and the subject controls
+// that only feed it are disabled, with a line pointing at the Dependencies tab.
+describe('local https panel: generate waits for mkcert', () => {
+    const mkcertRow = (installedVersion: string | null, status?: string) => ({
+        name: 'mkcert',
+        displayName: 'mkcert',
+        installedVersion,
+        status: status ?? (installedVersion === null ? 'not-installed' : 'up-to-date'),
+    });
+
+    /** Answers /api/dependencies from `deps()` (re-read every call), everything else with the TLS state. */
+    function routedFetch(deps: () => unknown, tls: unknown = state()) {
+        return vi.fn(async (url: string) =>
+            url === '/api/dependencies' ? new Response(JSON.stringify(deps())) : new Response(JSON.stringify(tls)),
+        ) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+    }
+
+    function controls(el: HTMLElement) {
+        return {
+            generate: el.querySelector<HTMLButtonElement>('[data-tls-generate]')!,
+            subject: el.querySelector<HTMLInputElement>('[data-tls-subject]')!,
+            candidates: el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!,
+            radios: [...el.querySelectorAll<HTMLInputElement>('input[name="tls-subject-kind"]')],
+            notice: el.querySelector<HTMLElement>('[data-tls-mkcert-notice]')!,
+            revoke: el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!,
+            download: el.querySelector<HTMLButtonElement>('[data-tls-download]')!,
+            port: el.querySelector<HTMLInputElement>('[data-tls-port]')!,
+            portOk: el.querySelector<HTMLButtonElement>('[data-tls-port-ok]')!,
+            exposureOk: el.querySelector<HTMLButtonElement>('[data-exposure-ok]')!,
+        };
+    }
+
+    it('disables generate and the subject controls, and says to install mkcert, while it is not installed', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(null)]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(true);
+        expect(c.subject.disabled).toBe(true);
+        expect(c.candidates.disabled).toBe(true);
+        expect(c.radios).toHaveLength(2);
+        for (const r of c.radios) expect(r.disabled).toBe(true);
+        expect(c.notice.hidden).toBe(false);
+        expect(c.notice.textContent).toBe('install mkcert in the dependencies tab to generate a certificate.');
+    });
+
+    it('leaves what needs no mkcert alone: the https port, the exposure ok, and revoke / download for a certificate that exists', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(null)], state({ status: 'ready', subject: '192.168.86.3' })),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(true);
+        expect(c.revoke.disabled).toBe(false);
+        expect(c.download.disabled).toBe(false);
+        expect(c.port.disabled).toBe(false);
+        expect(c.portOk.disabled).toBe(false);
+        expect(c.exposureOk.disabled).toBe(false);
+    });
+
+    it('a click on the disabled generate sends nothing', async () => {
+        const fetchFn = routedFetch(() => [mkcertRow(null)]);
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        // Bypass the disabled attribute: the handler's own guard is what is under test.
+        controls(el).generate.dispatchEvent(new MouseEvent('click'));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(fetchFn.mock.calls.map((c) => c[0])).not.toContain('/api/tls/generate');
+    });
+
+    it('enables everything, with no notice, when mkcert is installed', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow('v0.1.0')]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(false);
+        expect(c.subject.disabled).toBe(false);
+        for (const r of c.radios) expect(r.disabled).toBe(false);
+        expect(c.notice.hidden).toBe(true);
+    });
+
+    it.each([
+        ['the read is refused', () => new Response('{"error":"forbidden"}', { status: 403 })],
+        [
+            'the list does not name mkcert',
+            () => new Response(JSON.stringify([{ name: 'adb', installedVersion: null }])),
+        ],
+        ['the read fails', () => Promise.reject(new TypeError('Failed to fetch'))],
+    ])('fails open, generate enabled, when %s', async (_label, answer) => {
+        const fetchFn = vi.fn(async (url: string) =>
+            url === '/api/dependencies' ? answer() : new Response(JSON.stringify(state())),
+        ) as unknown as typeof fetch;
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        expect(controls(el).generate.disabled).toBe(false);
+        expect(controls(el).notice.hidden).toBe(true);
+    });
+
+    it('does not hold the panel back while /api/dependencies hangs, and gates once it answers', async () => {
+        let answer: (r: Response) => void = () => undefined;
+        const fetchFn = vi.fn((url: string) =>
+            url === '/api/dependencies'
+                ? new Promise<Response>((r) => {
+                      answer = r;
+                  })
+                : Promise.resolve(new Response(JSON.stringify(state()))),
+        ) as unknown as typeof fetch;
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        expect(controls(el).generate.disabled).toBe(false);
+
+        answer(new Response(JSON.stringify([mkcertRow(null)])));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(controls(el).generate.disabled).toBe(true);
+        expect(controls(el).notice.hidden).toBe(false);
+    });
+
+    it('a re-check after mkcert is installed enables generate and withdraws the notice', async () => {
+        let installed: string | null = null;
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(installed)]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(controls(el).generate.disabled).toBe(true);
+
+        installed = 'v0.1.0';
+        await recheckLocalHttpsMkcert(el);
+
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(false);
+        expect(c.subject.disabled).toBe(false);
+        for (const r of c.radios) expect(r.disabled).toBe(false);
+        expect(c.notice.hidden).toBe(true);
+    });
+
+    it('fetchMkcertInstalled reads installedVersion, and answers null when it cannot tell', async () => {
+        const answer = (body: unknown, status = 200) =>
+            vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+        expect(await fetchMkcertInstalled(answer([mkcertRow('v0.1.0')]))).toBe(true);
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null)]))).toBe(false);
+        expect(await fetchMkcertInstalled(answer({ status: 'none' }))).toBeNull();
+        expect(await fetchMkcertInstalled(answer([], 403))).toBeNull();
+        expect(await fetchMkcertInstalled(answer([]))).toBeNull();
+    });
+
+    it('fetchMkcertInstalled says "not installed" only when the server said so', async () => {
+        const answer = (body: unknown) =>
+            vi.fn(async () => new Response(JSON.stringify(body))) as unknown as typeof fetch;
+        // The server's own verdicts.
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null, 'not-installed')]))).toBe(false);
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null, 'error')]))).toBe(false);
+        // The boot window: before checkAll reaches mkcert every dependency is
+        // `unknown` with a null version. That is "cannot tell", not "missing".
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null, 'unknown')]))).toBeNull();
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null, 'checking')]))).toBeNull();
+        expect(await fetchMkcertInstalled(answer([{ name: 'mkcert', installedVersion: null }]))).toBeNull();
+        // An installed version wins whatever the status says.
+        expect(await fetchMkcertInstalled(answer([mkcertRow('v0.1.0', 'error')]))).toBe(true);
+    });
+
+    it('in the boot window (mkcert still unknown) generate stays enabled and no notice is shown', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(null, 'unknown')]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(false);
+        expect(c.subject.disabled).toBe(false);
+        expect(c.notice.hidden).toBe(true);
+    });
+});
+
 describe('pure notification/instruction helpers', () => {
     it('trustInstructionsFor gives distinct, per-platform guidance and a generic fallback', () => {
         const win = trustInstructionsFor('win32');
@@ -426,7 +619,7 @@ describe('local https panel — transient alert convention', () => {
         }
     });
 
-    it('names the allowedHosts edit in the same alert, echoing the subject via textContent (I11)', async () => {
+    it('states the accepted-name edit in the same alert, echoing the subject via textContent (I11)', async () => {
         // A real markup-shaped payload, not `devices.lan` -- a plain hostname
         // contains no markup, so a version that swapped this composition's
         // `textContent` for `innerHTML` would pass against it just as well.
@@ -452,7 +645,10 @@ describe('local https panel — transient alert convention', () => {
         // Paired: the payload was actually rendered as text (ruling out the
         // trivial pass where it is dropped entirely)...
         expect(alert.textContent).toContain(payload);
-        expect(alert.textContent).toMatch(/added .* to allowedhosts/i);
+        expect(alert.textContent).toBe(
+            `certificate generated. this server now also accepts connections addressed to ${payload}.`,
+        );
+        expect(alert.textContent).not.toMatch(/allowedHosts/i);
         // ...AND it never became markup.
         expect(alert.querySelector('img')).toBeNull();
     });

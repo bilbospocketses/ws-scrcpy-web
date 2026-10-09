@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { DependencyStatus } from '../../common/DependencyTypes';
+import { type DependencyInfo, DependencyStatus } from '../../common/DependencyTypes';
 import { requireOperator } from '../auth/requireOperator';
 import type { DependencyManager } from '../DependencyManager';
 import { refuseInContainer } from './containerGuard';
@@ -71,12 +71,25 @@ export class DependencyApi {
                 const installed: string[] = [];
                 const stillMissing: string[] = [];
                 const errors: Record<string, string> = {};
+                // An install-on-first-use dependency (`deferInstall`, mkcert) is
+                // not part of the first-run bootstrap this route retries:
+                // autoInstallMissing never downloads it, and the first-run
+                // banner, this route's caller, leaves it out of what it calls
+                // incomplete (FirstRunBanner.pendingDeps). Not being installed
+                // is its normal state, so it is not "still missing" -- counting
+                // it made every host without mkcert answer success:false. Its
+                // own install, and that install's failure, belong to the
+                // Dependencies panel's install button (performUpdate). A check
+                // run here that leaves it in Error still lands in `errors`
+                // below, like any other dependency's.
+                const notYetNeeded = (info: DependencyInfo): boolean =>
+                    info.deferInstall === true && info.installedVersion === null;
                 for (const info of await this.manager.getAll()) {
                     const prev = before.get(info.name);
                     if (prev?.installedVersion === null && info.installedVersion !== null) {
                         installed.push(info.name);
                     }
-                    if (info.installedVersion === null) {
+                    if (info.installedVersion === null && !notYetNeeded(info)) {
                         stillMissing.push(info.name);
                     }
                     if (info.status === DependencyStatus.Error && info.errorMessage) {
@@ -93,7 +106,12 @@ export class DependencyApi {
                 // version check succeeded. Say what actually happened
                 // (finding 9.7).
                 for (const info of await this.manager.getAll()) {
-                    if (info.installedVersion === null && info.latestVersion === null && !errors[info.name]) {
+                    if (
+                        info.installedVersion === null &&
+                        info.latestVersion === null &&
+                        !notYetNeeded(info) &&
+                        !errors[info.name]
+                    ) {
                         errors[info.name] =
                             'latest version unknown, so no install was attempted — check network access and retry';
                     }

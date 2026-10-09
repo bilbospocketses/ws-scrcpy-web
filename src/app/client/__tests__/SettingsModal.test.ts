@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as AdminConfirmModalModule from '../AdminConfirmModal';
 import { authClient } from '../AuthClient';
+import { DEPENDENCY_INSTALLED_EVENT } from '../DependencyPanel';
 import * as ResetConfirmModalModule from '../ResetConfirmModal';
 import { SettingsModal } from '../SettingsModal';
 import * as SettingsServiceModule from '../SettingsService';
@@ -731,6 +732,158 @@ describe('Settings section restructure (beta.62)', () => {
         // Embedding sits beside Users because both answer "who may do what with this server".
         // No standalone App section (folded into Server in beta.62).
         expect(headings).toEqual(['Users', 'Embedding', 'Updates', 'Service', 'Server']);
+    });
+});
+
+describe('the running version in the dialog footer', () => {
+    /** A fetch that answers /api/config with the given runtime, and stalls the rest. */
+    function stubConfig(runtime: Record<string, unknown>): void {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string) => {
+                if (url === '/api/config') {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve({ config: { webPort: 8000 }, runtime }),
+                    });
+                }
+                return new Promise(() => undefined);
+            }),
+        );
+    }
+
+    const base = { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000 };
+
+    beforeEach(() => {
+        document.body.replaceChildren();
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        stubMeAsAdmin();
+    });
+
+    function footerParts(): { version: HTMLElement | null; status: HTMLElement | null; save: HTMLElement | null } {
+        const footer = document.querySelector<HTMLElement>('dialog.settings-modal .modal-footer');
+        expect(footer, 'footer missing').not.toBeNull();
+        return {
+            version: footer!.querySelector<HTMLElement>('.settings-version'),
+            status: footer!.querySelector<HTMLElement>('.settings-save-status'),
+            save: footer!.querySelector<HTMLElement>('button.settings-save'),
+        };
+    }
+
+    it('names the version from /api/config, on the Save line, to the left of everything else', async () => {
+        stubConfig({ ...base, appVersion: '0.5.1-beta.1' });
+        new SettingsModal();
+        await flush();
+
+        const { version, status, save } = footerParts();
+        expect(version).not.toBeNull();
+        expect(version!.hidden).toBe(false);
+        expect(version!.textContent).toBe('v0.5.1-beta.1');
+        // Left-aligned means FIRST in the row: version, then the refusal line,
+        // then Save on the right.
+        const kids = Array.from(version!.parentElement!.children);
+        expect(kids.indexOf(version!)).toBe(0);
+        expect(kids.indexOf(version!)).toBeLessThan(kids.indexOf(status!));
+        expect(kids.indexOf(status!)).toBeLessThan(kids.indexOf(save!));
+    });
+
+    it('shows nothing until the version is known (no "vundefined" while /api/config is pending)', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(() => new Promise(() => undefined)),
+        );
+        new SettingsModal();
+        await flush();
+
+        const { version } = footerParts();
+        expect(version).not.toBeNull();
+        expect(version!.hidden).toBe(true);
+        expect(version!.textContent).toBe('');
+    });
+
+    it('stays hidden when the server does not send a version (an older server)', async () => {
+        stubConfig(base);
+        new SettingsModal();
+        await flush();
+
+        const { version } = footerParts();
+        expect(version!.hidden).toBe(true);
+        expect(version!.textContent).not.toContain('undefined');
+    });
+
+    it('still names the version in a container, where the Updates tab is replaced by a note', async () => {
+        stubConfig({ ...base, docker: true, appVersion: '0.5.1' });
+        new SettingsModal();
+        await flush();
+
+        expect(document.querySelector('[data-docker-note="updates"]')).not.toBeNull();
+        const { version } = footerParts();
+        expect(version!.hidden).toBe(false);
+        expect(version!.textContent).toBe('v0.5.1');
+    });
+});
+
+describe('an mkcert install in Dependencies enables generate on the Server tab', () => {
+    beforeEach(() => {
+        document.body.replaceChildren();
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        stubMeAsAdmin();
+    });
+
+    it('re-checks mkcert when the Dependencies panel announces an install', async () => {
+        let mkcertVersion: string | null = null;
+        const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string) => {
+                if (url === '/api/config') {
+                    return json({
+                        config: { webPort: 8000 },
+                        runtime: { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000 },
+                    });
+                }
+                if (url === '/api/service/status') {
+                    return json({ supported: true, status: 'not-installed', platform: 'win32' });
+                }
+                if (url === '/api/tls/state') return json({ status: 'none', candidateIps: ['192.168.86.3'] });
+                if (url === '/api/dependencies') {
+                    return json([
+                        {
+                            name: 'mkcert',
+                            displayName: 'mkcert',
+                            installedVersion: mkcertVersion,
+                            latestVersion: 'v0.1.0',
+                            status: mkcertVersion === null ? 'not-installed' : 'up-to-date',
+                            description: 'd',
+                            requiresRestart: false,
+                            canUpdate: true,
+                            deferInstall: true,
+                        },
+                    ]);
+                }
+                return new Promise(() => undefined);
+            }),
+        );
+
+        new SettingsModal();
+        for (let i = 0; i < 5; i++) await flush();
+
+        const generate = (): HTMLButtonElement | null =>
+            document.querySelector<HTMLButtonElement>('dialog.settings-modal [data-tls-generate]');
+        expect(generate(), 'Local HTTPS panel not built').not.toBeNull();
+        expect(generate()!.disabled).toBe(true);
+
+        // What the panel sends after a successful install, from inside the dialog.
+        mkcertVersion = 'v0.1.0';
+        document
+            .querySelector('dialog.settings-modal [data-settings-tab="dependencies"]')!
+            .dispatchEvent(new CustomEvent(DEPENDENCY_INSTALLED_EVENT, { bubbles: true, detail: { name: 'mkcert' } }));
+        for (let i = 0; i < 3; i++) await flush();
+
+        expect(generate()!.disabled).toBe(false);
+        expect(document.querySelector<HTMLElement>('dialog.settings-modal [data-tls-mkcert-notice]')!.hidden).toBe(
+            true,
+        );
     });
 });
 

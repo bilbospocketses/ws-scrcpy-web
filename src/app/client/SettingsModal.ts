@@ -3,6 +3,7 @@ import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { authClient, type Role } from './AuthClient';
 import { adminApiReachable, canSeeSection } from './adminGate';
+import { DEPENDENCY_INSTALLED_EVENT } from './DependencyPanel';
 import { closeIntent } from './settings/closeIntent';
 import { type BatchResult, runSave } from './settings/SaveRunner';
 import { SettingsSummaryModal } from './settings/SettingsSummaryModal';
@@ -12,6 +13,7 @@ import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } fro
 import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
 import {
     applyServerContainerMode,
+    applyServerDependencyInstalled,
     applyServerServiceStatus,
     buildServerTab,
     refreshServer,
@@ -506,6 +508,12 @@ export class SettingsModal extends Modal {
         // deferred to a microtask, so it reads this safely.
         this.initialTab = options?.initialTab ?? null;
         this.dialog.classList.add('settings-modal');
+        // An install from the Dependencies tab bubbles up to here; the Server
+        // tab's Local HTTPS panel re-checks mkcert so generate enables without
+        // a reopen. On the dialog itself, so the listener goes with it.
+        this.dialog.addEventListener(DEPENDENCY_INSTALLED_EVENT, () => {
+            if (this.serverTabEl) void applyServerDependencyInstalled(this.serverTabEl);
+        });
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
         // Resolve the current user's role first so admin-only sections can be gated.
         // Fail-open: on a me() error treat as admin (preserves today's full view;
@@ -545,6 +553,9 @@ export class SettingsModal extends Modal {
                     // that shows MORE, so a transient error cannot silently strip a
                     // host user's Service and Updates sections.
                     const runtime = await runtimeProbe;
+                    // Before the container branch returns: a container runs a
+                    // version too, and the footer is the only place it shows.
+                    this.showVersion(runtime?.appVersion);
                     this.docker = runtime?.docker === true;
                     // Item 81: an admin whose calls would 403 regardless (a
                     // container with no opt-out) must not have these fired at them
@@ -702,26 +713,43 @@ export class SettingsModal extends Modal {
     }
 
     /**
-     * The dialog-level footer: one Save for every tab, plus the line that
-     * reports a refused batch.
+     * The dialog-level footer: the running version on the left, one Save for
+     * every tab on the right, and between them the line that reports a refused
+     * batch.
      *
      * Built during `super()`, so it may touch no instance field — hence the
-     * `saveBtn`/`saveStatus` getters below, which re-find the nodes rather than
+     * `saveBtn`/`saveStatus`/`versionEl` getters below, which re-find the nodes rather than
      * caching them in fields that class-field init would clobber
      * (ES2022 useDefineForClassFields, the same hazard as `fillBody`).
      */
     protected override buildFooter(): HTMLElement | null {
         const footer = document.createElement('div');
-        footer.style.cssText = 'display: flex; gap: 8px; align-items: center; justify-content: flex-end;';
+        footer.style.cssText = 'display: flex; gap: 8px; align-items: center;';
 
+        // The running version, left-aligned on Save's line. Hidden until the
+        // runtime probe names it (`showVersion`), so the dialog never reads
+        // "vundefined"; a server too old to send it leaves the line hidden.
+        // Never shrinks, so a long refusal beside it wraps instead of eating it.
+        const version = document.createElement('span');
+        version.className = 'settings-version';
+        version.style.cssText =
+            'flex: 0 0 auto; white-space: nowrap; font-size: 13px; color: var(--text-color-light, #888);';
+        version.hidden = true;
+        footer.appendChild(version);
+
+        // Between the version and Save, taking the room that is left and
+        // wrapping inside it: a refused batch can name several settings.
         const status = document.createElement('p');
         status.className = 'settings-status settings-save-status';
-        status.style.cssText = 'margin: 0; margin-right: auto;';
+        status.style.cssText = 'margin: 0; flex: 1 1 auto; min-width: 0;';
         status.hidden = true;
         footer.appendChild(status);
 
         const save = document.createElement('button');
         save.type = 'button';
+        // `margin-left: auto` keeps Save on the right edge whether or not the
+        // status line is showing (when it is hidden nothing else fills the row).
+        save.style.marginLeft = 'auto';
         save.className = 'settings-btn settings-btn-primary settings-save';
         save.textContent = 'save';
         // Starts disabled: a freshly opened dialog has staged nothing, and the
@@ -740,6 +768,25 @@ export class SettingsModal extends Modal {
 
     private get saveStatus(): HTMLElement | null {
         return this.frameEl.querySelector<HTMLElement>('.settings-save-status');
+    }
+
+    private get versionEl(): HTMLElement | null {
+        return this.frameEl.querySelector<HTMLElement>('.settings-version');
+    }
+
+    /**
+     * Name the running version in the footer, or keep the line hidden when the
+     * server did not say (an older server, or a failed probe). Read off the
+     * /api/config runtime envelope, which every caller gets — container, dev
+     * build and remote admin alike — unlike /api/updates/status (see
+     * `FirstRunStatus.appVersion`).
+     */
+    private showVersion(version: string | undefined): void {
+        const el = this.versionEl;
+        if (!el) return;
+        const known = typeof version === 'string' && version.length > 0;
+        el.textContent = known ? `v${version}` : '';
+        el.hidden = !known;
     }
 
     private setSaveStatus(msg: string, isError: boolean): void {

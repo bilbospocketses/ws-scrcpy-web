@@ -149,6 +149,24 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                     // name, and still has to report its real state. Skipping it
                     // would let the row vanish without this test noticing.
                     await expect(installed).toHaveText('Not installed');
+                    // 0.5.1: nothing has asked this server to install it, so it
+                    // reads "Not installed" with an install button, where it
+                    // used to show an Unknown pill and nothing to press. Not
+                    // clicked here: the shared server must not fetch mkcert.
+                    //
+                    // Its status is the server's: `not-installed` when its
+                    // version lookup answered or was refused (rate limit), but
+                    // `error`, with the reason, when the lookup got no answer
+                    // or the answer was refused as untrustworthy (21.12). The
+                    // install button is there either way, as the retry.
+                    if (dep.deferInstall) {
+                        expect(['not-installed', 'error'], `${dep.name}.status`).toContain(dep.status);
+                        await expect(row.locator('.dep-status .dep-badge')).toHaveText(
+                            dep.status === 'error' ? 'Error' : 'Not installed',
+                        );
+                        await expect(row.locator('button[data-install]')).toHaveText('install');
+                        await expect(row.locator('button[data-install]')).toBeEnabled();
+                    }
                 } else {
                     await expect(installed).toHaveText(dep.installedVersion);
                     await expect(installed).not.toHaveText('Not installed');
@@ -182,7 +200,8 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                     // rate-limit status -- the app's own record says so, so there
                     // is no later quota query to race the hourly reset. The app is
                     // in the state it deliberately reports for a refused lookup
-                    // (Unknown when installed, Error when not;
+                    // (Unknown when installed, Error when not, NotInstalled
+                    // for a not-installed first-use dependency since 0.5.1;
                     // DependencyManager.checkLatest) and the Latest cell names the
                     // refusal. Assert THAT, and say so, rather than fail the build
                     // on GitHub's quota. A null for any other reason -- a failed

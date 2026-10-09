@@ -112,20 +112,191 @@ pub(crate) fn decide_crash_restart(
     }
 }
 
-/// Returns true when a helper-refresh error is the benign "text file busy"
-/// (ETXTBSY) case: the destination helper is currently being executed, so it
-/// can't be overwritten right now — and need not be. This is expected on
-/// service start, where the operation-server helper IS the running launcher
-/// binary; the live copy stays in use until it exits, then the next supervisor
-/// start refreshes it. That path logs at WARN, not ERROR. Any other failure
-/// (permissions, missing source, disk full) is a genuine ERROR.
-fn refresh_error_is_benign_busy(e: &std::io::Error) -> bool {
-    // ETXTBSY is errno 26 on Linux/Unix. Matching the raw errno keeps this on
-    // stable Rust (vs the newer ErrorKind::ExecutableFileBusy) without pulling
-    // in libc/rustix for a single constant. On Windows a running binary
-    // surfaces a different code, so this correctly stays ERROR there — the
-    // ETXTBSY refresh case is Linux service-mode only.
-    e.raw_os_error() == Some(26)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LogLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+/// Item 173: how often, and for how long, the supervisor retries a helper
+/// refresh in the background when the helper was busy AND could not be moved
+/// aside (Windows). Moving aside is the normal after-update path and needs no
+/// retry; this covers a rename that failed too (another process holding the
+/// file without delete sharing, briefly). The budget outlasts the longest an
+/// earlier operation-server can run: a 10 s bind retry, its 30 s lifetime and
+/// a 15 s wind-down.
+pub(crate) const HELPER_REFRESH_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const HELPER_REFRESH_RETRY_BUDGET: Duration = Duration::from_secs(120);
+
+/// Pure: the log line for a startup helper refresh, and whether to start the
+/// background retry. `windows` is the platform, a parameter so both rules are
+/// tested on either host.
+///
+/// - Copied: INFO.
+/// - Moved aside (Windows, item 173): INFO. The previous update's
+///   operation-server still running from the helper is the routine
+///   after-update case, not a failure: it was renamed and the new build is in
+///   place before Node starts.
+/// - Busy and not movable, Windows: WARN, and retry until it frees up.
+/// - Busy on Linux (ETXTBSY): WARN, no retry. That is service start, where
+///   the helper IS the running launcher; the next start refreshes it.
+/// - Anything else (permissions, missing source, disk full): ERROR.
+pub(crate) fn describe_helper_refresh(
+    result: &std::io::Result<crate::operation_server::HelperRefresh>,
+    windows: bool,
+) -> (LogLevel, String, bool) {
+    use crate::operation_server::{HelperRefresh, is_helper_busy_code};
+    match result {
+        Ok(HelperRefresh::Copied(p)) => (
+            LogLevel::Info,
+            format!("supervisor: refreshed operation-server helper at {p:?}"),
+            false,
+        ),
+        Ok(HelperRefresh::MovedAside { path, aside }) => (
+            LogLevel::Info,
+            format!(
+                "supervisor: refreshed operation-server helper at {path:?}; the previous operation-server was still running from it (expected after an update), so that copy was moved to {aside:?} and is deleted on a later start"
+            ),
+            false,
+        ),
+        Err(e) if windows && is_helper_busy_code(e.raw_os_error(), true) => (
+            LogLevel::Warn,
+            format!(
+                "supervisor: operation-server helper is in use and could not be moved aside; retrying every {}s for up to {}s: {e}",
+                HELPER_REFRESH_RETRY_INTERVAL.as_secs(),
+                HELPER_REFRESH_RETRY_BUDGET.as_secs()
+            ),
+            true,
+        ),
+        Err(e) if is_helper_busy_code(e.raw_os_error(), windows) => (
+            LogLevel::Warn,
+            format!(
+                "supervisor: operation-server helper is in use (text file busy); keeping the running copy — it refreshes on the next start when free: {e}"
+            ),
+            false,
+        ),
+        Err(e) => (
+            LogLevel::Error,
+            format!(
+                "supervisor: could not refresh operation-server helper (operation-server spawn will use stale binary or fail): {e}"
+            ),
+            false,
+        ),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum HelperRetryOutcome {
+    /// A retry succeeded `after` this long.
+    Refreshed { after: Duration },
+    /// A retry failed with something other than busy: a genuine error.
+    Failed(String),
+    /// Still busy when the budget ran out.
+    GaveUp,
+}
+
+/// The background retry, with the attempt and the sleep as parameters so it is
+/// tested without a real helper or real time.
+pub(crate) fn retry_helper_refresh(
+    mut attempt: impl FnMut() -> std::io::Result<crate::operation_server::HelperRefresh>,
+    mut sleep: impl FnMut(Duration),
+    interval: Duration,
+    budget: Duration,
+) -> HelperRetryOutcome {
+    let mut waited = Duration::ZERO;
+    while waited < budget {
+        sleep(interval);
+        waited += interval;
+        match attempt() {
+            Ok(_) => return HelperRetryOutcome::Refreshed { after: waited },
+            Err(e) if crate::operation_server::helper_busy_error(&e) => continue,
+            Err(e) => return HelperRetryOutcome::Failed(e.to_string()),
+        }
+    }
+    HelperRetryOutcome::GaveUp
+}
+
+pub(crate) fn log_at(level: LogLevel, line: &str) {
+    match level {
+        LogLevel::Info => log::info(line),
+        LogLevel::Warn => log::warn(line),
+        LogLevel::Error => log::error(line),
+    }
+}
+
+/// Pure: the log line for how the background retry ended.
+pub(crate) fn describe_helper_retry(
+    outcome: &HelperRetryOutcome,
+    budget: Duration,
+) -> (LogLevel, String) {
+    match outcome {
+        HelperRetryOutcome::Refreshed { after } => (
+            LogLevel::Info,
+            format!(
+                "supervisor: refreshed operation-server helper after {}s, once it was free",
+                after.as_secs()
+            ),
+        ),
+        HelperRetryOutcome::Failed(e) => (
+            LogLevel::Error,
+            format!(
+                "supervisor: could not refresh operation-server helper (operation-server spawn will use stale binary or fail): {e}"
+            ),
+        ),
+        HelperRetryOutcome::GaveUp => (
+            LogLevel::Error,
+            format!(
+                "supervisor: operation-server helper still in use after {}s; the next update or uninstall runs the previous build's helper until the launcher restarts",
+                budget.as_secs()
+            ),
+        ),
+    }
+}
+
+/// Refresh the operation-server helper at startup, log what happened, and on
+/// Windows start the bounded background retry if it is busy and immovable.
+fn refresh_operation_server_helper(data_root: &Path) {
+    let data_root = data_root.to_path_buf();
+    let _ = start_helper_refresh(
+        move || crate::operation_server::refresh_helper_binary(&data_root),
+        cfg!(windows),
+        thread::sleep,
+        HELPER_REFRESH_RETRY_INTERVAL,
+        HELPER_REFRESH_RETRY_BUDGET,
+        log_at,
+    );
+}
+
+/// The glue of `refresh_operation_server_helper`, with every outside effect as
+/// a parameter: one refresh now, its line logged, and -- only when
+/// `describe_helper_refresh` asks for it -- the retry on a background thread,
+/// whose handle is returned so a test can join it. Every retry goes through the
+/// same `refresh`, so it stages and renames exactly as the first one does and
+/// never leaves a half-written helper for a spawn to catch.
+pub(crate) fn start_helper_refresh<R, S, L>(
+    mut refresh: R,
+    windows: bool,
+    sleep: S,
+    interval: Duration,
+    budget: Duration,
+    log: L,
+) -> Option<thread::JoinHandle<()>>
+where
+    R: FnMut() -> std::io::Result<crate::operation_server::HelperRefresh> + Send + 'static,
+    S: FnMut(Duration) + Send + 'static,
+    L: Fn(LogLevel, &str) + Send + 'static,
+{
+    let (level, line, retry) = describe_helper_refresh(&refresh(), windows);
+    log(level, &line);
+    if !retry {
+        return None;
+    }
+    Some(thread::spawn(move || {
+        let outcome = retry_helper_refresh(refresh, sleep, interval, budget);
+        let (level, line) = describe_helper_retry(&outcome, budget);
+        log(level, &line);
+    }))
 }
 
 /// Main supervisor entry. Returns the final exit code alongside the tray-supervisor
@@ -247,17 +418,21 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
         // §32 Part 5f — refresh unconditionally (not just in service
         // mode). Local-mode launcher also spawns the helper on apply-
         // update path, so the helper must be current there too.
-        match crate::operation_server::refresh_helper_binary(&paths.data_root) {
-            Ok(p) => log::info(&format!(
-                "supervisor: refreshed operation-server helper at {p:?}"
-            )),
-            Err(e) if refresh_error_is_benign_busy(&e) => log::warn(&format!(
-                "supervisor: operation-server helper is in use (text file busy); keeping the running copy — it refreshes on the next start when free: {e}"
-            )),
-            Err(e) => log::error(&format!(
-                "supervisor: could not refresh operation-server helper (operation-server spawn will use stale binary or fail): {e}"
-            )),
-        }
+        //
+        // Item 173: after an update the previous operation-server is still
+        // running from the helper here. On Windows it is moved aside and the
+        // new build renamed into its place, so the helper matches `current/`
+        // BEFORE Node is spawned below -- and Node (UpdateService,
+        // ServiceApi) or the post-stop bat it arms are the only things that
+        // spawn the helper. So the next update or uninstall never runs the
+        // previous build's helper, and a change to the apply-update-verify
+        // manifest Node writes cannot meet an older helper that cannot read
+        // it. (Only if the move-aside ALSO fails does a stale helper remain,
+        // for the bounded retry's window; an older helper given a manifest it
+        // cannot parse refuses to extract -- `read_apply_verify_manifest`
+        // fails closed -- so even then the update fails safely, not
+        // half-applied.)
+        refresh_operation_server_helper(&paths.data_root);
 
         // §32 Part 5 — coordinate with any in-flight operation-server.
         // In service-mode, the operation-server binds the SAME port as
@@ -771,29 +946,257 @@ mod tests {
         assert_eq!(decide_restart(75, true), Some(RestartReason::RestartMarker));
     }
 
-    #[test]
-    fn benign_busy_detects_etxtbsy() {
-        // ETXTBSY (errno 26): the helper binary is currently executing —
-        // benign (the running copy stays in use), so it logs at WARN.
-        let e = std::io::Error::from_raw_os_error(26);
-        assert!(refresh_error_is_benign_busy(&e));
+    // ---- Item 173: the startup helper refresh ----
+
+    use crate::operation_server::HelperRefresh;
+
+    fn os_err(code: i32) -> std::io::Result<HelperRefresh> {
+        Err(std::io::Error::from_raw_os_error(code))
+    }
+
+    /// The busy code of the platform these tests run on.
+    fn host_busy() -> i32 {
+        if cfg!(windows) { 32 } else { 26 }
     }
 
     #[test]
-    fn benign_busy_rejects_other_os_errors() {
-        // EACCES (13) and ENOENT (2) are genuine refresh failures → ERROR.
-        assert!(!refresh_error_is_benign_busy(
-            &std::io::Error::from_raw_os_error(13)
-        ));
-        assert!(!refresh_error_is_benign_busy(
-            &std::io::Error::from_raw_os_error(2)
-        ));
+    fn helper_refresh_that_moved_a_running_copy_aside_is_info_not_error() {
+        // The 2026-10-08 report: every Windows upgrade-path install logged
+        // ERROR here for the routine after-update case.
+        let (level, line, retry) = describe_helper_refresh(
+            &Ok(HelperRefresh::MovedAside {
+                path: "h.exe".into(),
+                aside: "h.exe.stale-1".into(),
+            }),
+            true,
+        );
+        assert_eq!(level, LogLevel::Info);
+        assert!(line.contains("moved to"), "{line}");
+        assert!(!retry);
+        let (level, _, retry) =
+            describe_helper_refresh(&Ok(HelperRefresh::Copied("h.exe".into())), true);
+        assert_eq!((level, retry), (LogLevel::Info, false));
     }
 
     #[test]
-    fn benign_busy_rejects_non_os_error() {
-        // A synthesized error with no raw OS code is not benign.
-        let e = std::io::Error::other("synthetic");
-        assert!(!refresh_error_is_benign_busy(&e));
+    fn windows_sharing_violation_is_expected_busy_and_retried() {
+        let (level, line, retry) = describe_helper_refresh(&os_err(32), true);
+        assert_eq!(level, LogLevel::Warn);
+        assert!(retry, "the helper must end up matching current/");
+        assert!(line.contains("retrying"), "{line}");
+    }
+
+    #[test]
+    fn linux_etxtbsy_stays_warn_without_a_retry() {
+        // Service start on Linux: the helper IS the running launcher.
+        let (level, line, retry) = describe_helper_refresh(&os_err(26), false);
+        assert_eq!(level, LogLevel::Warn);
+        assert!(line.contains("text file busy"), "{line}");
+        assert!(!retry);
+    }
+
+    #[test]
+    fn the_other_platforms_busy_code_and_real_failures_stay_error() {
+        // 26 on Windows and 32 (EPIPE) on Linux are not "busy"; access denied
+        // (5 / 13), not found (2) and a non-OS error are genuine failures.
+        for (code, windows) in [
+            (26, true),
+            (32, false),
+            (5, true),
+            (13, false),
+            (2, true),
+            (2, false),
+        ] {
+            let (level, _, retry) = describe_helper_refresh(&os_err(code), windows);
+            assert_eq!(
+                (level, retry),
+                (LogLevel::Error, false),
+                "code {code} windows={windows}"
+            );
+        }
+        let (level, _, _) = describe_helper_refresh(&Err(std::io::Error::other("synthetic")), true);
+        assert_eq!(level, LogLevel::Error);
+    }
+
+    #[test]
+    fn retry_refreshes_once_the_old_helper_has_exited() {
+        // Busy for three attempts (the old operation-server's remaining
+        // lifetime), then free.
+        let mut attempts = 0;
+        let mut slept = Duration::ZERO;
+        let outcome = retry_helper_refresh(
+            || {
+                attempts += 1;
+                if attempts <= 3 {
+                    os_err(host_busy())
+                } else {
+                    Ok(HelperRefresh::Copied("h.exe".into()))
+                }
+            },
+            |d| slept += d,
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+        );
+        assert_eq!(
+            outcome,
+            HelperRetryOutcome::Refreshed {
+                after: HELPER_REFRESH_RETRY_INTERVAL * 4
+            }
+        );
+        assert_eq!(attempts, 4);
+        assert_eq!(slept, HELPER_REFRESH_RETRY_INTERVAL * 4);
+    }
+
+    #[test]
+    fn retry_gives_up_when_the_budget_runs_out() {
+        let mut attempts = 0u32;
+        let outcome = retry_helper_refresh(
+            || {
+                attempts += 1;
+                os_err(host_busy())
+            },
+            |_| {},
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+        );
+        assert_eq!(outcome, HelperRetryOutcome::GaveUp);
+        assert_eq!(
+            attempts,
+            (HELPER_REFRESH_RETRY_BUDGET.as_secs() / HELPER_REFRESH_RETRY_INTERVAL.as_secs())
+                as u32
+        );
+    }
+
+    #[test]
+    fn retry_stops_at_a_genuine_error() {
+        let mut attempts = 0;
+        let outcome = retry_helper_refresh(
+            || {
+                attempts += 1;
+                if attempts == 1 {
+                    os_err(host_busy())
+                } else {
+                    os_err(5)
+                }
+            },
+            |_| {},
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+        );
+        assert!(
+            matches!(outcome, HelperRetryOutcome::Failed(_)),
+            "{outcome:?}"
+        );
+        assert_eq!(attempts, 2);
+    }
+
+    // ---- M8: the glue in refresh_operation_server_helper ----
+
+    type Logged = std::sync::Arc<std::sync::Mutex<Vec<(LogLevel, String)>>>;
+
+    fn recorder() -> (Logged, impl Fn(LogLevel, &str) + Send + 'static) {
+        let logged: Logged = Default::default();
+        let sink = logged.clone();
+        (logged, move |level, line: &str| {
+            sink.lock().unwrap().push((level, line.to_string()))
+        })
+    }
+
+    #[test]
+    fn helper_glue_starts_no_thread_when_the_refresh_worked() {
+        let (logged, log) = recorder();
+        let handle = start_helper_refresh(
+            || Ok(HelperRefresh::Copied("h.exe".into())),
+            cfg!(windows),
+            |_| panic!("no retry, no sleep"),
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+            log,
+        );
+        assert!(handle.is_none());
+        let logged = logged.lock().unwrap();
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0].0, LogLevel::Info);
+        assert!(
+            logged[0].1.contains("refreshed operation-server helper at"),
+            "{}",
+            logged[0].1
+        );
+    }
+
+    #[test]
+    fn helper_glue_starts_no_thread_for_a_genuine_error() {
+        let (logged, log) = recorder();
+        let handle = start_helper_refresh(
+            || os_err(5),
+            cfg!(windows),
+            |_| panic!("no retry, no sleep"),
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+            log,
+        );
+        assert!(handle.is_none());
+        assert_eq!(logged.lock().unwrap()[0].0, LogLevel::Error);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn helper_glue_retries_a_busy_helper_on_a_thread_and_logs_how_it_ended() {
+        use std::sync::atomic::AtomicU32;
+        let attempts = Arc::new(AtomicU32::new(0));
+        let counter = attempts.clone();
+        let (logged, log) = recorder();
+        // Busy for the first refresh and two retries, then free.
+        let handle = start_helper_refresh(
+            move || {
+                if counter.fetch_add(1, Ordering::SeqCst) < 3 {
+                    os_err(32)
+                } else {
+                    Ok(HelperRefresh::Copied("h.exe".into()))
+                }
+            },
+            true,
+            |_| {},
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+            log,
+        )
+        .expect("a busy helper starts the retry thread");
+        handle.join().unwrap();
+        assert_eq!(attempts.load(Ordering::SeqCst), 4);
+        let logged = logged.lock().unwrap();
+        assert_eq!(logged.len(), 2, "{logged:?}");
+        assert_eq!(logged[0].0, LogLevel::Warn);
+        assert!(logged[0].1.contains("retrying"), "{}", logged[0].1);
+        assert_eq!(logged[1].0, LogLevel::Info);
+        assert!(logged[1].1.contains("after 6s"), "{}", logged[1].1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn helper_glue_logs_an_error_when_the_retry_gives_up() {
+        let (logged, log) = recorder();
+        let handle = start_helper_refresh(
+            || os_err(32),
+            true,
+            |_| {},
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+            log,
+        )
+        .expect("thread");
+        handle.join().unwrap();
+        let logged = logged.lock().unwrap();
+        assert_eq!(logged.last().unwrap().0, LogLevel::Error);
+        assert!(
+            logged.last().unwrap().1.contains("still in use after 120s"),
+            "{logged:?}"
+        );
+    }
+
+    #[test]
+    fn retry_budget_outlasts_an_old_operation_server() {
+        // 10 s bind retry + 30 s lifetime + 15 s wind-down = 55 s.
+        assert!(HELPER_REFRESH_RETRY_BUDGET >= Duration::from_secs(55));
     }
 }

@@ -1,4 +1,5 @@
 import type { AppConfigEnvelope } from '../../../../common/ConfigEvents';
+import { DependencyStatus } from '../../../../common/DependencyTypes';
 import type { ServiceStatusResponse } from '../../../../common/ServiceEvents';
 import { authClient } from '../../AuthClient';
 import { canSeeSection } from '../../adminGate';
@@ -525,6 +526,61 @@ function setNotice(el: HTMLParagraphElement, text: string | null): void {
     el.hidden = text === null;
 }
 
+/**
+ * Is mkcert installed, by `GET /api/dependencies`'s own record of it (the same
+ * read the Dependencies tab makes)? `null` when that cannot be told -- the read
+ * failed or was refused, or the list does not name mkcert -- and the panel
+ * then FAILS OPEN, leaving generate enabled: `POST /api/tls/generate` still
+ * installs a missing mkcert itself (createCertService.ts's backstop), so a
+ * wrong "enabled" costs a slower first generate, while a wrong "disabled"
+ * would lock a working feature behind a read that happened to fail.
+ *
+ * "Not installed" (false) needs the server to have SAID so: status
+ * `not-installed`, or `error` with no installed version. A null
+ * `installedVersion` alone is not enough: until the boot's `checkAll` reaches
+ * mkcert, every dependency reads `unknown` with a null version
+ * (DependencyManager's initial state), and treating that as missing disabled
+ * generate while the Dependencies tab showed Unknown with no install button to
+ * fix it. `unknown`, `checking` and the rest answer null, and the panel fails
+ * open.
+ */
+export async function fetchMkcertInstalled(fetchFn: typeof fetch): Promise<boolean | null> {
+    try {
+        const res = await fetchFn('/api/dependencies');
+        if (!res.ok) return null;
+        const deps = (await res.json()) as unknown;
+        if (!Array.isArray(deps)) return null;
+        const mkcert = (deps as Array<{ name?: unknown; installedVersion?: unknown; status?: unknown }>).find(
+            (d) => d !== null && typeof d === 'object' && d.name === 'mkcert',
+        );
+        if (!mkcert) return null;
+        if (typeof mkcert.installedVersion === 'string' && mkcert.installedVersion.length > 0) return true;
+        if (mkcert.status === DependencyStatus.NotInstalled) return false;
+        if (mkcert.status === DependencyStatus.Error && (mkcert.installedVersion ?? null) === null) return false;
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/** The line shown beside generate while mkcert is not installed. */
+export const MKCERT_MISSING_NOTICE = 'install mkcert in the dependencies tab to generate a certificate.';
+
+/**
+ * Per-panel re-entry for "mkcert may have just been installed", keyed by the
+ * section `buildLocalHttpsPanel` returned -- the same WeakMap shape as the tab
+ * modules' `refreshers`, so the function keeps returning a plain HTMLElement.
+ */
+const mkcertRecheckers = new WeakMap<HTMLElement, () => Promise<void>>();
+
+/**
+ * Re-read mkcert's install state for a Local HTTPS panel and re-apply the
+ * generate gating. A no-op for an element `buildLocalHttpsPanel` did not build.
+ */
+export async function recheckLocalHttpsMkcert(panel: HTMLElement): Promise<void> {
+    await mkcertRecheckers.get(panel)?.();
+}
+
 async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
     try {
         const res = await fetchFn('/api/tls/state');
@@ -579,8 +635,24 @@ async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
  *   5-second flash for "your certificate expires in three weeks".
  */
 export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<HTMLElement> {
+    // Both reads go out together, but the panel waits for the TLS state only.
+    // Blocking it on /api/dependencies as well would let a hung or slow
+    // dependency read hide the whole panel, certificate controls and all. If
+    // the mkcert read has answered by the time the state has (the usual case:
+    // both are local reads), the gate is applied before the panel is returned;
+    // otherwise it is applied when the read answers (see the end of this
+    // function), and until then generate stays enabled -- the fail-open
+    // direction, see fetchMkcertInstalled.
+    const mkcertRead = fetchMkcertInstalled(deps.fetchFn);
     const initialState = await fetchTlsState(deps.fetchFn);
+    const PENDING = Symbol('pending');
+    const earlyMkcert = await Promise.race([mkcertRead, Promise.resolve(PENDING)]);
     let currentState: TlsCertState = initialState;
+    // `true` only when the server SAYS mkcert is not installed.
+    let mkcertMissing = earlyMkcert === false;
+    // Bumped by every re-check, so the build-time read answering late cannot
+    // overwrite a newer answer.
+    let mkcertReadSeq = 0;
     const candidateIpsFor = (s: TlsCertState): string[] => s.candidateIps ?? deps.candidateIps;
 
     const { section, body } = buildSection('Local HTTPS');
@@ -685,15 +757,20 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     subjectFrag.appendChild(candidateSelect);
     body.appendChild(buildRow('certificate subject', subjectFrag));
 
-    // Notification 2 — ALWAYS shown, beside the subject controls (not
-    // conditional on anything: it is a standing fact about allowedHosts, not
-    // a mistake state).
-    const allowedHostsNotice = document.createElement('p');
-    allowedHostsNotice.className = 'settings-status';
-    allowedHostsNotice.style.gridColumn = '1 / -1';
-    allowedHostsNotice.textContent =
-        'allowedHosts takes domain names only. raw ip addresses already work, and it does not affect streaming.';
-    body.appendChild(allowedHostsNotice);
+    // Notification 2 — ALWAYS shown, beside the subject controls: what each
+    // subject choice means, in the terms of the two radios just above. Until
+    // 0.5.1 this was a sentence about `allowedHosts`, a config.json key no
+    // control in this dialog is labelled with, so it explained nothing to
+    // anyone choosing between the radios. Not conditional on anything: it is
+    // guidance for the choice, not a mistake state.
+    const subjectGuideNotice = document.createElement('p');
+    subjectGuideNotice.className = 'settings-status';
+    subjectGuideNotice.style.gridColumn = '1 / -1';
+    subjectGuideNotice.setAttribute('data-tls-subject-guide', '');
+    subjectGuideNotice.textContent =
+        'ip address: other devices reach this computer by its address on your network. ' +
+        'hostname: use a name your network or dns resolves to this computer.';
+    body.appendChild(subjectGuideNotice);
 
     // ---- port -- POSTs to POST /api/tls/https-port (task 11); see the class
     //      doc's port-field paragraph for why this is its own route rather
@@ -796,6 +873,28 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     certActionsFrag.appendChild(generateBtn);
     certActionsFrag.appendChild(revokeBtn);
     body.appendChild(buildRow('certificate', certActionsFrag));
+
+    // 0.5.1: generate needs mkcert, and installing it is the Dependencies
+    // tab's job (its install button). Until then generate and the subject
+    // controls that only feed it are disabled, and this says why. Revoke,
+    // the ca download, the https port and the exposure modes need no mkcert,
+    // so they stay as they are.
+    const mkcertNotice = buildNoticeRow();
+    mkcertNotice.setAttribute('data-tls-mkcert-notice', '');
+    body.appendChild(mkcertNotice);
+
+    // A generate in flight holds its button down; a re-check landing
+    // meanwhile must not release it.
+    let generating = false;
+    function applyMkcertGate(): void {
+        generateBtn.disabled = mkcertMissing || generating;
+        ipRadio.disabled = mkcertMissing;
+        hostRadio.disabled = mkcertMissing;
+        subjectInput.disabled = mkcertMissing;
+        candidateSelect.disabled = mkcertMissing;
+        setNotice(mkcertNotice, mkcertMissing ? MKCERT_MISSING_NOTICE : null);
+    }
+    applyMkcertGate();
 
     // ---- current-certificate summary + notifications 3, 4, 8, 9 ----
     const certSummary = document.createElement('p');
@@ -957,14 +1056,19 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         // reflects the CURRENT state every time, not just right after a
         // generate. Text-node + span, same pattern as `certSummary`'s
         // subject -- `state.subject` is round-tripped user input.
+        // The wording says what the registration DOES for the user: the
+        // Host-header guard (`isHostAllowed`, security/originGuard.ts) lets
+        // in requests addressed to that name. Until 0.5.1 it named `allowedHosts`, a config.json key
+        // with no control anywhere in Settings.
         allowedHostPersistentNotice.textContent = '';
         if (state.kind === 'hostname' && state.subject) {
             const hostSpan = document.createElement('span');
             hostSpan.textContent = state.subject;
-            allowedHostPersistentNotice.appendChild(hostSpan);
             allowedHostPersistentNotice.appendChild(
-                document.createTextNode(' is registered in allowedHosts, so this server answers to that name.'),
+                document.createTextNode('this server accepts connections addressed to '),
             );
+            allowedHostPersistentNotice.appendChild(hostSpan);
+            allowedHostPersistentNotice.appendChild(document.createTextNode('.'));
             allowedHostPersistentNotice.hidden = false;
         } else {
             allowedHostPersistentNotice.hidden = true;
@@ -1016,12 +1120,16 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
 
     generateBtn.addEventListener('click', () => {
         void (async () => {
+            // The button is disabled while mkcert is missing; a click queued
+            // before the gate applied must not send anyway.
+            if (mkcertMissing) return;
             const kind: 'ip' | 'hostname' = hostRadio.checked ? 'hostname' : 'ip';
             const value = subjectInput.value.trim();
             if (!value) {
                 showTransientAlert('error', 'enter an ip address or hostname first.');
                 return;
             }
+            generating = true;
             generateBtn.disabled = true;
             const prevText = generateBtn.textContent;
             generateBtn.textContent = 'generating…';
@@ -1054,14 +1162,12 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // Resolved Decision 2: state the allowedHosts edit plainly
                 // rather than mutate it silently. This is a one-time outcome
                 // of THIS generate, not a standing condition, so it belongs in
-                // the transient alert, not a persistent in-panel notice.
+                // the transient alert, not a persistent in-panel notice. It
+                // says what the edit does for the user, not the config key's
+                // name (no control in Settings is labelled allowedHosts).
                 const allowedHostSuffix: Array<string | { echo: string }> =
                     data.allowedHostAdded && data.subject
-                        ? [
-                              ' added ',
-                              { echo: data.subject },
-                              ' to allowedHosts so the server will answer to that name.',
-                          ]
+                        ? [' this server now also accepts connections addressed to ', { echo: data.subject }, '.']
                         : [];
                 // C1/NF-1: the review's headline case -- a fresh certificate
                 // with no restart yet has no HTTPS listener genuinely
@@ -1102,7 +1208,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
             } catch {
                 showTransientAlert('error', 'could not reach the server.');
             } finally {
-                generateBtn.disabled = false;
+                generating = false;
+                generateBtn.disabled = mkcertMissing;
                 generateBtn.textContent = prevText;
             }
         })();
@@ -1386,6 +1493,22 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     body.appendChild(transientAlert);
 
     renderCertState(initialState);
+    // Unknown (`null`) leaves the gate where it is: a failed read is no news.
+    function applyMkcertAnswer(installed: boolean | null): void {
+        if (installed === null) return;
+        mkcertMissing = !installed;
+        applyMkcertGate();
+    }
+    if (earlyMkcert === PENDING) {
+        void mkcertRead.then((installed) => {
+            if (mkcertReadSeq === 0) applyMkcertAnswer(installed);
+        });
+    }
+    mkcertRecheckers.set(section, async () => {
+        const seq = ++mkcertReadSeq;
+        const installed = await fetchMkcertInstalled(deps.fetchFn);
+        if (seq === mkcertReadSeq) applyMkcertAnswer(installed);
+    });
     return section;
 }
 
@@ -1639,6 +1762,7 @@ async function onStopServerExit(btn: HTMLButtonElement, askChild: AskChild): Pro
 const refreshers = new WeakMap<HTMLElement, () => Promise<void>>();
 const serviceStatusAppliers = new WeakMap<HTMLElement, (resp: ServiceStatusResponse) => void>();
 const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
+const dependencyInstalledAppliers = new WeakMap<HTMLElement, () => Promise<void>>();
 
 /**
  * The Server tab — the consolidated app/server section (beta.62 folded the old
@@ -1681,6 +1805,9 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // (see its call below) -- platform isn't known synchronously at tab-build
     // time, same category as docker/adminReachable per TabContext's own doc.
     let localHttpsBuilt = false;
+    // The built Local HTTPS panel, once `buildLocalHttpsPanel` has resolved;
+    // what a dependency install re-checks mkcert on (applyDependencyInstalled).
+    let localHttpsPanel: HTMLElement | null = null;
     // Set by applyContainerMode. Read at click time by the reset control, which
     // is built before container mode is known.
     let containerMode = false;
@@ -2114,15 +2241,37 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
                 platform,
                 askChild: ctx.askChild,
             }).then((panel) => {
+                localHttpsPanel = panel;
                 localHttpsContainer?.replaceChildren(panel);
             });
         }
     }
 
+    /**
+     * A dependency was just installed or updated from the Dependencies tab.
+     * The Local HTTPS panel re-reads mkcert's state, so an mkcert installed
+     * there enables generate without reopening Settings. Nothing to do before
+     * the panel exists: it reads mkcert's state when it is built.
+     */
+    async function applyDependencyInstalled(): Promise<void> {
+        if (localHttpsPanel) await recheckLocalHttpsMkcert(localHttpsPanel);
+    }
+
     refreshers.set(section, runRefresh);
     serviceStatusAppliers.set(section, applyServiceStatus);
     containerModeAppliers.set(section, applyContainerMode);
+    dependencyInstalledAppliers.set(section, applyDependencyInstalled);
     return section;
+}
+
+/**
+ * Tell a Server tab that a dependency was installed or updated (the
+ * Dependencies panel's `DEPENDENCY_INSTALLED_EVENT`), so its Local HTTPS panel
+ * re-checks whether mkcert is installed. A no-op if `section` was never built
+ * through `buildServerTab`.
+ */
+export async function applyServerDependencyInstalled(section: HTMLElement): Promise<void> {
+    await dependencyInstalledAppliers.get(section)?.();
 }
 
 /**

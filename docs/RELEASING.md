@@ -118,17 +118,59 @@ Release artifacts are currently unsigned. SignPath Foundation declined the OSS a
 
 Until then, the `prepare` job in `release.yml` always resolves `signing_mode=unsigned` (gated on a generic `SIGNING_API_TOKEN` secret that doesn't exist yet) and the dormant signer steps in `build-windows` / `build-linux` are commented out as scaffolding. The `--unsigned` warning block is auto-prepended to release notes by `scripts/extract-changelog.mjs`.
 
-## Manual update-flow test
+## Manual update-flow test (Windows)
 
-Before any major release, run the local v1 -> v2 update flow test on Windows to catch packaging regressions that CI can't see:
+Before a release, update a real install to a build of the commit you are about to ship, over a local feed, to catch packaging problems CI cannot see. This is the recipe that worked on 2026-10-08, on four Windows upgrade-path test installs. It is not a CI gate: it needs a real install, a real browser and someone watching.
+
+Run it on a test machine or guest, **not** on a machine whose real install you care about: the MSI is per-machine, so it installs over whatever is there, and the update replaces it.
+
+**1. Install the build to update FROM.** Use an earlier release's MSI from GitHub Releases (smoke-test.md's pre-flight names the current "update from" build), in the mode you want to test, local or service. The build you make below must have a higher version than this one.
+
+**2. Build the target in a detached worktree outside the repo.** Never in your main working tree: the version bump below rewrites `package.json`, `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`, and none of that may reach a commit. The steps mirror the `build-windows` job in `.github/workflows/release.yml`; check them against it before you run them, because that job is the source of truth.
 
 ```pwsh
-pwsh scripts/test-update-flow.ps1
+$repo    = 'C:\path\to\ws-scrcpy-web'      # your clone
+$wt      = 'C:\wsw-update-test\build'       # outside the repo; deleted at the end
+$feed    = 'C:\wsw-update-test\feed'        # the local feed folder
+$ver     = '0.5.1-beta.2'                   # higher than the installed build
+$channel = 'beta'                           # the channel the installed FROM build reads (step 3)
+
+git -C $repo worktree add --detach $wt <commit>
+node "$wt\scripts\bump-version.mjs" $ver
+node "$wt\scripts\vpk-path.mjs"
+npm --prefix $wt ci --omit=dev
+npm --prefix $wt run build
+cargo build --release --workspace --manifest-path "$wt\Cargo.toml" --config "$wt\.cargo\config.toml"
+node "$wt\scripts\fetch-servy.mjs"
+node "$wt\scripts\fetch-node.mjs"
+node "$wt\scripts\stage-publish.mjs"
+$vpk = node "$wt\scripts\vpk-path.mjs"
+& $vpk pack --packId WsScrcpyWeb --packVersion $ver --packDir "$wt\publish" `
+    --mainExe ws-scrcpy-web-launcher.exe --packTitle "ws-scrcpy-web" `
+    --packAuthors "ws-scrcpy-web contributors" --channel $channel `
+    --icon "$wt\assets\tray-icon.ico" --msi --instLocation PerMachine -o $feed
 ```
 
-The script is interactive -- it builds v0.1.0 + v0.1.1 in a sandbox, walks you through installing v0.1.0, sets `VELOPACK_FEED_URL` to a local feed, and asserts `<install-root>\sq.version` reads `0.1.1` after you click "Check now" + "Apply" in the browser.
+What each part guards against:
 
-This is intentionally NOT a CI gate -- it requires a real install, a real browser, and a real user. It's a release-time smoke test, not a regression test.
+- **`--config "$wt\.cargo\config.toml"`.** Cargo finds `.cargo/config.toml` from the directory you run it in, not from `--manifest-path`, so without it the exes are built without `+crt-static` and need the Visual C++ runtime, which a clean Windows install does not have.
+- **`fetch-node.mjs`.** It stages the bundled Node runtime the first run starts from. A package without it is not the package users get.
+- **`--channel`.** Pack with the channel the installed **FROM** build reads, not the one the new version would get. With `VELOPACK_FEED_URL` set, the app skips its release lookup and the beta-reads-stable-too rule (`feedChannels` in `src/server/UpdateService.ts` applies only WITHOUT the override), and Velopack reads exactly one file from the feed: `releases.<channel>.json` for the FROM install's configured channel, the one Settings → Updates shows. That channel follows the installed build's own version unless it was pinned by saving it there. So a `0.5.1-beta.x` install (channel `beta`) updating to a local `0.5.1` packed `--channel stable` finds no update. To test beta → stable, either choose `stable` on the FROM install's Updates tab and save first, or pack the stable version `--channel beta`. (`release.yml` packs by the new version's own channel because, without the override, a beta install reads both feeds.)
+- **`--instLocation PerMachine`.** This is what ships. `Either` is not.
+- **The MSI this writes into `$feed` is not used, and must not be installed.** The update reads only the `.nupkg` and `releases.<channel>.json`. `release.yml` also patches the MSI afterwards so it installs to `C:\Program Files\WsScrcpyWeb` (`scripts/msi-default-programfiles.ps1`, its "Default MSI install dir to Program Files" step), and this recipe skips that step, so this MSI would install to the drive root. To install a build you made yourself as the FROM build, run `./scripts/msi-default-programfiles.ps1 -Msi <msi>` on it first.
+
+Every script in that block locates the repo from its own path, and `npm --prefix` runs the npm scripts in the worktree, so nothing needs `cd` or `Push-Location`.
+
+**3. Point the install at the feed as a plain local path.** `VELOPACK_FEED_URL` is handed to Velopack as it is (`overrideFeed` in `UpdateService.ts`). Velopack reads a local path with its file source and sends any URL to its HTTP downloader (`node_modules/velopack/lib/index.d.ts`, `UpdateSource`), so give it `C:\wsw-update-test\feed`, never `file:///C:/...`.
+
+- **Local mode:** `[Environment]::SetEnvironmentVariable('VELOPACK_FEED_URL', $feed, 'User')`, then exit the app from the tray and start it again from the Start menu, so the new launcher inherits the variable.
+- **Service mode:** the same at **`'Machine'`** scope, from an elevated shell, then restart the computer. The service gets its environment from the service manager, not from your shell, so a variable set only in your session never reaches it.
+
+**4. Update.** Settings → Updates (check that the channel shown is the one you packed with) → check for updates offers `$ver`; apply it. After the restart the Settings footer reads `v$ver`. Then read `launcher.log` for the post-update rows in smoke-test.md (6.8 local, 6.10 service): one tray, the hand-off marker consumed, the operation-server helper refreshed with no error.
+
+**5. Clean up.** Remove the variable (`[Environment]::SetEnvironmentVariable('VELOPACK_FEED_URL', $null, 'User')`, or `'Machine'`) and the worktree (`git -C $repo worktree remove --force $wt`), and delete the feed folder.
+
+Until 0.5.1 this was `scripts/test-update-flow.ps1`. It was removed rather than fixed: it bumped the version in the main working tree, skipped the bundled Node runtime, packed `--channel stable --instLocation Either`, and served the feed as a `file:///` URL, which Velopack 1.2.161 hands to its HTTP downloader. A script that installs over the machine's real install cannot be checked without running that install, and an unchecked one is how the old one went stale.
 
 ## See also
 
