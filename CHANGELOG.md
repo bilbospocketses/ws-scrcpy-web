@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-09
+
 ### Added
 - **CI now fails a pull request that adds British spelling.** `build-and-test` runs the shared gate from [bilbospocketses/american-spelling](https://github.com/bilbospocketses/american-spelling), pinned to v1.0.1 by commit SHA, before any other check. It scans only the lines a branch adds and the branch's commit messages, so existing text is fixed when someone next touches it. A verbatim quote is exempted with `spelling: allow` on its line. Identifiers that must keep their British form, such as a third-party API's own field names, are listed in the gate's central `allow.txt`, not in this repo, and a change there reaches this repo when the pin is bumped. The checkout now fetches full history, because the gate refuses a shallow clone (`.github/workflows/ci.yml`).
 - **Settings → Embedding says when an https page can embed the app.** A line under the **add an embedder** row reads `an https page can only embed this app when this app is served over https too; browsers block an http frame inside an https page. set up local https or a reverse proxy first.` In the Docker image, where Local HTTPS is not supported, it ends `serve this app over https from your reverse proxy first.` instead (`src/app/client/settings/tabs/EmbeddingTab.ts`, `src/app/client/SettingsModal.ts`).
