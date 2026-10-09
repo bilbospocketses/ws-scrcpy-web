@@ -503,6 +503,39 @@ describe('ServerTab: the https port row', () => {
         expect(store.changes().map((c) => [c.id, c.to])).toEqual([['webPort', 8443]]);
     });
 
+    it('refuses an http port staged without a certificate once one appears, and takes it off the stage', async () => {
+        const answers: Answers = { tls: { status: 'none', httpsPort: 8443 } };
+        const { el, httpInput, httpsInput, httpStatus, store } = await built(answers);
+        change(httpInput, '8443');
+        expect(store.changes().map((c) => [c.id, c.to])).toEqual([['webPort', 8443]]);
+
+        // A certificate is generated (TLS_CERT_CHANGED_EVENT -> re-read).
+        answers.tls = { status: 'ready', httpsPort: 8443 };
+        await refreshServerHttps(el);
+        expect(httpStatus.hidden).toBe(false);
+        expect(httpStatus.textContent).toBe(PORT_COLLISION_ERROR);
+        // Not left for Save to send into a 409.
+        expect(store.changes()).toEqual([]);
+        expect(httpInput.value).toBe('8443');
+
+        // Moving the https port away stages the http row's 8443 again (M9).
+        change(httpsInput, '9443');
+        expect(httpStatus.hidden).toBe(true);
+        expect(store.changes().map((c) => [c.id, c.to])).toEqual([
+            ['webPort', 8443],
+            ['httpsPort', 9443],
+        ]);
+    });
+
+    it('leaves an untouched http row alone when the certificate state changes', async () => {
+        const answers: Answers = { tls: { status: 'none', httpsPort: 8443 } };
+        const { el, httpStatus, store } = await built(answers);
+        answers.tls = { status: 'ready', httpsPort: 8443 };
+        await refreshServerHttps(el);
+        expect(httpStatus.hidden).toBe(true);
+        expect(store.changes()).toEqual([]);
+    });
+
     it('lifts the http row refusal when the certificate goes away, and stages its value', async () => {
         const answers: Answers = { tls: { status: 'ready', httpsPort: 8443 } };
         const { el, httpInput, httpStatus, store } = await built(answers);

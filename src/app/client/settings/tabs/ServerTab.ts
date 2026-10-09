@@ -1040,6 +1040,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
             readTlsPortState(),
         ]);
         if (seq !== httpsReadSeq || containerMode) return;
+        const certChanged = tls.ready !== httpsCertReady;
         httpsMkcertInstalled = installed;
         httpsCertReady = tls.ready;
         const open = httpsGateOpen();
@@ -1059,8 +1060,23 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         updateHttpsPrivilegeNotice();
         applyHttpsGate();
         // The equal-ports rule follows the certificate: a refusal on the http
-        // row may no longer hold (or may now), so judge it again.
-        if (httpCollision) commitHttpPort();
+        // row may no longer hold, or a port staged while there was no
+        // certificate may now collide, so judge the row again.
+        if (httpCollision || certChanged) rejudgeHttpPort();
+    }
+
+    /**
+     * Judge the http row again after the equal-ports rule may have changed (a
+     * certificate appeared or went away). Only a row with something at stake
+     * -- a staged port, or a standing collision refusal -- is touched. A staged
+     * port that now collides is refused inline AND taken back off the stage:
+     * left there, Save would send it and the server would answer 409. It comes
+     * back by itself once the https port moves (M9).
+     */
+    function rejudgeHttpPort(): void {
+        const staged = store.changes().find((c) => c.id === WEB_PORT_ID);
+        if (!staged && !httpCollision) return;
+        if (!commitHttpPort() && httpCollision && staged) store.set(WEB_PORT_ID, staged.from);
     }
 
     async function runRefresh(): Promise<void> {
