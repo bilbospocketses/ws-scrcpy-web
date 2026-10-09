@@ -159,7 +159,7 @@ const PKEXEC_127_ERRORS = [/textual authentication agent/i, /refusing to run ele
  * Whether pkexec's exit means the user did not authorize the action (item 160).
  * GNOME's agent exits 126 on a cancel. KDE's (polkit-kde 6.6.4, Fedora 44)
  * exits 127 with "Not authorized", exactly as for a real denial, so the two read
- * alike: "cancelled or not authorized". Every other 127 counts as declined too,
+ * alike: "canceled or not authorized". Every other 127 counts as declined too,
  * unless its stderr names one of the errors above. That keeps working if the
  * "Not authorized" text is translated, which is unmeasured. Pure.
  */
@@ -170,7 +170,7 @@ export function pkexecDeclined(code: number | undefined, stderr: string): boolea
 }
 
 /**
- * What {@link runPkexec} throws when the user cancelled or did not authorize the
+ * What {@link runPkexec} throws when the user canceled or did not authorize the
  * prompt ({@link pkexecDeclined}). Every handler that runs pkexec checks for this
  * type and answers 403 `reason: 'uac-declined'`, the same as a declined UAC
  * prompt on Windows, so the page can say privileges were declined rather than

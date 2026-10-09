@@ -52,7 +52,7 @@ export class ScanProgressChip {
 
     setScanning(checked: number, total: number, foundSoFar: number): void {
         // Once drain has begun (or the chip is terminal), ignore stale progress updates
-        // so they don't overwrite "Finishing active scans…" or "Scan cancelled/complete".
+        // so they don't overwrite "Finishing active scans…" or "Scan canceled/complete".
         if (this.state !== 'scanning') return;
         this.setState('scanning');
         const counter = total > 0 ? ` · ${checked} / ${total}` : '';

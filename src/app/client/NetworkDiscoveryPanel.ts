@@ -392,7 +392,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         } catch {
             // A cancel cannot recall a request already in flight, so BOTH exits
             // need this: without it an errored fetch overwrites "Pairing
-            // cancelled." with a red "Lost contact…" and a restart button.
+            // canceled." with a red "Lost contact…" and a restart button.
             if (!sessionIsLive(session)) {
                 return;
             }
@@ -408,7 +408,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         // The whole point of the cancelled flag. `cancelSession` clears the
         // timer but leaves `current` pointing here, so `isCurrent` still passes:
         // without this line a poll already in flight renders over "Pairing
-        // cancelled." and — worse — schedules another, and since the cancel POST
+        // canceled." and — worse — schedules another, and since the cancel POST
         // swallows a lost request, a session the user stopped could go on to
         // announce "Paired and connected."
         //
@@ -446,7 +446,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         // a cancel that arrives during it.
         //
         // Without `sessionIsLive`'s cancelled half, a cancel during `res.json()`
-        // lets `render` overwrite the "Pairing cancelled." copy and `schedulePoll`
+        // lets `render` overwrite the "Pairing canceled." copy and `schedulePoll`
         // re-arm a session the user stopped — which then goes on to announce
         // "Paired and connected." with the Cancel button already hidden. Same
         // hazard the stale tick had against `PairingService` in Task 4.
