@@ -2,10 +2,11 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
 import { getAppVersion } from '../appVersion';
 import { callerIsLocal, requireOperator, resolveAdminScope } from '../auth/requireOperator';
-import { Config, ConfigValidationError } from '../Config';
+import { Config, ConfigValidationError, validateWebPortInput } from '../Config';
 import { Logger } from '../Logger';
 import { applyUpdaterConfigChange, type UpdaterControls } from '../updaterConfigSync';
 import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
+import { certificateExists, portCollisionRefusal } from './portCollision';
 import { scheduleRestartForPortChange } from './restartRequest';
 import { type SystemServicePortGuardDeps, systemServicePortRefusal } from './systemServicePortGuard';
 import { BodyTooLargeError, readBodyCapped } from './utils';
@@ -25,6 +26,8 @@ export interface ConfigApiOptions extends SystemServicePortGuardDeps {
      * until restart (6.11 follow-up).
      */
     updater?: UpdaterControls;
+    /** As `SettingsBatchApiOptions.certReady`: tests inject whether a certificate exists. */
+    certReady?: () => boolean;
 }
 
 export class ConfigApi {
@@ -99,6 +102,25 @@ export class ConfigApi {
                     res.writeHead(409);
                     res.end(JSON.stringify({ error: refusal, field: 'webPort' }));
                     return true;
+                }
+                // The settings batch's rule, through the one helper both use: a
+                // web port on the https port is refused while a certificate
+                // exists (portCollision.ts). A value `updateAppConfig` would
+                // refuse anyway is left to it, so its 400 still names the field.
+                const webPortValue = (parsed as Record<string, unknown>)['webPort'];
+                const webPortValid = validateWebPortInput(webPortValue);
+                if (webPortValue !== undefined && webPortValid.ok) {
+                    const collision = portCollisionRefusal(
+                        webPortValid.value,
+                        cfg.httpsPort,
+                        this.opts.certReady ?? certificateExists,
+                    );
+                    if (collision) {
+                        log.warn(`PATCH /api/config refused: ${collision}`);
+                        res.writeHead(409);
+                        res.end(JSON.stringify({ error: collision, field: 'webPort' }));
+                        return true;
+                    }
                 }
                 try {
                     const before = cfg.getAppConfig();

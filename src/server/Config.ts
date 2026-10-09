@@ -707,6 +707,17 @@ export function validateHttpsPortInput(raw: unknown): ValidationResult<number> {
 }
 
 /**
+ * Validate a `webPort` for a writer that must refuse it BEFORE applying
+ * anything else (SettingsBatchApi's up-front checks): the same rule
+ * `updateAppConfig` applies through `validateField`, an integer from 1024 to
+ * 65535, with the same message, so a refusal reads the same whichever check
+ * caught it.
+ */
+export function validateWebPortInput(raw: unknown): ValidationResult<number> {
+    return validateField('webPort', raw);
+}
+
+/**
  * The warning for an HTTP listener that landed on the HTTPS port: HTTP wins and
  * the HTTPS entry is dropped for this boot. One text for both places that apply
  * the rule -- Config.buildServers (config.json's webPort) and reconcileWebPort.ts

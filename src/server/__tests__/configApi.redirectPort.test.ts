@@ -102,3 +102,48 @@ describe('PATCH /api/config port change', () => {
         expect(body).not.toHaveProperty('redirectTo');
     });
 });
+
+// The settings batch's equal-ports rule, applied to the other writer of the web
+// port (after 0.5.3): refused only while a certificate exists (portCollision.ts).
+describe('PATCH /api/config webPort on the https port', () => {
+    const patch = async (webPort: unknown, certReady: () => boolean) => {
+        const { req, res, getStatus, getJson } = makeReqRes(
+            'PATCH',
+            '/api/config',
+            { webPort },
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
+        await new ConfigApi({ certReady }).handle(req, res);
+        return { status: getStatus(), body: getJson() as Record<string, unknown> };
+    };
+
+    it('409s naming the field when a certificate exists, and writes nothing', async () => {
+        const dir = setup();
+        const before = fs.readFileSync(path.join(dir, 'config.json'), 'utf-8');
+        const { status, body } = await patch(8443, () => true);
+        expect(status).toBe(409);
+        expect(body).toEqual({ error: 'the http and https ports must differ (both would be 8443)', field: 'webPort' });
+        expect(fs.readFileSync(path.join(dir, 'config.json'), 'utf-8')).toBe(before);
+        expect(fs.existsSync(path.join(dir, '.restart'))).toBe(false);
+    });
+
+    it('accepts 8443 when there is no certificate, as it always did', async () => {
+        const dir = setup();
+        vi.useFakeTimers({ toFake: ['setTimeout'] });
+        vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+        const { status, body } = await patch(8443, () => false);
+        expect(status).toBe(200);
+        expect(body['redirectPort']).toBe(8443);
+        expect(fs.existsSync(path.join(dir, '.restart'))).toBe(true);
+    });
+
+    it('leaves an invalid port to updateAppConfig, whose 400 names the field', async () => {
+        setup();
+        const certReady = vi.fn(() => true);
+        const { status, body } = await patch(80, certReady);
+        expect(status).toBe(400);
+        expect(body['field']).toBe('webPort');
+        expect(certReady).not.toHaveBeenCalled();
+    });
+});

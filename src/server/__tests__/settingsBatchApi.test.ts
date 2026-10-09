@@ -294,20 +294,16 @@ describe('POST /api/settings/batch — webPort restart', () => {
     });
 
     // The per-field Save button that used to pre-screen the port is gone, so a
-    // value `Config.validateField` rejects can now reach this endpoint. It
-    // rejects by THROWING, and the webPort branch used to sit outside the
-    // try/catch that wraps every other change -- so a bad port wrote a
-    // 'completed' audit row for a write that never happened, then threw past
-    // the 400 handler.
-    it('answers 400 for an invalid webPort and leaves the WAL row failed, not completed', async () => {
+    // value `Config.validateField` rejects can reach this endpoint. The webPort
+    // branch once sat outside the try/catch that wraps every other change, so a
+    // bad port wrote a 'completed' audit row for a write that never happened.
+    // Since after 0.5.3 the port is validated before the WAL row, with the same
+    // rule, so the batch's port changes land together or not at all: no row at
+    // all is written for a refused port.
+    it('answers 400 for an invalid webPort before any WAL row, completing nothing', async () => {
         setup();
         const schedule = vi.fn();
         const exit = vi.fn();
-        // Spying on markCompleted is what pins the "AFTER updateAppConfig" half
-        // of the ordering. The final row status alone cannot: `setStatus` is an
-        // unconditional UPDATE (PendingSettingsStore), so a markCompleted call
-        // moved back above the try would be overwritten by the markFailed that
-        // follows, and the row would still read 'failed' below.
         const markCompleted = vi.spyOn(Config.getInstance().db.pendingSettings, 'markCompleted');
         const r = makeReqRes(
             'POST',
@@ -334,13 +330,12 @@ describe('POST /api/settings/batch — webPort restart', () => {
         // Never marked completed at all — not "marked completed then corrected".
         expect(markCompleted).not.toHaveBeenCalled();
 
-        // The row landed in 'failed'. A 'completed' row here would be an audit
-        // trail asserting a write that did not happen.
-        const row = Config.getInstance()
-            .db.sqlite.prepare('SELECT status, error FROM pending_settings ORDER BY id DESC LIMIT 1')
-            .get() as { status: string; error: string } | undefined;
-        expect(row?.status).toBe('failed');
-        expect(row?.error).toBe('webPort: webPort must be an integer between 1024 and 65535');
+        // Refused before the WAL row, like every other value refusal: no row,
+        // so nothing claims a write that did not happen.
+        const rows = Config.getInstance().db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as {
+            n: number;
+        };
+        expect(rows.n).toBe(0);
     });
 
     it('a mid-batch failure marks the row failed and never reaches a later webPort change', async () => {
@@ -402,7 +397,7 @@ describe('POST /api/settings/batch — httpsPort', () => {
         expect(ordered.map((c) => c.id)).toEqual(['channel', 'httpsPort', 'webPort']);
     });
 
-    it('applies a new https port to config.json and schedules one restart, with no redirect', async () => {
+    it('applies a new https port to config.json and schedules one restart, naming the new https port', async () => {
         const dir = setup();
         const schedule = vi.fn();
         const exit = vi.fn();
@@ -410,7 +405,12 @@ describe('POST /api/settings/batch — httpsPort', () => {
         await new SettingsBatchApi({ schedule, exit }).handle(r.req, r.res);
 
         expect(r.getStatus()).toBe(200);
-        expect(r.getJson()).toEqual({ ok: true, applied: ['httpsPort'], restartRequired: true });
+        expect(r.getJson()).toEqual({
+            ok: true,
+            applied: ['httpsPort'],
+            restartRequired: true,
+            redirectHttpsPort: 9443,
+        });
         expect(readConfigFile(dir)['httpsPort']).toBe(9443);
         expect(Config.getInstance().httpsPort).toBe(9443);
         expect(fs.existsSync(path.join(dir, '.restart'))).toBe(true);
@@ -422,7 +422,7 @@ describe('POST /api/settings/batch — httpsPort', () => {
         expect(row?.status).toBe('completed');
     });
 
-    it('schedules ONE restart when both ports move, and redirects to the new http port', async () => {
+    it('schedules ONE restart when both ports move, naming both new ports', async () => {
         const dir = setup();
         const schedule = vi.fn();
         const r = makeReqRes(
@@ -440,6 +440,7 @@ describe('POST /api/settings/batch — httpsPort', () => {
             applied: ['httpsPort', 'webPort'],
             restartRequired: true,
             redirectPort: 8010,
+            redirectHttpsPort: 9443,
         });
         expect(readConfigFile(dir)['httpsPort']).toBe(9443);
         expect(readConfigFile(dir)['webPort']).toBe(8010);
@@ -459,9 +460,10 @@ describe('POST /api/settings/batch — httpsPort', () => {
         await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
 
         expect(r.getStatus()).toBe(200);
-        const body = r.getJson() as { restartRequired: boolean; redirectPort?: number };
+        const body = r.getJson() as { restartRequired: boolean; redirectPort?: number; redirectHttpsPort?: number };
         expect(body.restartRequired).toBe(true);
         expect(body.redirectPort).toBeUndefined();
+        expect(body.redirectHttpsPort).toBe(9443);
         expect(schedule).toHaveBeenCalledTimes(1);
     });
 
@@ -511,76 +513,10 @@ describe('POST /api/settings/batch — httpsPort', () => {
         }
     });
 
-    it('409s an https port equal to the current http port, before anything is applied', async () => {
-        const dir = setup();
-        const schedule = vi.fn();
-        const r = makeReqRes(
-            'POST',
-            '/api/settings/batch',
-            {
-                changes: [{ id: 'autoUpdate', label: 'Automatic updates', from: true, to: false }, httpsChange(8000)],
-            },
-            {},
-            LOOPBACK,
-        );
-        await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
-
-        expect(r.getStatus()).toBe(409);
-        expect(r.getJson()).toEqual({
-            ok: false,
-            applied: [],
-            failed: { id: 'httpsPort', error: 'the http and https ports must differ (both would be 8000)' },
-        });
-        expect(Config.getInstance().getAppConfig().autoUpdate).toBe(true);
-        expect(readConfigFile(dir)['httpsPort']).toBeUndefined();
-        const rows = Config.getInstance().db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as {
-            n: number;
-        };
-        expect(rows.n).toBe(0);
-        expect(schedule).not.toHaveBeenCalled();
-    });
-
-    it('409s a batch whose two port changes collide with each other', async () => {
-        setup();
-        const r = makeReqRes(
-            'POST',
-            '/api/settings/batch',
-            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 9443 }, httpsChange(9443)] },
-            {},
-            LOOPBACK,
-        );
-        await new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn() }).handle(r.req, r.res);
-
-        expect(r.getStatus()).toBe(409);
-        expect((r.getJson() as { failed: { id: string; error: string } }).failed).toEqual({
-            id: 'httpsPort',
-            error: 'the http and https ports must differ (both would be 9443)',
-        });
-        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
-    });
-
-    it('409s a web port moved onto the configured https port', async () => {
-        setup();
-        const schedule = vi.fn();
-        const r = makeReqRes(
-            'POST',
-            '/api/settings/batch',
-            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8443 }] },
-            {},
-            LOOPBACK,
-        );
-        await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
-
-        expect(r.getStatus()).toBe(409);
-        expect((r.getJson() as { failed: { id: string; error: string } }).failed).toEqual({
-            id: 'webPort',
-            error: 'the http and https ports must differ (both would be 8443)',
-        });
-        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
-        expect(schedule).not.toHaveBeenCalled();
-    });
-
-    it('still schedules the restart a written https port needs when the web port after it is refused', async () => {
+    // The port changes in a batch are all-or-nothing: the web port is validated
+    // up front too, so a bad one can no longer strand an https port that was
+    // already written (and its restart).
+    it('refuses {webPort: 80, httpsPort: 9443} with 400 before anything is applied or scheduled', async () => {
         const dir = setup();
         const schedule = vi.fn();
         const r = makeReqRes(
@@ -593,18 +529,162 @@ describe('POST /api/settings/batch — httpsPort', () => {
         await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
 
         expect(r.getStatus()).toBe(400);
-        const body = r.getJson() as {
-            ok: boolean;
-            applied: string[];
-            failed: { id: string };
-            restartRequired?: boolean;
-        };
-        expect(body.applied).toEqual(['httpsPort']);
-        expect(body.failed.id).toBe('webPort');
-        expect(body.restartRequired).toBe(true);
-        expect(readConfigFile(dir)['httpsPort']).toBe(9443);
+        expect(r.getJson()).toEqual({
+            ok: false,
+            applied: [],
+            failed: { id: 'webPort', error: 'webPort must be an integer between 1024 and 65535' },
+        });
+        expect(readConfigFile(dir)['httpsPort']).toBeUndefined();
+        expect(Config.getInstance().httpsPort).toBe(8443);
         expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
-        expect(schedule).toHaveBeenCalledTimes(1);
+        expect(schedule).not.toHaveBeenCalled();
+        expect(fs.existsSync(path.join(dir, '.restart'))).toBe(false);
+        const rows = Config.getInstance().db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as {
+            n: number;
+        };
+        expect(rows.n).toBe(0);
+    });
+
+    it('refuses a string web port up front, so "8443" cannot slip past the equal-ports check', async () => {
+        setup();
+        const certReady = vi.fn(() => true);
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: '8443' }] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn(), certReady }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(400);
+        expect((r.getJson() as { failed: { id: string } }).failed.id).toBe('webPort');
+        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+    });
+
+    describe('equal ports, with a certificate (both listeners run)', () => {
+        const certReady = () => true;
+
+        it('409s an https port equal to the current http port, before anything is applied', async () => {
+            const dir = setup();
+            const schedule = vi.fn();
+            const r = makeReqRes(
+                'POST',
+                '/api/settings/batch',
+                {
+                    changes: [
+                        { id: 'autoUpdate', label: 'Automatic updates', from: true, to: false },
+                        httpsChange(8000),
+                    ],
+                },
+                {},
+                LOOPBACK,
+            );
+            await new SettingsBatchApi({ schedule, exit: vi.fn(), certReady }).handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(409);
+            expect(r.getJson()).toEqual({
+                ok: false,
+                applied: [],
+                failed: { id: 'httpsPort', error: 'the http and https ports must differ (both would be 8000)' },
+            });
+            expect(Config.getInstance().getAppConfig().autoUpdate).toBe(true);
+            expect(readConfigFile(dir)['httpsPort']).toBeUndefined();
+            const rows = Config.getInstance().db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as {
+                n: number;
+            };
+            expect(rows.n).toBe(0);
+            expect(schedule).not.toHaveBeenCalled();
+        });
+
+        it('409s a batch whose two port changes collide with each other', async () => {
+            setup();
+            const r = makeReqRes(
+                'POST',
+                '/api/settings/batch',
+                { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 9443 }, httpsChange(9443)] },
+                {},
+                LOOPBACK,
+            );
+            await new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn(), certReady }).handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(409);
+            expect((r.getJson() as { failed: { id: string; error: string } }).failed).toEqual({
+                id: 'httpsPort',
+                error: 'the http and https ports must differ (both would be 9443)',
+            });
+            expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+        });
+
+        it('409s a web port moved onto the configured https port', async () => {
+            setup();
+            const schedule = vi.fn();
+            const r = makeReqRes(
+                'POST',
+                '/api/settings/batch',
+                { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8443 }] },
+                {},
+                LOOPBACK,
+            );
+            await new SettingsBatchApi({ schedule, exit: vi.fn(), certReady }).handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(409);
+            expect((r.getJson() as { failed: { id: string; error: string } }).failed).toEqual({
+                id: 'webPort',
+                error: 'the http and https ports must differ (both would be 8443)',
+            });
+            expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+            expect(schedule).not.toHaveBeenCalled();
+        });
+    });
+
+    // User decision after 0.5.3: without a certificate there is no https
+    // listener to collide with, so the http port may sit on the configured
+    // https port (8443 by default), as it always could.
+    describe('equal ports, with no certificate', () => {
+        const certReady = () => false;
+
+        it('accepts a web port of 8443, the default https port', async () => {
+            const dir = setup();
+            const schedule = vi.fn();
+            const r = makeReqRes(
+                'POST',
+                '/api/settings/batch',
+                { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8443 }] },
+                {},
+                LOOPBACK,
+            );
+            await new SettingsBatchApi({ schedule, exit: vi.fn(), certReady }).handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(200);
+            expect(r.getJson()).toEqual({ ok: true, applied: ['webPort'], restartRequired: true, redirectPort: 8443 });
+            expect(readConfigFile(dir)['webPort']).toBe(8443);
+            expect(schedule).toHaveBeenCalledTimes(1);
+        });
+
+        it('accepts an https port equal to the http port', async () => {
+            setup();
+            const r = makeReqRes('POST', '/api/settings/batch', { changes: [httpsChange(8000)] }, {}, LOOPBACK);
+            await new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn(), certReady }).handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(200);
+            expect(Config.getInstance().httpsPort).toBe(8000);
+        });
+    });
+
+    it('asks about the certificate only when the ports are equal', async () => {
+        setup();
+        const certReady = vi.fn(() => true);
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn(), certReady }).handle(r.req, r.res);
+        expect(r.getStatus()).toBe(200);
+        expect(certReady).not.toHaveBeenCalled();
     });
 });
 

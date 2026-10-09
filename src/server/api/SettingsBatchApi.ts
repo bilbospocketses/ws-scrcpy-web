@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { FRAME_ANCESTORS_ADD_ID, IPV6_EMBEDDER_ERROR } from '../../common/embedderOrigin';
 import { resolveUserId } from '../auth/currentUser';
 import { requireOperator } from '../auth/requireOperator';
-import { Config, validateHttpsPortInput } from '../Config';
+import { Config, validateHttpsPortInput, validateWebPortInput } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
 import { Logger } from '../Logger';
 import { isIpv6FrameAncestor, parseFrameAncestorOrigin } from '../security/frameGuard';
@@ -10,6 +10,7 @@ import { isLoopback } from '../security/loopback';
 import { applyUpdaterConfigChange, type UpdaterControls } from '../updaterConfigSync';
 import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
 import { EMBED_DECIDED_LOCALLY_ERROR } from './EmbedRequestApi';
+import { certificateExists, portCollisionRefusal } from './portCollision';
 import { scheduleRestartForPortChange } from './restartRequest';
 import { type SystemServicePortGuardDeps, systemServicePortRefusal } from './systemServicePortGuard';
 import { BodyTooLargeError, readBodyCapped } from './utils';
@@ -84,11 +85,6 @@ export function frameAncestorsAddRefusal(to: unknown): string | null {
     return null;
 }
 
-/** The refusal for a batch that would leave the http and https ports equal. */
-export function portCollisionError(port: number): string {
-    return `the http and https ports must differ (both would be ${port})`;
-}
-
 /**
  * `webPort` LAST, always, with `httpsPort` straight before it.
  *
@@ -127,6 +123,13 @@ export interface SettingsBatchApiOptions extends SystemServicePortGuardDeps {
      * not care about the updater should leave it out.
      */
     updater?: UpdaterControls;
+    /**
+     * Does Local HTTPS have a certificate? The equal-ports refusal applies only
+     * then (portCollision.ts). Production leaves it undefined and gets
+     * `certificateExists`, which reads the real certificate store; tests inject
+     * the answer.
+     */
+    certReady?: () => boolean;
 }
 
 export class SettingsBatchApi {
@@ -236,39 +239,52 @@ export class SettingsBatchApi {
 
         const cfg = Config.getInstance();
 
-        // The https port is validated here, before the WAL row and before any
+        // Both ports are validated here, before the WAL row and before any
         // sibling is applied, in the rejected-apply shape the dialog names
-        // ("couldn't save HTTPS port: …"). `validateHttpsPortInput` is the rule
-        // `POST /api/tls/https-port` applies: an integer from 1 to 65535.
+        // ("couldn't save HTTPS port: …"), so the port changes in a batch land
+        // all together or not at all. `validateHttpsPortInput` is the rule
+        // `POST /api/tls/https-port` applies (an integer from 1 to 65535);
+        // `validateWebPortInput` is `updateAppConfig`'s own (1024 to 65535).
+        // Validated values are integers, so a string "8443" cannot slip past
+        // the collision check below by comparing unequal to the number 8443.
+        const refuseInvalid = (id: string, error: string): true => {
+            log.warn(`refusing batch: ${id} ${error}`);
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, applied: [], failed: { id, error } }));
+            return true;
+        };
         let httpsPortTarget: number | null = null;
         if (httpsChange) {
             const validated = validateHttpsPortInput(httpsChange.to);
-            if (!validated.ok) {
-                log.warn(`refusing batch: ${HTTPS_PORT_ID} ${validated.error}`);
-                res.writeHead(400, { 'content-type': 'application/json' });
-                res.end(
-                    JSON.stringify({ ok: false, applied: [], failed: { id: HTTPS_PORT_ID, error: validated.error } }),
-                );
-                return true;
-            }
+            if (!validated.ok) return refuseInvalid(HTTPS_PORT_ID, validated.error);
             httpsPortTarget = validated.value;
         }
-
-        // The two listeners cannot share a port: an http listener on the https
-        // port wins and Local HTTPS is dropped for that boot (Config.buildServers,
-        // `httpsCollisionWarning`). Refused as a whole, before anything is
-        // applied, whichever side of the batch moved -- the dialog refuses it
-        // too, so only a hand-built request reaches this.
         const portChange = changes.find((c) => c.id === 'webPort');
+        let webPortTarget: number | null = null;
+        if (portChange) {
+            const validated = validateWebPortInput(portChange.to);
+            if (!validated.ok) return refuseInvalid('webPort', validated.error);
+            webPortTarget = validated.value;
+        }
+
+        // The two listeners cannot share a port while a certificate exists:
+        // an http listener on the https port wins and Local HTTPS is dropped
+        // for that boot (Config.buildServers, `httpsCollisionWarning`). Refused
+        // as a whole, before anything is applied, whichever side of the batch
+        // moved -- the dialog refuses it too, so only a hand-built request
+        // reaches this. Without a certificate there is no https listener, and
+        // an http port of 8443 is accepted as it always was (portCollision.ts).
         if (httpsChange || portChange) {
-            const webPortAfter = portChange ? portChange.to : cfg.getAppConfig().webPort;
-            const httpsPortAfter = httpsPortTarget ?? cfg.httpsPort;
-            if (webPortAfter === httpsPortAfter) {
+            const collision = portCollisionRefusal(
+                webPortTarget ?? cfg.getAppConfig().webPort,
+                httpsPortTarget ?? cfg.httpsPort,
+                this.seams.certReady ?? certificateExists,
+            );
+            if (collision) {
                 const id = httpsChange ? HTTPS_PORT_ID : 'webPort';
-                const error = portCollisionError(httpsPortAfter);
-                log.warn(`refusing batch: ${error}`);
+                log.warn(`refusing batch: ${collision}`);
                 res.writeHead(409, { 'content-type': 'application/json' });
-                res.end(JSON.stringify({ ok: false, applied: [], failed: { id, error } }));
+                res.end(JSON.stringify({ ok: false, applied: [], failed: { id, error: collision } }));
                 return true;
             }
         }
@@ -329,48 +345,30 @@ export class SettingsBatchApi {
         /**
          * One rejected apply: mark the WAL row failed, answer 400, end the batch.
          *
-         * Shared by both apply paths rather than written twice, so webPort cannot
-         * drift away from the shape every other change already answers with.
-         * `updateAppConfig` validates through `validateField` and THROWS
-         * `ConfigValidationError`; reaching it with a bad value is now possible
-         * from the UI, since the per-field Save that used to pre-screen the port
-         * is gone.
-         */
-        /**
-         * True once this batch has written an https port that differs from the
-         * one configured before it. The https listener is built once at boot
-         * and nothing rebinds it in-process (Config.setHttpsPort), so a moved
-         * https port needs the same restart a moved web port does -- and ONE
-         * restart covers both.
-         */
-        let httpsPortMoved = false;
-
-        /**
-         * A failure after the https port was written: only `webPort` comes after
-         * it (`orderChanges`), so this is a web port the config refused. The new
-         * https port is on disk and is applied, so the restart it needs is still
-         * scheduled rather than left for some later, unrelated restart.
+         * Shared by every apply path rather than written per change, so webPort
+         * cannot drift away from the shape every other change answers with. Both
+         * ports are validated before the WAL row, so this is reached for a port
+         * only by a write that fails (the disk, not the value).
          */
         const failBatch = (id: string, err: unknown): true => {
             const message = err instanceof Error ? err.message : String(err);
             cfg.db.pendingSettings.markFailed(batchId, `${id}: ${message}`);
             log.warn(`batch ${batchId} failed at ${id}: ${message}`);
-            if (httpsPortMoved) {
-                scheduleRestartForPortChange(cfg.restartMarkerPath, log, this.seams);
-            } else {
-                notifyUpdater();
-            }
+            notifyUpdater();
             res.writeHead(400, { 'content-type': 'application/json' });
-            res.end(
-                JSON.stringify({
-                    ok: false,
-                    applied,
-                    failed: { id, error: message },
-                    ...(httpsPortMoved ? { restartRequired: true } : {}),
-                }),
-            );
+            res.end(JSON.stringify({ ok: false, applied, failed: { id, error: message } }));
             return true;
         };
+
+        /**
+         * The https port this batch moved the listener to, or null when it did
+         * not move it. The https listener is built once at boot and nothing
+         * rebinds it in-process (Config.setHttpsPort), so a moved https port
+         * needs the same restart a moved web port does -- and ONE restart covers
+         * both. It is also where a page served over https follows the restart
+         * to (`redirectHttpsPort`).
+         */
+        let httpsPortMovedTo: number | null = null;
 
         for (const change of ordered) {
             if (change.id === HTTPS_PORT_ID) {
@@ -383,13 +381,14 @@ export class SettingsBatchApi {
                     return failBatch(change.id, err);
                 }
                 applied.push(change.id);
-                httpsPortMoved = port !== previous;
+                if (port !== previous) httpsPortMovedTo = port;
                 continue;
             }
             if (change.id === 'webPort') {
                 let result: ReturnType<typeof cfg.updateAppConfig>;
                 try {
-                    result = cfg.updateAppConfig({ webPort: change.to as number });
+                    // Validated before the WAL row, so `webPortTarget` is set.
+                    result = cfg.updateAppConfig({ webPort: webPortTarget as number });
                 } catch (err) {
                     // A rejected port must NOT leave a 'completed' audit row
                     // claiming a write that never happened.
@@ -408,10 +407,11 @@ export class SettingsBatchApi {
                 // the port moved. A 'completed' row written here is inert by
                 // comparison: it describes a write that did happen.
                 cfg.db.pendingSettings.markCompleted(batchId);
-                // One restart whichever port moved. `redirectPort` stays the
-                // web port's alone: the browser follows the http port, and a
-                // moved https port alone leaves it where it is.
-                const restartRequired = result.restartRequired || httpsPortMoved;
+                // One restart whichever port moved. Each moved port is named, so
+                // the page can follow the listener it is served by: http to
+                // `redirectPort`, https to `redirectHttpsPort` (SettingsModal's
+                // `restartRedirectUrl`).
+                const restartRequired = result.restartRequired || httpsPortMovedTo !== null;
                 if (restartRequired) {
                     scheduleRestartForPortChange(cfg.restartMarkerPath, log, this.seams);
                 } else {
@@ -425,6 +425,7 @@ export class SettingsBatchApi {
                         applied,
                         restartRequired,
                         redirectPort: result.restartRequired ? result.config.webPort : undefined,
+                        redirectHttpsPort: httpsPortMovedTo ?? undefined,
                     }),
                 );
                 return true;
@@ -457,11 +458,11 @@ export class SettingsBatchApi {
         }
 
         cfg.db.pendingSettings.markCompleted(batchId);
-        if (httpsPortMoved) {
+        if (httpsPortMovedTo !== null) {
             // Completed first, as on the webPort path: the restart ends the process.
             scheduleRestartForPortChange(cfg.restartMarkerPath, log, this.seams);
             res.writeHead(200, { 'content-type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, applied, restartRequired: true }));
+            res.end(JSON.stringify({ ok: true, applied, restartRequired: true, redirectHttpsPort: httpsPortMovedTo }));
             return true;
         }
         notifyUpdater();
