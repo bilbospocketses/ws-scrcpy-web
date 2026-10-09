@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-09
+
 ### Changed
 - **Spelling in the app and its documentation is American English throughout.** Messages the app shows or logs now read "canceled", "recognize", "initialized" and "behavior": the scan chip's `Scan canceled · N devices found`, the pairing status `Pairing canceled.`, the embed-request prompt, the install, uninstall and machine-wide update refusals after a declined admin prompt, the refusal of a remote embed-request cancel, the stream diagnostics line and the launcher log. The README, SECURITY, PRIVACY, this changelog (past entries included, spelling only) and the developer guides follow the same spelling. Values other programs read are unchanged: the `scan.cancelled` WebSocket message, and the embed-request `cancelled` status and JSON field (`src/app/client/ScanProgressChip.ts`, `src/app/client/NetworkDiscoveryPanel.ts`, `src/app/client/EmbedRequestModal.ts`, `src/app/player/WebCodecsPlayer.ts`, `src/server/api/EmbedRequestApi.ts`, `src/server/api/ServiceApi.ts`, `src/server/service/SystemdClient.ts`, `src/server/pairing/PairingSession.ts`, `src/server/pairing/PairingService.ts`, `src/server/StreamDiagnostics.ts`, `launcher/src/main.rs`).
 
