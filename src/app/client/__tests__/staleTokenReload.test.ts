@@ -38,6 +38,21 @@ describe('probeStaleToken', () => {
         expect(await probeStaleToken(ok as unknown as typeof fetch)).toBe('ok');
     });
 
+    it('still reports a stale token on a WebView without AbortSignal.timeout', async () => {
+        const original = AbortSignal.timeout;
+        // Simulate an older runtime that has no AbortSignal.timeout.
+        (AbortSignal as unknown as { timeout: unknown }).timeout = undefined;
+        try {
+            const stale = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+                expect(init?.signal).toBeInstanceOf(AbortSignal);
+                return json({ error: 'forbidden', reason: 'missing or invalid token' }, 403);
+            });
+            expect(await probeStaleToken(stale as unknown as typeof fetch)).toBe('stale');
+        } finally {
+            AbortSignal.timeout = original;
+        }
+    });
+
     it('another 403, a 5xx, a non-JSON body or no server at all is unknown', async () => {
         const answers: Array<() => Promise<Response>> = [
             async () => json({ error: 'forbidden' }, 403),

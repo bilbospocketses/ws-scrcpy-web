@@ -35,15 +35,25 @@ export async function probeStaleToken(
     fetchFn: typeof fetch = fetch,
     timeoutMs: number = STALE_TOKEN_PROBE_TIMEOUT_MS,
 ): Promise<TokenProbe> {
+    // AbortSignal.timeout is missing from older WebViews; without this fallback
+    // the call would throw and the probe would never report stale.
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-        const res = await fetchFn(STALE_TOKEN_PROBE_URL, {
-            cache: 'no-store',
-            signal: AbortSignal.timeout(timeoutMs),
-        });
+        let signal: AbortSignal;
+        if (typeof AbortSignal.timeout === 'function') {
+            signal = AbortSignal.timeout(timeoutMs);
+        } else {
+            const ctrl = new AbortController();
+            timer = setTimeout(() => ctrl.abort(), timeoutMs);
+            signal = ctrl.signal;
+        }
+        const res = await fetchFn(STALE_TOKEN_PROBE_URL, { cache: 'no-store', signal });
         if (res.ok) return 'ok';
         return isStaleTokenRefusal(res.status, await res.json().catch(() => null)) ? 'stale' : 'unknown';
     } catch {
         return 'unknown';
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
     }
 }
 
