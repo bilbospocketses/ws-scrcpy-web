@@ -487,7 +487,8 @@ test.describe('auth / opt-in login (smoke §18)', () => {
         // in Server, and a role query cannot see into a closed tab — hence the
         // switch rather than a second locator.
         const server = await openSettingsTab(settings, 'Server');
-        await expect(settingsRow(server, 'web port').locator('input[type="number"]')).toHaveCount(1);
+        await expect(settingsRow(server, 'http port').locator('input[type="number"]')).toHaveCount(1);
+        await expect(settingsRow(server, 'https port').locator('input[type="number"]')).toHaveCount(1);
         await expect(settings.getByRole('button', { name: 'stop server & exit' })).toBeAttached();
         await expect(settings.locator('[data-action="change-password"]')).toHaveCount(1);
         await expect(settings.locator('[data-action="logout"]')).toHaveCount(1);
@@ -893,7 +894,8 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await openSettingsTab(settings, 'Server');
             await expect(settings.getByRole('button', { name: 'manage users', exact: true })).toHaveCount(0);
             await expect(settings.getByRole('button', { name: 'disable login (return to open mode)' })).toHaveCount(0);
-            await expect(settings.getByText('web port', { exact: true })).toHaveCount(0);
+            await expect(settings.getByText('http port', { exact: true })).toHaveCount(0);
+            await expect(settings.getByText('https port', { exact: true })).toHaveCount(0);
             await expect(settings.getByRole('button', { name: 'stop server & exit' })).toHaveCount(0);
             await expect(settings.locator('[data-action="change-password"]')).toBeVisible();
             await expect(settings.locator('[data-action="logout"]')).toBeVisible();

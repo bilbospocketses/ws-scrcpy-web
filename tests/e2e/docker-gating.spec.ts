@@ -271,9 +271,11 @@ test.describe('container mode', () => {
     // Row 20.19: the page's container decisions. Each one is asserted against a
     // control that proves the thing it looks for would be there on a host: the
     // update pill's container is in the DOM (hidden) whenever it is mounted, the
-    // web-port row is still BUILT, and the Local HTTPS tab is filled with a note
-    // rather than left on its placeholder.
-    test('@docker 20.19 no update pill, no web-port row, Local HTTPS names the reverse proxy', async ({ page }) => {
+    // http and https port rows are still BUILT, and the Local HTTPS tab is filled
+    // with a note rather than left on its placeholder.
+    test('@docker 20.19 no update pill, no http or https port row, Local HTTPS names the reverse proxy', async ({
+        page,
+    }) => {
         const updatePolls: string[] = [];
         page.on('request', (req) => {
             if (new URL(req.url()).pathname === '/api/updates/status') updatePolls.push(req.url());
@@ -295,10 +297,27 @@ test.describe('container mode', () => {
         // The container decision has run (the same attribute 20.4 / 20.5 wait on).
         await expect(server).toHaveAttribute('data-app-rows-decided', 'container');
 
-        const webPort = settingsRow(server, 'web port');
+        const webPort = settingsRow(server, 'http port');
         await expect(webPort, 'the row is built, so hiding it is a decision').toHaveCount(1);
         await expect(webPort.locator('.settings-label')).not.toBeVisible();
         await expect(webPort.locator('input[type="number"]')).not.toBeVisible();
+
+        // The https port (on the Server tab after 0.5.3) is hidden with it, and so
+        // are its notes and the restart note below both rows: Local HTTPS is not
+        // supported in a container, so nothing of it may show.
+        const httpsPort = settingsRow(server, 'https port');
+        await expect(httpsPort, 'built too, so hiding it is a decision').toHaveCount(1);
+        await expect(httpsPort.locator('.settings-label')).not.toBeVisible();
+        await expect(httpsPort.locator('input[data-tls-port]')).not.toBeVisible();
+        for (const hook of [
+            '[data-https-port-gate-note]',
+            '[data-https-port-status]',
+            '[data-tls-port-notice]',
+            '[data-port-restart-note]',
+        ]) {
+            await expect(server.locator(hook), hook).toHaveCount(1);
+            await expect(server.locator(hook), hook).toBeHidden();
+        }
 
         // Local HTTPS is its own tab since 0.5.3. In a container it holds the
         // reverse-proxy note and nothing else; the Server tab holds neither.
@@ -312,6 +331,14 @@ test.describe('container mode', () => {
         await expect(settings.locator('[data-tls-subject]')).toHaveCount(0);
         await expect(settings.locator('[data-tls-mkcert-notice]')).toHaveCount(0);
         await expect(localHttps.getByRole('button')).toHaveCount(0);
+
+        // Embedding's https note (after 0.5.3) names the reverse proxy alone here,
+        // never the Local HTTPS a container does not have.
+        const embedding = await openSettingsTab(settings, 'Embedding');
+        await expect(embedding.locator('[data-embed-https-note]')).toHaveText(
+            /serve this app over https from your reverse proxy first\.$/,
+        );
+        await expect(embedding.locator('[data-embed-https-note]')).not.toContainText('local https');
 
         // Checked last, after the modal work gave any stray poll time to fire.
         expect(updatePolls, 'no /api/updates/status poll from the page').toEqual([]);

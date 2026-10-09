@@ -202,27 +202,39 @@ test.describe('settings prompts', () => {
         // Settle first: the port input is filled by the same fetch that could
         // write a status hint, so waiting for its value proves that fetch is
         // done before "empty at rest" is read.
-        const portRow = server.locator('.settings-row').filter({ hasText: 'web port' }).first();
+        // The http port (`web port` until after 0.5.3; renamed, its config key is
+        // still webPort).
+        const portRow = server.locator('.settings-row').filter({ hasText: 'http port' }).first();
         const control = portRow.locator('.settings-control');
         await expect(control.locator('input')).toHaveValue(String(E2E_PORT));
 
         // Order, not mere presence — including "install for all users", which is
         // built on every platform (merely hidden where inapplicable), so its DOM
-        // position is always available to check.
+        // position is always available to check. The https port (moved here
+        // from Local HTTPS) sits straight after the http port.
         const labels = await server.locator('.settings-label').allTextContents();
-        const idx = (needle: string) => labels.findIndex((l) => l.includes(needle));
+        const idx = (needle: string) => labels.indexOf(needle);
         const reset = idx('reset all my settings');
-        const port = idx('web port');
+        const port = idx('http port');
+        const httpsPort = idx('https port');
         const install = idx('install for all users');
         const stop = idx('stop the server and close the app');
-        const uninstall = idx('uninstall');
+        const uninstall = idx('uninstall ws-scrcpy-web');
         expect(reset).toBeGreaterThanOrEqual(0);
         expect(port).toBeGreaterThan(reset);
-        expect(install).toBeGreaterThan(port);
+        expect(httpsPort).toBe(port + 1);
+        expect(install).toBeGreaterThan(httpsPort);
         expect(stop).toBeGreaterThan(install);
         expect(uninstall).toBeGreaterThan(stop);
+        expect(labels).not.toContain('web port');
 
-        // The web-port row is a BARE input now. Editing it stages the value and
+        // Below both port rows, always shown: either one restarts the server.
+        await expect(server.locator('[data-port-restart-note]')).toBeVisible();
+        await expect(server.locator('[data-port-restart-note]')).toHaveText(
+            'changing either port restarts the server; any active streams will drop.',
+        );
+
+        // The http port row is a BARE input now. Editing it stages the value and
         // the dialog's one footer Save sends the batch, so the inline save the
         // beta.62 layout put in this cell is deliberately gone — ServerTab says
         // so outright: "There is no per-field Save button any more".

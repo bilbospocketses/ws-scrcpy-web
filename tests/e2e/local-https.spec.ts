@@ -43,8 +43,9 @@ import { openSettings, openSettingsTab } from './support/auth';
  *      and restart the server so the listener actually binds (generating
  *      alone does not -- the listener set is built once at boot; see
  *      smoke-test.md row 21.1).
- *   2. Note the https port (Local HTTPS -> https port; 8443 unless changed)
- *      and, if you changed the plain web port from its default, that too.
+ *   2. Note the https port (Server -> https port; 8443 unless changed)
+ *      and, if you changed the http port (Server -> http port) from its
+ *      default, that too.
  *   3. QA_LAN_HTTPS_ORIGIN="https://<that LAN IP>:<https port>" \
  *      QA_LAN_HTTP_PORT="<plain web port, default 8000>" \
  *      npm run test:e2e -- local-https

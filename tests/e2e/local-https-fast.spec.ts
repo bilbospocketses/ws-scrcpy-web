@@ -2,7 +2,7 @@ import { X509Certificate } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import tls from 'node:tls';
 import { type APIRequestContext, type Browser, expect, type Locator, type Page, request, test } from '@playwright/test';
-import { dismissPromptsFor, mintToken } from './support/auth';
+import { dismissPromptsFor, mintToken, openSettings, openSettingsTab, settingsRow } from './support/auth';
 import {
     removePrivateRoot,
     type ServerHandle,
@@ -14,6 +14,7 @@ import {
 } from './support/privateServer';
 import { selfSignedCert } from './support/selfSignedCert';
 import { countOccurrences, readServerLog } from './support/serverLog';
+import { footerSave, reviewDialog, reviewLines, typeAndLeave } from './support/settingsUi';
 import { installFailingMkcert, plantCert, type TlsServerPaths, tlsServerPaths } from './support/tlsFixtures';
 import { guardTlsWrites, openLocalHttpsPanel, stubTlsState } from './support/tlsPanel';
 
@@ -55,10 +56,19 @@ const SUBJECT_400 = { error: 'that address could not be used for a certificate' 
 const GENERATE_500 = { error: 'certificate generation failed; see the server logs for the cause' }; // TlsApi.ts
 const PORT_400 = { error: 'port must be an integer between 1 and 65535' }; // src/server/Config.ts validateHttpsPortInput
 
-// src/app/client/settings/tabs/LocalHttpsTab.ts
-const PANEL_PORT_REFUSAL = 'port must be an integer between 1 and 65535.';
-const PANEL_PORT_SAVED = 'https port saved. the server is restarting for the change to take effect.';
+// src/server/api/SettingsBatchApi.ts portCollisionError, for the configured https port
+const portCollision409 = (port: number) => `the http and https ports must differ (both would be ${port})`;
+
+// src/app/client/settings/tabs/ServerTab.ts (the https port's home after 0.5.3)
+const SERVER_HTTPS_PORT_REFUSAL = 'port must be between 1 and 65535';
+const PORT_COLLISION = 'the http and https ports must differ.';
+const HTTPS_GATE_NOTE = 'applies to the certificate local https generates; install mkcert and generate one first.';
+const PORT_RESTART_NOTE = 'changing either port restarts the server; any active streams will drop.';
 const SUB_1024_ADVISORY = 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
+// src/app/client/settings/SettingsSummaryModal.ts
+const HTTPS_RESTART_REVIEW = 'Changing the HTTPS port will restart the server; any active streams will drop.';
+
+// src/app/client/settings/tabs/LocalHttpsTab.ts
 const EXPOSURE_NEEDS_CERT =
     'generate a certificate first — https only and redirect only take effect once an https listener can exist.';
 const EXPOSURE_NEEDS_RESTART =
@@ -76,6 +86,9 @@ const EXPIRY_SOON_RE =
 const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-certificate-establishing-trust';
 const CA_FILE_NAME = 'ws-scrcpy-web-local-ca.crt'; // src/common/CaDownload.ts
 const SUBJECT_HELP_HREF = 'help/certificate-subject.html';
+const SUBJECT_GUIDE =
+    'the certificate name must match the ip address or name that you type from the remote device/computer to reach this server. click here for help on how this works (opens in a new tab)';
+const SUBJECT_HELP_LINK = 'click here for help on how this works (opens in a new tab)';
 // public/help/certificate-subject.html
 const HELP_TITLE = 'TLS Certificates: The Subject Name Explained — ws-scrcpy-web';
 const HELP_H1 = 'Understanding TLS Certificates: The "Subject Name" Explained Simply';
@@ -138,9 +151,6 @@ function expectGenericBody(text: string, echoes: string[], label: string): void 
 function panelParts(panel: Locator) {
     return {
         alert: panel.locator('[data-tls-alert]'),
-        port: panel.locator('[data-tls-port]'),
-        portOk: panel.locator('[data-tls-port-ok]'),
-        portNotice: panel.locator('[data-tls-port-notice]'),
         download: panel.locator('[data-tls-download]'),
         listenerNotice: panel.locator('[data-tls-listener-notice]'),
         caTrustNotice: panel.locator('[data-tls-ca-trust-notice]'),
@@ -169,6 +179,73 @@ async function expectExposureOpenToAll(panel: Locator): Promise<void> {
     await expect(p.exposureHttpsOnly).toBeEnabled();
     await expect(p.exposureRedirect).toBeEnabled();
     await expect(p.exposureUnavailable).toBeHidden();
+}
+
+/**
+ * Answer GET /api/dependencies with an mkcert row whose installed version is
+ * `version()`, re-read on every request: the shared server's real mkcert state
+ * is not a row's to decide, and nothing here may install it.
+ */
+async function stubMkcert(page: Page, version: () => string | null): Promise<void> {
+    await page.route(
+        (url) => url.pathname === '/api/dependencies',
+        (route) => {
+            if (route.request().method() !== 'GET') return route.fallback();
+            const installedVersion = version();
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([
+                    {
+                        name: 'mkcert',
+                        displayName: 'mkcert',
+                        description: 'stubbed',
+                        installedVersion,
+                        latestVersion: 'v0.1.0',
+                        status: installedVersion === null ? 'not-installed' : 'up-to-date',
+                        requiresRestart: false,
+                        canUpdate: true,
+                        deferInstall: true,
+                    },
+                ]),
+            });
+        },
+    );
+}
+
+/**
+ * Catch the dialog's POST /api/settings/batch before it reaches the SHARED
+ * server (an https port save would restart it), answering as the server would
+ * for a moved https port: applied, a restart, no redirect.
+ */
+async function guardBatch(page: Page): Promise<{ sent: unknown[] }> {
+    const log: { sent: unknown[] } = { sent: [] };
+    await page.route(
+        (url) => url.pathname === '/api/settings/batch',
+        (route) => {
+            if (route.request().method() !== 'POST') return route.fallback();
+            const body = route.request().postDataJSON() as { changes: { id: string }[] };
+            log.sent.push(body);
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true, applied: body.changes.map((c) => c.id), restartRequired: true }),
+            });
+        },
+    );
+    return log;
+}
+
+/** The Server tab's two port rows and their notes. */
+function serverPortParts(server: Locator) {
+    return {
+        http: settingsRow(server, 'http port').locator('input'),
+        https: settingsRow(server, 'https port').locator('input[data-tls-port]'),
+        httpsStatus: server.locator('[data-https-port-status]'),
+        gateNote: server.locator('[data-https-port-gate-note]'),
+        advisory: server.locator('[data-tls-port-notice]'),
+        restartNote: server.locator('[data-port-restart-note]'),
+    };
 }
 
 async function tlsState(api: APIRequestContext): Promise<Record<string, unknown>> {
@@ -243,29 +320,7 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         const writes = await guardTlsWrites(page);
         await stubTlsState(page, NONE_STATE);
         let mkcertVersion: string | null = null;
-        await page.route(
-            (url) => url.pathname === '/api/dependencies',
-            (route) =>
-                route.request().method() === 'GET'
-                    ? route.fulfill({
-                          status: 200,
-                          contentType: 'application/json',
-                          body: JSON.stringify([
-                              {
-                                  name: 'mkcert',
-                                  displayName: 'mkcert',
-                                  description: 'stubbed',
-                                  installedVersion: mkcertVersion,
-                                  latestVersion: 'v0.1.0',
-                                  status: mkcertVersion === null ? 'not-installed' : 'up-to-date',
-                                  requiresRestart: false,
-                                  canUpdate: true,
-                                  deferInstall: true,
-                              },
-                          ]),
-                      })
-                    : route.fallback(),
-        );
+        await stubMkcert(page, () => mkcertVersion);
         await page.goto('/');
 
         let panel = await openLocalHttpsPanel(page);
@@ -278,11 +333,27 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         }
         await expect(notice).toBeVisible();
         await expect(notice).toHaveText(MKCERT_MISSING);
-        // 0.5.3: the note is the very first thing in the Local HTTPS tab.
-        await expect(panel.locator('.settings-section-body > *').first()).toHaveAttribute('data-tls-mkcert-notice', '');
+        // After 0.5.3 (row 21.14): a boxed callout, the very first thing in the
+        // tab, above the "Local HTTPS" heading itself.
+        await expect(panel.locator(':scope > *').first()).toHaveAttribute('data-tls-mkcert-notice', '');
+        await expect(panel.locator(':scope > *').nth(1)).toHaveText('Local HTTPS');
+        await expect(notice).toHaveClass(/settings-callout/);
         // What needs no mkcert stays usable.
-        await expect(panelParts(panel).port).toBeEnabled();
-        await expect(panelParts(panel).portOk).toBeEnabled();
+        await expect(panel.locator('[data-exposure-ok]')).toBeEnabled();
+
+        // "dependencies tab" is a real control, reachable from the keyboard, that
+        // switches the dialog to Dependencies.
+        const link = notice.getByRole('button', { name: 'dependencies tab', exact: true });
+        await expect(link).toBeVisible();
+        await link.focus();
+        await page.keyboard.press('Enter');
+        const settings = page.locator('dialog.settings-modal[open]');
+        await expect(settings.getByRole('tab', { name: 'Dependencies', exact: true })).toHaveAttribute(
+            'aria-selected',
+            'true',
+        );
+        await expect(settings.locator('section[data-settings-tab="dependencies"]')).toBeVisible();
+        await expect(panel).toBeHidden();
 
         mkcertVersion = 'v0.1.0';
         await page.reload();
@@ -293,49 +364,98 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         expect(writes.writes).toEqual([]);
     });
 
-    test('21.6 the panel refuses https port 0 and 70000 before any request; 9443 is sent (the sub-1024 advisory shows on Linux only)', async ({
+    // Row 21.6 after 0.5.3: the https port is a staged row on the Server tab,
+    // saved by the dialog's Save, and open only once mkcert is installed AND a
+    // certificate exists.
+    test('21.6 the Server tab https port waits for mkcert and a certificate, with the note saying so', async ({
         page,
     }) => {
-        const writes = await guardTlsWrites(page, (pathname, body) =>
-            pathname === '/api/tls/https-port'
-                ? { status: 200, json: { ok: true, port: (body as { port: number }).port, restartRequired: true } }
-                : { status: 418, json: { error: 'blocked by the e2e write guard' } },
-        );
+        const writes = await guardTlsWrites(page);
+        const state = await stubTlsState(page, NONE_STATE);
+        let mkcertVersion: string | null = 'v0.1.0';
+        await stubMkcert(page, () => mkcertVersion);
+
+        const cases: { label: string; tls: Record<string, unknown>; mkcert: string | null; open: boolean }[] = [
+            { label: 'mkcert, no certificate', tls: NONE_STATE, mkcert: 'v0.1.0', open: false },
+            { label: 'a certificate, no mkcert', tls: readyState(), mkcert: null, open: false },
+            { label: 'mkcert and a certificate', tls: readyState(), mkcert: 'v0.1.0', open: true },
+        ];
+        for (const c of cases) {
+            state.set(c.tls);
+            mkcertVersion = c.mkcert;
+            await page.goto('/');
+            const settings = await openSettings(page);
+            const p = serverPortParts(await openSettingsTab(settings, 'Server'));
+            await expect(p.https, c.label).toHaveValue('8443');
+            if (c.open) {
+                await expect(p.https, c.label).toBeEnabled();
+                await expect(p.gateNote, c.label).toBeHidden();
+            } else {
+                await expect(p.https, c.label).toBeDisabled();
+                await expect(p.gateNote, c.label).toBeVisible();
+                await expect(p.gateNote, c.label).toHaveText(HTTPS_GATE_NOTE);
+            }
+            await expect(p.restartNote, c.label).toBeVisible();
+            await expect(p.restartNote, c.label).toHaveText(PORT_RESTART_NOTE);
+        }
+        expect(writes.writes).toEqual([]);
+    });
+
+    test('21.6 the Server tab refuses https port 0, 70000 and the http port inline; 9443 is staged and sent by Save (the sub-1024 advisory shows on Linux only)', async ({
+        page,
+    }) => {
+        const tlsWrites = await guardTlsWrites(page);
+        const batch = await guardBatch(page);
         await stubTlsState(page, readyState({ httpsListener: BOUND_LISTENER }));
+        await stubMkcert(page, () => 'v0.1.0');
         await page.goto('/');
-        const panel = await openLocalHttpsPanel(page);
-        const p = panelParts(panel);
-        await expect(p.port).toHaveValue('8443');
+        const settings = await openSettings(page);
+        const p = serverPortParts(await openSettingsTab(settings, 'Server'));
+        await expect(p.https).toBeEnabled();
+        await expect(p.https).toHaveValue('8443');
+        // The http port's own value, read once its /api/config fill has landed.
+        await expect(p.http).not.toHaveValue('');
+        const httpPort = await p.http.inputValue();
 
         for (const bad of ['0', '70000']) {
-            await p.port.fill(bad);
-            await p.portOk.click();
-            await expect(p.alert, `port ${bad}`).toBeVisible();
-            await expect(p.alert, `port ${bad}`).toHaveText(PANEL_PORT_REFUSAL);
-            await expect(p.alert, `port ${bad}`).toHaveClass(/settings-status-error/);
-            expect(writes.writes, `port ${bad} reached the network`).toEqual([]);
+            await typeAndLeave(p.https, bad);
+            await expect(p.httpsStatus, `port ${bad}`).toBeVisible();
+            await expect(p.httpsStatus, `port ${bad}`).toHaveText(SERVER_HTTPS_PORT_REFUSAL);
+            await expect(p.httpsStatus, `port ${bad}`).toHaveClass(/settings-status-error/);
+            await expect(footerSave(settings), `port ${bad} staged`).toBeDisabled();
         }
+        await typeAndLeave(p.https, httpPort);
+        await expect(p.httpsStatus).toHaveText(PORT_COLLISION);
+        await expect(footerSave(settings), 'the http port staged as https').toBeDisabled();
 
         // The advisory is per platform: the server's, as /api/service/status
-        // reports it to the panel (LocalHttpsTab.ts subPrivilegedPortNotice).
+        // reports it to the Server tab (ServerTab.ts subPrivilegedPortNotice).
         const status = await page.request.get('/api/service/status');
         expect(status.status(), 'GET /api/service/status').toBe(200);
         const platform = ((await status.json()) as { platform?: string }).platform;
-        await p.port.fill('80');
+        await p.https.fill('80');
         if (platform === 'linux' || platform === 'darwin') {
-            await expect(p.portNotice).toBeVisible();
-            await expect(p.portNotice).toHaveText(SUB_1024_ADVISORY);
+            await expect(p.advisory).toBeVisible();
+            await expect(p.advisory).toHaveText(SUB_1024_ADVISORY);
         } else {
-            await expect(p.portNotice, `no advisory on ${platform}`).toBeHidden();
+            await expect(p.advisory, `no advisory on ${platform}`).toBeHidden();
         }
 
-        // The control: a valid port does go out, once, with exactly that body.
-        await p.port.fill('9443');
-        await expect(p.portNotice).toBeHidden();
-        await p.portOk.click();
-        await expect.poll(() => writes.writes.length).toBe(1);
-        expect(writes.writes[0]).toEqual({ method: 'POST', pathname: '/api/tls/https-port', body: { port: 9443 } });
-        await expect(p.alert).toHaveText(PANEL_PORT_SAVED);
+        // The control: a valid port is staged, reviewed and sent once, in the batch.
+        await typeAndLeave(p.https, '9443');
+        await expect(p.advisory).toBeHidden();
+        await expect(p.httpsStatus).toBeHidden();
+        await footerSave(settings).click();
+        const review = reviewDialog(page);
+        await expect(reviewLines(review)).toHaveText(['HTTPS port: 8443 → 9443']);
+        await expect(review.locator('.settings-summary__restart')).toHaveText(HTTPS_RESTART_REVIEW);
+        await review.getByRole('button', { name: 'Save', exact: true }).click();
+        await expect.poll(() => batch.sent.length).toBe(1);
+        expect(batch.sent[0]).toEqual({
+            changes: [{ id: 'httpsPort', label: 'HTTPS port', from: 8443, to: 9443 }],
+        });
+        // Nothing went to the old route.
+        expect(tlsWrites.writes).toEqual([]);
     });
 
     test('21.8 exposure modes are gated until a certificate serves: https only and redirect are disabled, with the reason, before a certificate and before the restart; open always works', async ({
@@ -426,12 +546,15 @@ test.describe('local https fast tier: the help page (smoke §21.16)', () => {
         await page.goto('/');
         const panel = await openLocalHttpsPanel(page);
 
-        // Under the subject radios: one short line and a link to the explainer.
+        // Under the subject radios: one short line and a link to the explainer,
+        // in the wording chosen after 0.5.3 ("click here", lowercase).
+        await expect(panel.locator('[data-tls-subject-guide]')).toHaveText(SUBJECT_GUIDE);
         const subjectLink = panel.locator('[data-tls-subject-guide] a');
+        await expect(subjectLink).toHaveCount(1);
+        await expect(subjectLink).toHaveText(SUBJECT_HELP_LINK);
         await expect(subjectLink).toHaveAttribute('href', SUBJECT_HELP_HREF);
         await expect(subjectLink).toHaveAttribute('target', '_blank');
         await expect(subjectLink).toHaveAttribute('rel', 'noopener noreferrer');
-        await expect(subjectLink).toContainText('opens in a new tab');
 
         let popupPromise = context.waitForEvent('page');
         await subjectLink.click();
@@ -755,32 +878,57 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
         }
     });
 
-    test('21.6 POST /api/tls/https-port refuses 0, 70000 and other non-ports with 400 and saves nothing; a valid port is saved and the server exits 75 to restart', async () => {
+    // After 0.5.3 the Server tab saves the https port through the dialog's batch
+    // (`httpsPort`); POST /api/tls/https-port stays for external callers. Both
+    // refuse the same non-ports, the batch also refuses the http port, and the
+    // control saves through the batch, as Save does.
+    test('21.6 the batch and POST /api/tls/https-port refuse 0, 70000 and other non-ports with 400, the batch refuses the http port with 409, nothing is saved; a valid port saved through the batch exits 75 to restart', async () => {
         const configHttpsPort = () =>
             (JSON.parse(readFileSync(A.configPath, 'utf8')) as { httpsPort?: number }).httpsPort;
-        const refused: { label: string; data: Record<string, unknown> }[] = [
-            { label: '0', data: { port: 0 } },
-            { label: '70000', data: { port: 70000 } },
-            { label: '-1', data: { port: -1 } },
-            { label: '1.5', data: { port: 1.5 } },
-            { label: 'the string "9443"', data: { port: '9443' } },
-            { label: 'null', data: { port: null } },
-            { label: 'no port', data: {} },
+        const batchOf = (to: unknown) => ({
+            changes: [{ id: 'httpsPort', label: 'HTTPS port', from: HTTPS_PORT, to }],
+        });
+        const refused: { label: string; port?: unknown }[] = [
+            { label: '0', port: 0 },
+            { label: '70000', port: 70000 },
+            { label: '-1', port: -1 },
+            { label: '1.5', port: 1.5 },
+            { label: 'the string "9443"', port: '9443' },
+            { label: 'null', port: null },
+            { label: 'no port' },
         ];
         for (const r of refused) {
-            const res = await api.post('/api/tls/https-port', { data: r.data });
-            expect(res.status(), r.label).toBe(400);
-            expect(await res.json(), r.label).toEqual(PORT_400);
+            const legacy = await api.post('/api/tls/https-port', { data: 'port' in r ? { port: r.port } : {} });
+            expect(legacy.status(), `https-port ${r.label}`).toBe(400);
+            expect(await legacy.json(), `https-port ${r.label}`).toEqual(PORT_400);
+            // A change with no `to` is the batch's own shape refusal; every
+            // other value reaches validateHttpsPortInput, the legacy route's rule.
+            if (!('port' in r)) continue;
+            const viaBatch = await api.post('/api/settings/batch', { data: batchOf(r.port) });
+            expect(viaBatch.status(), `batch ${r.label}`).toBe(400);
+            expect(await viaBatch.json(), `batch ${r.label}`).toEqual({
+                ok: false,
+                applied: [],
+                failed: { id: 'httpsPort', error: PORT_400.error },
+            });
         }
+        // The http port itself: the two listeners cannot share a port.
+        const collision = await api.post('/api/settings/batch', { data: batchOf(A.port) });
+        expect(collision.status()).toBe(409);
+        expect(await collision.json()).toEqual({
+            ok: false,
+            applied: [],
+            failed: { id: 'httpsPort', error: portCollision409(A.port) },
+        });
         expect(configHttpsPort(), 'config.json after the refusals').toBe(HTTPS_PORT);
         expect(existsSync(A.restartMarkerPath), 'no restart requested by a refusal').toBe(false);
         expect(handle?.child.exitCode, 'still running after the refusals').toBeNull();
 
         // The control: a valid port is saved and the restart is scheduled. The
         // rebind on the new port needs a supervisor (Windows guest tier).
-        const ok = await api.post('/api/tls/https-port', { data: { port: NEW_HTTPS_PORT } });
+        const ok = await api.post('/api/settings/batch', { data: batchOf(NEW_HTTPS_PORT) });
         expect(ok.status()).toBe(200);
-        expect(await ok.json()).toEqual({ ok: true, port: NEW_HTTPS_PORT, restartRequired: true });
+        expect(await ok.json()).toEqual({ ok: true, applied: ['httpsPort'], restartRequired: true });
         expect(configHttpsPort(), 'config.json after the save').toBe(NEW_HTTPS_PORT);
         expect(existsSync(A.restartMarkerPath), 'the .restart marker').toBe(true);
         const exit = await withTimeout(handle!.exited, 15_000, () => `waiting for exit 75:\n${handle!.output()}`);

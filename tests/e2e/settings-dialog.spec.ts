@@ -564,7 +564,7 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
             const owner = `e2e-164c-batch-${before.githubOwner === 'e2e-164c-batch-1' ? 2 : 1}`;
             await typeAndLeave(updatesControls(updates).owner, owner);
             const serverTab = await openSettingsTab(settings, 'Server');
-            const portInput = settingsRow(serverTab, 'web port').locator('input');
+            const portInput = settingsRow(serverTab, 'http port').locator('input');
             await expect(portInput).toHaveValue('8172');
             await typeAndLeave(portInput, '8173');
 
@@ -577,10 +577,10 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
             await expect(review).toBeVisible();
             await expect(reviewLines(review)).toHaveText([
                 `GitHub owner: ${before.githubOwner} → ${owner}`,
-                'Web port: 8172 → 8173',
+                'HTTP port: 8172 → 8173',
             ]);
             await expect(review.locator('.settings-summary__restart')).toContainText(
-                'Changing the web port will restart the server.',
+                'Changing the HTTP port will restart the server.',
             );
             await review.getByRole('button', { name: 'Save', exact: true }).click();
             const res = await batch;
@@ -616,7 +616,7 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
             const portFirst = await api.post('/api/settings/batch', {
                 data: {
                     changes: [
-                        { id: 'webPort', label: 'Web port', from: 8173, to: 8172 },
+                        { id: 'webPort', label: 'HTTP port', from: 8173, to: 8172 },
                         { id: 'channel', label: 'Update channel', from: before.channel, to: otherChannel },
                     ],
                 },
@@ -737,7 +737,7 @@ test.describe('settings dialog: the port hand-off keeps the host (smoke 13.11)',
 
             const settings = await openSettings(page);
             const serverTab = await openSettingsTab(settings, 'Server');
-            const portInput = settingsRow(serverTab, 'web port').locator('input');
+            const portInput = settingsRow(serverTab, 'http port').locator('input');
             await expect(portInput).toHaveValue('8174');
             await typeAndLeave(portInput, '8175');
             const batch = nextBatchResponse(page);
@@ -746,7 +746,7 @@ test.describe('settings dialog: the port hand-off keeps the host (smoke 13.11)',
             });
             await footerSave(settings).click();
             const review = reviewDialog(page);
-            await expect(reviewLines(review)).toHaveText(['Web port: 8174 → 8175']);
+            await expect(reviewLines(review)).toHaveText(['HTTP port: 8174 → 8175']);
             await review.getByRole('button', { name: 'Save', exact: true }).click();
             const res = await batch;
             expect(res.status()).toBe(200);
