@@ -121,6 +121,18 @@ test.describe('settings / embedding', () => {
         await expect(row.httpsNote).toBeVisible();
         await expect(row.httpsNote).toHaveText(HTTPS_NOTE_HOST);
         await expect(row.bothNote).toBeHidden();
+        // At the dialog's default width, at a 1280 x 1000 window, the whole add
+        // row sits on one line: address, port, scheme ("http & https" in full)
+        // and add. Wrapping is only for genuinely narrow windows.
+        await page.setViewportSize({ width: 1280, height: 1000 });
+        const top = async (l: Locator): Promise<number> => (await l.boundingBox())?.y ?? Number.NaN;
+        const center = async (l: Locator): Promise<number> => {
+            const box = await l.boundingBox();
+            return box ? box.y + box.height / 2 : Number.NaN;
+        };
+        await expect.poll(() => center(row.add)).toBeCloseTo(await center(row.address), 0);
+        expect(await center(row.scheme)).toBeCloseTo(await center(row.address), 0);
+        expect(await top(row.httpsNote)).toBeGreaterThan(await top(row.add));
 
         await row.address.fill('localhost');
         await row.port.fill('5159');

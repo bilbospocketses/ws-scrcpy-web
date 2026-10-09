@@ -407,6 +407,15 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     address.setAttribute('data-embed-address', '');
     address.autocomplete = 'off';
     address.spellcheck = false;
+    // The one box that gives way: it starts from 9rem and grows into what the
+    // others leave, so at the dialog's default width the whole row -- address,
+    // port, scheme and add -- fits on one line. `.settings-input`'s 100% width
+    // and 240px cap would make it ask for more than that line has, and a
+    // wrapping row then breaks before anything shrinks.
+    address.style.flex = '1 1 9rem';
+    address.style.width = 'auto';
+    address.style.minWidth = '9rem';
+    address.style.maxWidth = 'none';
 
     // A text box, not type="number": a number input reports an entry it cannot
     // parse as '', which would read as "blank" and silently drop the port.
@@ -414,7 +423,9 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     port.type = 'text';
     port.inputMode = 'numeric';
     port.className = 'settings-input';
+    port.style.width = '80px';
     port.style.maxWidth = '80px';
+    port.style.flexShrink = '0';
     port.placeholder = '80';
     port.setAttribute('aria-label', 'embedder port');
     port.setAttribute('data-embed-port', '');
@@ -445,12 +456,14 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     addBtn.textContent = 'add';
     addBtn.setAttribute('data-embed-add-button', '');
     addBtn.disabled = true;
+    addBtn.style.flexShrink = '0';
 
     const controls = document.createDocumentFragment();
     controls.append(address, port, scheme, addBtn);
     const addRow = buildRow('add an embedder', controls);
-    // On a narrow dialog the controls wrap onto a second line rather than
-    // overflowing, now that the scheme list keeps its full width.
+    // Only on a genuinely narrow dialog, where even the address box at its
+    // 9rem minimum does not fit, do the controls wrap onto a second line
+    // rather than overflow.
     const addControls = addRow.querySelector<HTMLElement>('.settings-control');
     if (addControls) addControls.style.flexWrap = 'wrap';
     wrap.appendChild(addRow);

@@ -149,6 +149,13 @@ describe('the add row', () => {
         expect(ui.scheme.style.maxWidth).toBe('none');
         expect(ui.scheme.style.flexShrink).toBe('0');
         expect(ui.scheme.closest<HTMLElement>('.settings-control')?.style.flexWrap).toBe('wrap');
+        // The address box is the one that gives way, so the row fits on one
+        // line at the dialog's default width; the others keep their size.
+        expect(ui.address.style.flex).toBe('1 1 9rem');
+        expect(ui.address.style.minWidth).toBe('9rem');
+        expect(ui.address.style.maxWidth).toBe('none');
+        expect(ui.port.style.flexShrink).toBe('0');
+        expect(ui.addBtn.style.flexShrink).toBe('0');
         expect(ui.port.placeholder).toBe('80');
         // A text box: a number input would report "8e3" as '' and read it as blank.
         expect(ui.port.type).toBe('text');
