@@ -32,6 +32,19 @@ const CA_ROOT_RATE_LIMIT = 10;
 const CA_ROOT_RATE_WINDOW_MS = 60_000;
 
 /**
+ * The 400 body's text when `POST /api/tls/generate` refuses the subject. It
+ * names what the user typed in their own terms: in hostname mode they typed a
+ * NAME, and "that address could not be used" (the only wording until 0.5.5)
+ * read as though the panel had taken it for an ip address. Fixed copy either
+ * way, never the subject itself (see the call site for why).
+ */
+export function refusedSubjectMessage(kind: CertSubjectKind): string {
+    return kind === 'hostname'
+        ? 'that name could not be used for a certificate'
+        : 'that address could not be used for a certificate';
+}
+
+/**
  * Read the persisted exposure mode for `GET /api/tls/state`'s response.
  *
  * DELIBERATELY MIRRORS `HttpServer.ts`'s own `readHttpExposure()` -- same
@@ -382,7 +395,7 @@ export class TlsApi {
                         // is what makes a rejected subject diagnosable at all.
                         log.warn(`generate refused: ${message}`);
                         res.writeHead(400);
-                        res.end(JSON.stringify({ error: 'that address could not be used for a certificate' }));
+                        res.end(JSON.stringify({ error: refusedSubjectMessage(kind) }));
                         return true;
                     }
                     // Same no-echo constraint as the 400 branch above: mkcert's

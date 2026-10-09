@@ -1,6 +1,7 @@
 import { X509Certificate } from 'node:crypto';
 import { isIP } from 'node:net';
 import path from 'path';
+import { isPublicSuffix } from '../../common/publicSuffix';
 import { isConnectAddress } from '../security/deviceInput';
 import type { CertPaths } from './certPaths';
 
@@ -53,57 +54,26 @@ export interface CertServiceDeps {
     ensureCaRootDir: () => void;
 }
 
-// A small, explicit denylist of common public suffixes -- NOT a Public Suffix
-// List implementation and not claimed to be complete. It exists only to catch
-// the obvious, high-impact mistake (see isAcceptableHostnameSubject below):
-// a bare TLD or a widely-used second-level public suffix, under which
-// unrelated third parties register names the requester does not own.
-const PUBLIC_SUFFIX_DENYLIST = new Set([
-    'com',
-    'net',
-    'org',
-    'io',
-    'dev',
-    'app',
-    'co',
-    'me',
-    'info',
-    'biz',
-    'gov',
-    'edu',
-    'mil',
-    'co.uk',
-    'org.uk',
-    'ac.uk',
-    'com.au',
-    'net.au',
-    'org.au',
-    'com.br',
-    'co.jp',
-    'co.nz',
-    'co.za',
-    'com.cn',
-    'co.in',
-]);
-
 /**
- * Whether a hostname subject is a name the requester could plausibly own,
- * rather than a bare TLD or a common public suffix.
+ * Whether a hostname subject may have a certificate (and so a CA) minted for
+ * it: any name except a listed public suffix (`src/common/publicSuffix.ts`).
  *
  * F1: `cert.go:508-510`'s DNS branch appends the subject prefixed with "."
  * UNCONDITIONALLY (`dns = append(dns, entry, "."+entry)`), so the resulting
  * CA is constrained to `{subject, *.subject}`, never to the subject alone.
  * `nameConstraintsFor` cannot fix this from the constraint string -- there is
  * no flag for "exact match only" in this fork. So the guard belongs here,
- * before the CA is ever minted: reject a subject too short, or too common, to
- * be something only the requester controls. `localhost` is the one
- * legitimate single-label exception.
+ * before the CA is ever minted. For a real public suffix (`com`, `co.uk`) that
+ * subtree is every site registered under it: a CA whose key leaked could then
+ * impersonate any of them on each device that trusts it. A one-word LAN name
+ * (`nas`, `media`, `dev`) has no such reach -- its subtree is only what those
+ * same devices resolve under that one word -- so it is allowed (user decision,
+ * 2026-10-09: hobbyists name machines that way and reach them through a hosts
+ * file). Until 0.5.5 every name with fewer than two labels except `localhost`
+ * was refused as well.
  */
 function isAcceptableHostnameSubject(value: string): boolean {
-    if (value.toLowerCase() === 'localhost') return true;
-    const labels = value.split('.');
-    if (labels.length < 2) return false; // "com", "lan", "local", ...
-    return !PUBLIC_SUFFIX_DENYLIST.has(value.toLowerCase());
+    return !isPublicSuffix(value);
 }
 
 /** Strips one pair of surrounding brackets from a bracketed IPv6 literal. */
@@ -190,7 +160,7 @@ export function parseLeafSubject(
  * F1, IMPORTANT: for a hostname subject this does NOT constrain the CA to
  * that subject alone -- see `isAcceptableHostnameSubject`. The CA this
  * produces permits the subject AND the entire subtree beneath it, which is
- * exactly why the subject must be a name only the requester could own.
+ * exactly why a public suffix is refused as the subject.
  */
 export function nameConstraintsFor(kind: CertSubjectKind, value: string): string {
     if (kind === 'hostname') {
@@ -358,7 +328,7 @@ export class CertService {
             }
             if (!isAcceptableHostnameSubject(bareValue)) {
                 throw new Error(
-                    `invalid certificate subject: ${JSON.stringify(value)} is too short, or a public suffix, to safely constrain a CA to`,
+                    `invalid certificate subject: ${JSON.stringify(value)} is a public suffix, too broad to safely constrain a CA to`,
                 );
             }
         }

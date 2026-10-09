@@ -261,25 +261,36 @@ describe('CertService.generate', () => {
 
     // --- review round 1 (2026-09-19) ---
 
-    describe('F1: hostname subject must not be a bare TLD or common public suffix', () => {
-        it('rejects a single-label public suffix like "com" (also blocks "lan" and "local")', async () => {
+    describe('F1: hostname subject must not be a public suffix', () => {
+        it('rejects a single-label public suffix like "com", in any case, and never spawns', async () => {
             const { svc, run, removeCaRoot } = makeService();
-            await expect(svc.generate('hostname', 'com')).rejects.toThrow(/invalid/i);
-            await expect(svc.generate('hostname', 'lan')).rejects.toThrow(/invalid/i);
-            await expect(svc.generate('hostname', 'local')).rejects.toThrow(/invalid/i);
+            await expect(svc.generate('hostname', 'com')).rejects.toThrow(/invalid.*public suffix/i);
+            await expect(svc.generate('hostname', 'NET')).rejects.toThrow(/invalid/i);
+            await expect(svc.generate('hostname', 'org')).rejects.toThrow(/invalid/i);
             expect(run).not.toHaveBeenCalled();
             expect(removeCaRoot).not.toHaveBeenCalled();
         });
 
-        it('rejects a two-label public suffix like "co.uk", which clears the label-count rule alone', async () => {
+        it('rejects a two-label public suffix like "co.uk"', async () => {
             const { svc, run } = makeService();
             await expect(svc.generate('hostname', 'co.uk')).rejects.toThrow(/invalid/i);
+            await expect(svc.generate('hostname', 'com.au')).rejects.toThrow(/invalid/i);
             expect(run).not.toHaveBeenCalled();
         });
 
-        it('allows "localhost" as the one legitimate single-label exception', async () => {
+        // 0.5.5 (user decision 2026-10-09): one-word names are allowed. Until
+        // then anything with fewer than two labels but `localhost` was refused,
+        // which turned away the hosts-file names hobbyists actually use.
+        it.each(['localhost', 'lan', 'local', 'nas', 'mediabox'])('allows the one-word name "%s"', async (name) => {
             const { svc, run } = makeService();
-            await svc.generate('hostname', 'localhost');
+            await svc.generate('hostname', name);
+            expect(run).toHaveBeenCalled();
+        });
+
+        // Were on the denylist until 0.5.5; believable machine names, so off it.
+        it.each(['dev', 'app', 'me', 'io', 'co'])('allows "%s", which is no longer listed', async (name) => {
+            const { svc, run } = makeService();
+            await svc.generate('hostname', name);
             expect(run).toHaveBeenCalled();
         });
 
