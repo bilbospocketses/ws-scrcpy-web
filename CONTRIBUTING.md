@@ -112,6 +112,10 @@ Keep the subject line short and imperative. Wrap the body at 72 columns. Referen
 
 Do not include AI-generated attribution lines in commit messages.
 
+## Spelling
+
+Use American spelling in code, comments, docs and commit messages: `color`, `behavior`, `canceled`, `license`. `build-and-test` runs the shared [american-spelling](https://github.com/bilbospocketses/american-spelling) gate before any other check, and it fails on a British spelling in the lines your branch adds or in its commit messages. Existing text is not scanned, so you never have to fix lines you did not touch. For a verbatim quote, put `spelling: allow` anywhere on the line. A name another system owns, such as a third-party API's field, belongs in the gate's central `allow.txt`; ask in the PR rather than working around it. To run it locally, clone the gate and run `python check-american-spelling.py --repo <this repo> --base origin/main` from it.
+
 ## Pull Requests
 
 - Keep PRs focused on one concern. Big refactors are easier to review as a series of small commits than one sprawling patch.

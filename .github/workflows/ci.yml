@@ -14,6 +14,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The American-spelling gate below diffs from the merge-base with the
+          # base branch and refuses a shallow clone.
+          fetch-depth: 0
+
+      # American spelling. The cross-repo gate from bilbospocketses/american-spelling
+      # scans the lines this branch adds and its commit messages, and fails on a
+      # British spelling. It runs first because it is the cheapest gate here.
+      #
+      # Steps inside build-and-test rather than a job of their own: main's ruleset
+      # requires a check named exactly `build-and-test`, so a separate job would
+      # not be required and could rot unnoticed.
+      #
+      # Exceptions are not kept in this repo. A verbatim quote takes the inline
+      # `spelling: allow` marker; an identifier used on many lines goes in the
+      # gate's central allow.txt, and reaches this repo when the pin is bumped.
+      # On a push to main the base is main itself, so there is nothing to scan.
+      - name: Fetch the base branch
+        run: git fetch --no-tags origin "+refs/heads/${BASE}:refs/remotes/origin/${BASE}"
+        env:
+          BASE: ${{ github.base_ref || github.event.repository.default_branch }}
+      - name: Check out the American-spelling gate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bilbospocketses/american-spelling
+          ref: cfefb24e68cd125e2a2d836584c36f51afd50f42 # v1.0.1
+          path: .american-spelling
+          persist-credentials: false
+      - name: Check American spelling
+        # The runner's own Python 3; the gate is stdlib-only.
+        run: >-
+          python3 .american-spelling/check-american-spelling.py
+          --repo .
+          --base "origin/${BASE}"
+          --repo-slug "${SLUG}"
+        env:
+          BASE: ${{ github.base_ref || github.event.repository.default_branch }}
+          SLUG: ${{ github.repository }}
+      - name: Remove the gate checkout
+        # Keeps it out of the `docker buildx build .` context further down.
+        run: rm -rf .american-spelling
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
