@@ -53,7 +53,7 @@ export function insecureOriginNotice(win: SecureContextWindow): string | null {
     if (win.isSecureContext) return null;
     return (
         'this address is not a secure origin, so the browser will not expose the video decoder ' +
-        'and no stream can start. turn on local https in settings → server → local https for the ' +
+        'and no stream can start. turn on local https in settings → local https for the ' +
         'quickest fix on your own network, open ' +
         loopbackEquivalent(win.location) +
         ' on the machine running ws-scrcpy-web, or serve this app over https from a trusted origin ' +

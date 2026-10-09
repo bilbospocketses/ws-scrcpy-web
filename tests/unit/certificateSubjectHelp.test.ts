@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CA_ROOT_DOWNLOAD_FILE_NAME } from '../../src/common/CaDownload';
 
 // public/help/certificate-subject.html (0.5.3): the certificate-subject
@@ -113,6 +113,53 @@ describe('public/help/certificate-subject.html', () => {
         // Code blocks carry no trailing blank line.
         for (const pre of doc.querySelectorAll('pre'))
             expect(pre.textContent, pre.textContent ?? '').toBe(pre.textContent!.trim());
+    });
+
+    // 0.5.3 review (M1): the handler used to cancel the link and call
+    // window.close() only, so a tab the browser would not close (opened
+    // directly, or after following an in-page link) went nowhere at all.
+    describe('the "← Close tab" link', () => {
+        function wire(closes: boolean) {
+            const { doc } = load(PAGE);
+            const script = [...doc.body.querySelectorAll('script')].map((s) => s.textContent ?? '').join('\n');
+            expect(script).toContain('.back');
+            const timers: Array<{ cb: () => void; ms: number }> = [];
+            const fakeWindow = {
+                closed: false,
+                close: vi.fn(() => {
+                    if (closes) fakeWindow.closed = true;
+                }),
+                setTimeout: (cb: () => void, ms: number) => timers.push({ cb, ms }),
+                location: { href: 'http://localhost:8000/help/certificate-subject.html' },
+            };
+            // The page's own script, run against the parsed page with a stand-in window.
+            new Function('window', 'document', script)(fakeWindow, doc);
+            const back = doc.querySelector<HTMLAnchorElement>('a.back')!;
+            return { back, fakeWindow, timers };
+        }
+
+        it('points at ../ and closes the tab when the browser allows it, without navigating', () => {
+            const { back, fakeWindow, timers } = wire(true);
+            expect(back.getAttribute('href')).toBe('../');
+            const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+            back.dispatchEvent(click);
+            expect(click.defaultPrevented).toBe(true);
+            expect(fakeWindow.close).toHaveBeenCalledOnce();
+            expect(timers).toHaveLength(1);
+            timers[0]!.cb();
+            expect(fakeWindow.location.href).toBe('http://localhost:8000/help/certificate-subject.html');
+        });
+
+        it('follows the link to ../ when the browser ignores window.close()', () => {
+            const { back, fakeWindow, timers } = wire(false);
+            back.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            expect(fakeWindow.close).toHaveBeenCalledOnce();
+            // Not before the close has had its chance.
+            expect(fakeWindow.location.href).toBe('http://localhost:8000/help/certificate-subject.html');
+            expect(timers[0]!.ms).toBeGreaterThan(0);
+            timers[0]!.cb();
+            expect(fakeWindow.location.href).toBe('../');
+        });
     });
 
     it('names the file the app actually downloads in the Linux commands', () => {

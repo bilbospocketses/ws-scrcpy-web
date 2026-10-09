@@ -1,4 +1,5 @@
 import type { AppConfigEnvelope, FirstRunStatus } from '../../common/ConfigEvents';
+import { FRAME_ANCESTORS_ADD_ID } from '../../common/embedderOrigin';
 import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { authClient, type Role } from './AuthClient';
@@ -15,6 +16,7 @@ import {
     applyLocalHttpsContainerMode,
     applyLocalHttpsDependencyInstalled,
     applyLocalHttpsServiceStatus,
+    applyLocalHttpsServiceStatusFailed,
     buildLocalHttpsTab,
 } from './settings/tabs/LocalHttpsTab';
 import {
@@ -237,8 +239,8 @@ function labelFor(id: string, changes: Change[]): string {
  * have in fact taken effect.
  *
  * It reports only; nothing is un-staged here. Re-sending an applied change is
- * idempotent, and dropping it from the store would need a per-id commit the
- * store does not have.
+ * idempotent. The one exception, `COMMIT_WHEN_APPLIED`, is made by
+ * `performStagedSave`, not here.
  */
 function saveFailureMessage(res: BatchResult, changes: Change[]): string {
     const failed = res.failed;
@@ -252,6 +254,24 @@ function saveFailureMessage(res: BatchResult, changes: Change[]): string {
     if (!failed.id) return `${applied}couldn't save the changes: ${failed.error}`;
     return `${applied}couldn't save ${labelFor(failed.id, changes)}: ${failed.error}`;
 }
+
+/**
+ * Changes that are committed (`StagedSettingsStore.commitField`) when the
+ * server reports them applied in a batch that then failed on a later change
+ * (0.5.3 review, M4).
+ *
+ * Only `frameAncestorsAdd`, because only its tab TELLS the user a staged value
+ * is unsaved: Settings → Embedding lists each staged origin as
+ * `pending — saved when you click save`. Left staged after the server applied
+ * it, the origin stayed listed as pending and missing from the allowed list, a
+ * Discard then looked like it threw the origin away while the server kept
+ * allowing it, and Save offered to send it again. Committing it is what the
+ * tab already reacts to after a successful save: it drops the pending row and
+ * re-reads the list from the server. Every other field shows its staged value
+ * in its own input, which reads the same whether or not it has been saved, and
+ * re-sending one is harmless, so those are left as they were.
+ */
+const COMMIT_WHEN_APPLIED: ReadonlySet<string> = new Set([FRAME_ANCESTORS_ADD_ID]);
 
 /**
  * Confirm the staged batch, send it, and say what the dialog should do next.
@@ -270,7 +290,9 @@ function saveFailureMessage(res: BatchResult, changes: Change[]): string {
  *    refresh: `refreshUpdates`/`refreshServer` RE-REGISTER their fields with
  *    server values, which silently discards every staged edit. Refreshing on a
  *    failed save would therefore answer "your port was rejected" by throwing
- *    away the port the user typed.
+ *    away the port the user typed. The one exception is a change in
+ *    `COMMIT_WHEN_APPLIED` that the server reports it DID apply; only that
+ *    change is committed.
  *
  * 3. **A restart redirects.** The server names only the new PORT; the host is
  *    whatever this browser is already on (`sameOriginUrl`) — a literal
@@ -290,7 +312,12 @@ export async function performStagedSave(
     if (!(await deps.confirm(changes))) return { kind: 'stay' };
 
     const res = await deps.save(changes);
-    if (!res.ok) return { kind: 'failed', message: saveFailureMessage(res, changes) };
+    if (!res.ok) {
+        for (const id of res.applied) {
+            if (COMMIT_WHEN_APPLIED.has(id)) store.commitField(id);
+        }
+        return { kind: 'failed', message: saveFailureMessage(res, changes) };
+    }
 
     // The server has them now, so they are no longer STAGED — they are the
     // current settings. Without this the store stays dirty after a successful
@@ -454,7 +481,8 @@ export class SettingsModal extends Modal {
      * reason as `serverTabEl`: `buildLocalHttpsTab` fires no request of its own.
      * The constructor hands it container mode (`applyLocalHttpsContainerMode()`)
      * or the /api/service/status response (`applyLocalHttpsServiceStatus()`,
-     * which builds the panel), and a dependency install
+     * which builds the panel) or its failure
+     * (`applyLocalHttpsServiceStatusFailed()`), and a dependency install
      * (`applyLocalHttpsDependencyInstalled()`). Stays null when the role cannot
      * see Local HTTPS.
      */
@@ -620,6 +648,14 @@ export class SettingsModal extends Modal {
                             onServiceStatus: (resp) => {
                                 if (this.serverTabEl) applyServerServiceStatus(this.serverTabEl, resp);
                                 if (this.localHttpsTabEl) applyLocalHttpsServiceStatus(this.localHttpsTabEl, resp);
+                            },
+                            // Without this the Local HTTPS tab, which builds its
+                            // panel only once a status arrives, said "loading…"
+                            // forever when the read failed. It now shows the
+                            // Service tab's error and retry.
+                            onServiceStatusFailed: (retry) => {
+                                if (this.localHttpsTabEl)
+                                    applyLocalHttpsServiceStatusFailed(this.localHttpsTabEl, retry);
                             },
                         });
                     }

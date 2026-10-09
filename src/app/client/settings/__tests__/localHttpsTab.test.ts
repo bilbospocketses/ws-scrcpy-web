@@ -6,6 +6,7 @@ import {
     applyLocalHttpsContainerMode,
     applyLocalHttpsDependencyInstalled,
     applyLocalHttpsServiceStatus,
+    applyLocalHttpsServiceStatusFailed,
     buildLocalHttpsTab,
 } from '../tabs/LocalHttpsTab';
 
@@ -143,5 +144,62 @@ describe('Local HTTPS tab (0.5.3: its own tab, right after Server)', () => {
         const el = buildLocalHttpsTab(ctx);
         await applyLocalHttpsDependencyInstalled(el);
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    // 0.5.3 review (M3): a failed /api/service/status left this tab on
+    // "loading…" forever.
+    describe('when the service status read fails', () => {
+        it("shows couldn't reach server in the error tone with a retry, in place of loading…", () => {
+            const fetchMock = vi.fn();
+            vi.stubGlobal('fetch', fetchMock);
+            const el = buildLocalHttpsTab(ctx);
+            applyLocalHttpsServiceStatusFailed(el, vi.fn());
+            expect(el.textContent).not.toContain('loading…');
+            const label = el.querySelector('.settings-label')!;
+            expect(label.textContent).toBe("couldn't reach server");
+            expect(label.classList.contains('settings-status-error')).toBe(true);
+            expect(el.querySelector('[data-local-https-retry]')?.textContent).toBe('retry');
+            expect(headings(el)).toEqual(['Local HTTPS']);
+            // The tab fetches nothing of its own; the retry is the shared read's.
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+
+        it('retry shows loading… again and re-runs the shared read; its success builds the panel', async () => {
+            vi.stubGlobal(
+                'fetch',
+                hostFetch(() => 'v0.1.0'),
+            );
+            const el = buildLocalHttpsTab(ctx);
+            const retry = vi.fn();
+            applyLocalHttpsServiceStatusFailed(el, retry);
+            el.querySelector<HTMLButtonElement>('[data-local-https-retry]')!.click();
+            expect(retry).toHaveBeenCalledOnce();
+            expect(el.textContent).toContain('loading…');
+            expect(el.querySelector('[data-local-https-retry]')).toBeNull();
+
+            applyLocalHttpsServiceStatus(el, { supported: true, platform: 'win32', status: 'not-installed' });
+            await flush();
+            expect(el.querySelector('[data-tls-subject]')).not.toBeNull();
+            expect(el.textContent).not.toContain("couldn't reach server");
+        });
+
+        it('a failure after the tab is decided changes nothing', async () => {
+            vi.stubGlobal(
+                'fetch',
+                hostFetch(() => 'v0.1.0'),
+            );
+            const el = buildLocalHttpsTab(ctx);
+            applyLocalHttpsServiceStatus(el, { supported: true, platform: 'win32', status: 'not-installed' });
+            await flush();
+            applyLocalHttpsServiceStatusFailed(el, vi.fn());
+            expect(el.querySelector('[data-tls-subject]')).not.toBeNull();
+            expect(el.querySelector('[data-local-https-retry]')).toBeNull();
+
+            const container = buildLocalHttpsTab(ctx);
+            applyLocalHttpsContainerMode(container);
+            applyLocalHttpsServiceStatusFailed(container, vi.fn());
+            expect(container.querySelector('[data-local-https-container-note]')).not.toBeNull();
+            expect(container.querySelector('[data-local-https-retry]')).toBeNull();
+        });
     });
 });

@@ -45,6 +45,10 @@ const IPV4_OCTET_RE = /^(?:0|[1-9]\d{0,2})$/;
 const IPV6_CHARS_RE = /^[0-9a-f:.]+$/i;
 const MAX_HOSTNAME_LENGTH = 253;
 
+/** The second sentence of the add row's "not a valid ip address or hostname" error. */
+export const HOSTNAME_RULES_HINT =
+    'a hostname uses only letters, digits, hyphens and dots (no underscores); type an internationalized name in its punycode form (xn--…).';
+
 function fail<T>(error: string): Parsed<T> {
     return { ok: false, error };
 }
@@ -80,7 +84,11 @@ export function parseEmbedderAddress(input: string): Parsed<string> {
     if (/^\d+$/.test(last) || /^0x[0-9a-f]*$/i.test(last)) return parseIpv4(value);
 
     if (value.length > MAX_HOSTNAME_LENGTH || !labels.every((label) => LABEL_RE.test(label))) {
-        return fail(`"${value}" is not a valid ip address or hostname.`);
+        // Names the two refusals a user cannot guess (0.5.3 review, M7): an
+        // underscore, legal in some DNS records but never in a hostname a
+        // browser sends as an origin, and a non-ASCII name, which a browser
+        // sends in its punycode form and so must be typed that way here.
+        return fail(`"${value}" is not a valid ip address or hostname. ${HOSTNAME_RULES_HINT}`);
     }
     return { ok: true, value: value.toLowerCase() };
 }

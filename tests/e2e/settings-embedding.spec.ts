@@ -194,7 +194,10 @@ test.describe('settings / embedding', () => {
 
         // A bad address: the reason inline, add disabled.
         await row.address.fill('not_a_host');
-        await expect(row.message).toHaveText('"not_a_host" is not a valid ip address or hostname.');
+        // Copied from src/common/embedderOrigin.ts (parseEmbedderAddress, HOSTNAME_RULES_HINT).
+        await expect(row.message).toHaveText(
+            '"not_a_host" is not a valid ip address or hostname. a hostname uses only letters, digits, hyphens and dots (no underscores); type an internationalized name in its punycode form (xn--…).',
+        );
         await expect(row.add).toBeDisabled();
         await row.address.fill('localhost:5159');
         await expect(row.message).toHaveText('enter the port in the port box, not after the address.');

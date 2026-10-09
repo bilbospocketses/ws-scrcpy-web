@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildEmbedderOrigins,
     embedderOriginsFromInput,
+    HOSTNAME_RULES_HINT,
     isEmbedderScheme,
     parseEmbedderAddress,
     parseEmbedderPort,
@@ -115,6 +116,20 @@ describe('parseEmbedderAddress: hostnames and FQDNs', () => {
         ['bücher.example', 'a non-ASCII name'],
     ])('refuses %s (%s)', (v) => {
         expect(addressError(v)).toMatch(/not a valid ip address or hostname/);
+    });
+
+    // 0.5.3 review (M7): the refusal says what a hostname may hold, naming the
+    // two rules a user cannot guess -- no underscores, and punycode for an
+    // internationalized name. The rules themselves are unchanged.
+    it.each([['tools_box'], ['bücher.example']])('tells %s about underscores and punycode', (v) => {
+        expect(addressError(v)).toBe(
+            `"${v}" is not a valid ip address or hostname. a hostname uses only letters, digits, hyphens and dots (no underscores); type an internationalized name in its punycode form (xn--…).`,
+        );
+        expect(addressError(v)).toBe(`"${v}" is not a valid ip address or hostname. ${HOSTNAME_RULES_HINT}`);
+    });
+
+    it('accepts the punycode form the hint asks for', () => {
+        expect(address('xn--bcher-kva.example')).toBe('xn--bcher-kva.example');
     });
 });
 

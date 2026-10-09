@@ -69,7 +69,7 @@ const LISTENER_STALE =
     'the https listener is running, but it is still serving the certificate from before your last regenerate — including a ca that no longer exists. restart the server so it serves the new one; until then, a device using the new ca will not match what is actually being served.';
 const CA_RESTORE = 'regenerate to restore the ca download.';
 const MKCERT_MISSING =
-    'mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.';
+    'install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.';
 const EXPIRY_SOON_RE =
     /^this certificate expires on .+\. regenerate before then, or streaming stops working from other machines\.$/;
 // Since 0.5.3 the per-OS install steps live on the help page; the panel links to section 4.
@@ -455,7 +455,8 @@ test.describe('local https fast tier: the help page (smoke §21.16)', () => {
         popup = await popupPromise;
         await popup.waitForLoadState();
         expect(popup.url()).toBe(`${baseURL}/${TRUST_HELP_HREF}`);
-        await expect(popup.locator('#4-installing-a-certificate-establishing-trust')).toBeInViewport();
+        // An attribute selector: `#4-…` is not valid CSS (an id selector cannot start with a digit).
+        await expect(popup.locator('[id="4-installing-a-certificate-establishing-trust"]')).toBeInViewport();
         for (const id of [
             'windows',
             'macos',
@@ -471,7 +472,42 @@ test.describe('local https fast tier: the help page (smoke §21.16)', () => {
         await popup.close();
         expect(writes.writes).toEqual([]);
     });
+
+    // 0.5.3 review (M1): "← Close tab" closes a tab the panel opened, and when
+    // the browser will not close the tab it follows its own link (../) instead
+    // of doing nothing.
+    test('21.16 "← Close tab" closes the help tab the panel opened', async ({ page, context }) => {
+        await stubTlsState(page, readyState({ httpsListener: BOUND_LISTENER }));
+        await page.goto('/');
+        const panel = await openLocalHttpsPanel(page);
+        const popupPromise = context.waitForEvent('page');
+        await panel.locator('[data-tls-subject-guide] a').click();
+        const popup = await popupPromise;
+        await popup.waitForLoadState();
+        const closed = popup.waitForEvent('close');
+        await popup.locator('a.back').click();
+        await closed;
+        expect(popup.isClosed()).toBe(true);
+    });
+
+    test('21.16 "← Close tab" goes to the app when the browser ignores window.close()', async ({ page, baseURL }) => {
+        // What a browser does for a tab it will not close by script (opened
+        // directly, or one that has navigated): nothing.
+        await page.addInitScript(() => {
+            window.close = () => undefined;
+        });
+        await page.goto(`/${SUBJECT_HELP_HREF}`);
+        await followSectionLink(page);
+        await page.locator('a.back').click();
+        await expect(page).toHaveURL(`${baseURL}/`);
+    });
 });
+
+/** Follow one of the help page's own in-page links first, as a reader would. */
+async function followSectionLink(help: Page): Promise<void> {
+    await help.locator('a[href="#4-installing-a-certificate-establishing-trust"]').first().click();
+    await expect(help).toHaveURL(/#4-installing-a-certificate-establishing-trust$/);
+}
 
 // ===========================================================================
 // One spec-owned server, real TLS state, rows that need the server itself.

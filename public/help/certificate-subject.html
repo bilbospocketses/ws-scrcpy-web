@@ -259,9 +259,19 @@ Written for ws-scrcpy-web. No third-party content.
 // Attach the close-tab handler instead of an inline onclick attribute (avoids
 // the inline event-handler CSP smell; the page already uses an inline script),
 // as subnets.html does (#107).
+//
+// A browser ignores window.close() for a tab it does not consider closable by
+// script: one opened directly, or one that has navigated (following any of
+// this page's own section links can be enough). So the link's own navigation
+// is canceled only for as long as the close might still happen: if the tab
+// is still open shortly afterwards, go where the link points instead.
 document.querySelector('.back')?.addEventListener('click', (e) => {
     e.preventDefault();
+    const fallback = e.currentTarget.getAttribute('href');
     window.close();
+    window.setTimeout(() => {
+        if (!window.closed) window.location.href = fallback;
+    }, 100);
 });
 </script>
 </body>

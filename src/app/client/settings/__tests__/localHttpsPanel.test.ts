@@ -411,7 +411,7 @@ describe('local https panel: generate waits for mkcert', () => {
         for (const r of c.radios) expect(r.disabled).toBe(true);
         expect(c.notice.hidden).toBe(false);
         expect(c.notice.textContent).toBe(
-            'mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.',
+            'install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.',
         );
     });
 

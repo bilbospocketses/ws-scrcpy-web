@@ -212,6 +212,14 @@ function buildDynamicLabelRow(
  */
 export interface ServiceTabCallbacks {
     onServiceStatus(resp: ServiceStatusResponse): void;
+    /**
+     * The status read failed (an error status, or the server unreachable), and
+     * this tab is showing "couldn't reach server" with its retry button.
+     * `retry` re-runs the same refresh that button does, so whatever else waits
+     * on the response (the Local HTTPS tab, which builds its panel only once a
+     * status arrives) can offer a retry of its own instead of waiting forever.
+     */
+    onServiceStatusFailed?(retry: () => void): void;
 }
 
 /**
@@ -409,16 +417,19 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         loading.textContent = 'loading install/uninstall status…';
         body.appendChild(loading);
 
+        const retry = (): void => void runRefresh(callbacks);
         let resp: ServiceStatusResponse | null = null;
         try {
             const r = await fetch('/api/service/status');
             if (!r.ok) {
-                renderServiceError("couldn't reach server", () => void runRefresh(callbacks));
+                renderServiceError("couldn't reach server", retry);
+                callbacks.onServiceStatusFailed?.(retry);
                 return;
             }
             resp = (await r.json()) as ServiceStatusResponse;
         } catch {
-            renderServiceError("couldn't reach server", () => void runRefresh(callbacks));
+            renderServiceError("couldn't reach server", retry);
+            callbacks.onServiceStatusFailed?.(retry);
             return;
         }
         renderServiceState(resp, callbacks);

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sanitizeFrameAncestors } from '../Config';
+import { parseFrameAncestorOrigin } from '../security/frameGuard';
 
 describe('sanitizeFrameAncestors', () => {
     it('returns an empty list when the key is absent', () => {
@@ -58,5 +59,86 @@ describe('sanitizeFrameAncestors', () => {
         // would otherwise be silently dropped by the browser.
         expect(sanitizeFrameAncestors(['http://localhost:5159/embed', 'http://localhost:5159/?a=1'], warn)).toEqual([]);
         expect(warn).toHaveBeenCalledTimes(2);
+    });
+
+    // 0.5.3 review (I3): an entry the hardened parseFrameAncestorOrigin now
+    // refuses is skipped with a warning, keeping the good ones -- an entry an
+    // older build accepted must not stop the server booting.
+    it('skips a wildcard or CSP-injecting entry with a warning, keeping the good ones', () => {
+        const warn = vi.fn();
+
+        expect(
+            sanitizeFrameAncestors(
+                ['http://*.example.com', 'http://localhost:5159', 'http://a;sandbox', 'http://a,b', 'http://a_b.lan'],
+                warn,
+            ),
+        ).toEqual(['http://localhost:5159']);
+        expect(warn).toHaveBeenCalledTimes(4);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/no wildcard/);
+    });
+});
+
+/**
+ * The validator itself (0.5.3 review, I3). Its output is interpolated into a
+ * `Content-Security-Policy: frame-ancestors` header, and before this round a
+ * plain `new URL().origin` let a wildcard, a directive separator and a header
+ * separator straight through. Every entry path -- config.json load, the consent
+ * route and the settings batch -- calls this one function.
+ */
+describe('parseFrameAncestorOrigin', () => {
+    it.each([
+        ['http://*'],
+        ['https://*'],
+        ['http://*.com'],
+        ['https://*.example.com:8443'],
+        ['*'],
+        // `;` ends a CSP directive: this would add a `sandbox` directive.
+        ['http://a;sandbox'],
+        // `,` splits a header value.
+        ['http://a,b'],
+        // Percent-encoded, the parser decodes them into the hostname.
+        ['http://a%3Bsandbox'],
+        ['http://a%2Cb'],
+        // Whitespace, including the tab the URL parser would silently strip.
+        ['http://a b'],
+        ['http://a\tb'],
+        ['http://a\nb'],
+        // Quotes delimit CSP keywords.
+        ['http://a"b'],
+        ["http://a'b"],
+        ['http://a`b'],
+        // Hidden in userinfo, which the parser drops from the origin.
+        ['http://x;sandbox@host'],
+        // Not a hostname character.
+        ['http://a_b.example'],
+        ['http://a!b'],
+        ['http://a$b'],
+        ['http://a+b'],
+        ['http://a(b)'],
+    ])('refuses %j', (value) => {
+        expect(parseFrameAncestorOrigin(value)).toBeNull();
+    });
+
+    it.each([
+        ['http://localhost:5159', 'http://localhost:5159'],
+        ['https://tools.example.com', 'https://tools.example.com'],
+        ['HTTP://LocalHost:80/', 'http://localhost'],
+        ['  https://Tools.Example:443  ', 'https://tools.example'],
+        ['http://192.168.1.20:8080', 'http://192.168.1.20:8080'],
+        ['http://xn--bcher-kva.example', 'http://xn--bcher-kva.example'],
+        // A Unicode name normalizes to the same punycode a browser sends.
+        ['http://bücher.example', 'http://xn--bcher-kva.example'],
+        ['http://my-tool.lan', 'http://my-tool.lan'],
+        // IPv6 acceptance is unchanged in this round.
+        ['http://[::1]:5159', 'http://[::1]:5159'],
+        ['https://[fd00::20]', 'https://[fd00::20]'],
+    ])('accepts %j as %j', (value, origin) => {
+        expect(parseFrameAncestorOrigin(value)).toBe(origin);
+    });
+
+    it('still refuses a path, query, fragment or non-http scheme', () => {
+        for (const value of ['http://a/x', 'http://a/?q=1', 'http://a/#f', 'ftp://a', 'javascript:alert(1)']) {
+            expect(parseFrameAncestorOrigin(value)).toBeNull();
+        }
     });
 });

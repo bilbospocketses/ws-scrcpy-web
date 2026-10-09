@@ -150,7 +150,7 @@ describe('the add row', () => {
     });
 
     it.each([
-        ['tools_box', '', /not a valid ip address or hostname/],
+        ['tools_box', '', /not a valid ip address or hostname\. .*\(no underscores\).*punycode form \(xn--…\)/],
         ['256.1.1.1', '', /not a valid ipv4 address/],
         ['2001:db8::g', '', /not a valid ipv6 address/],
         ['localhost:5159', '', /port box/],
@@ -165,7 +165,7 @@ describe('the add row', () => {
         expect(ui.message.classList.contains('settings-status-error')).toBe(true);
         expect(ui.message.textContent).toMatch(error);
 
-        // And a click (or Enter) is refused too, not just greyed out.
+        // And a click (or Enter) is refused too, not just grayed out.
         ui.addBtn.disabled = false;
         ui.addBtn.click();
         ui.address.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
@@ -431,6 +431,69 @@ describe('Save, Cancel and discard go through the dialog', () => {
             message: "couldn't save Allowed embedders: embed permission is decided on this machine only",
         });
         expect(pendingEmbedOrigins(ui.store)).toEqual(['http://localhost:5159']);
+    });
+
+    // 0.5.3 review (M4): the server applies a batch one change at a time and
+    // stops at the first refusal, so the origins can land while a later change
+    // (the web port, always last) is refused. The tab used to go on listing
+    // them as pending, and missing from the allowed list.
+    it('a batch that applies the origins and then fails on another change drops them from pending and re-reads the list', async () => {
+        const ui = await buildTab();
+        ui.store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
+        ui.store.set('webPort', 80);
+        ui.add('localhost', '5159');
+        // What the server holds once frameAncestorsAdd has been applied.
+        approved = ['http://localhost:5159'];
+        const reads = calls.filter((c) => c === 'GET /api/embed-origins').length;
+        const d = deps({
+            save: async () => ({
+                ok: false,
+                applied: [FRAME_ANCESTORS_ADD_ID],
+                failed: { id: 'webPort', error: 'port 80 is in use' },
+            }),
+        });
+
+        expect(await performStagedSave(ui.store, d)).toEqual({
+            kind: 'failed',
+            message: "applied Allowed embedders; couldn't save Web port: port 80 is in use",
+        });
+        await flush();
+
+        expect(ui.pendingRows()).toHaveLength(0);
+        expect(pendingEmbedOrigins(ui.store)).toEqual([]);
+        expect(calls.filter((c) => c === 'GET /api/embed-origins').length).toBe(reads + 1);
+        expect(ui.listText()).toContain('http://localhost:5159');
+        expect(ui.listText()).not.toContain('pending');
+        // The refused change is still staged, and only it.
+        expect(ui.store.changes().map((c) => [c.id, c.to])).toEqual([['webPort', 80]]);
+        // A later add starts from "nothing pending" again.
+        ui.add('localhost', '6000');
+        expect(ui.store.changes().find((c) => c.id === FRAME_ANCESTORS_ADD_ID)?.from).toEqual([]);
+    });
+
+    it('a batch that fails before the origins are applied leaves them pending', async () => {
+        const ui = await buildTab();
+        ui.store.register({ id: 'channel', label: 'Update channel', initial: 'stable' });
+        ui.store.set('channel', 'beta');
+        ui.add('localhost', '5159');
+        const reads = calls.length;
+        const d = deps({
+            save: async () => ({
+                ok: false,
+                applied: ['channel'],
+                failed: { id: FRAME_ANCESTORS_ADD_ID, error: 'nope' },
+            }),
+        });
+
+        await performStagedSave(ui.store, d);
+        await flush();
+
+        expect(pendingEmbedOrigins(ui.store)).toEqual(['http://localhost:5159']);
+        expect(ui.pendingRows()).toHaveLength(1);
+        expect(calls.length).toBe(reads);
+        // Another applied change is still left staged, as before (only
+        // frameAncestorsAdd is committed on a partial apply).
+        expect(ui.store.changes().map((c) => c.id)).toEqual([FRAME_ANCESTORS_ADD_ID, 'channel']);
     });
 
     it('closing with an entry pending asks first, and discard sends nothing', async () => {

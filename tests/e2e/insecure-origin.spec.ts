@@ -58,7 +58,7 @@ const PROBE_RESULT = {
 function expectedNotice(port: string): string {
     return (
         'this address is not a secure origin, so the browser will not expose the video decoder ' +
-        'and no stream can start. turn on local https in settings → server → local https for the ' +
+        'and no stream can start. turn on local https in settings → local https for the ' +
         'quickest fix on your own network, open ' +
         `http://localhost:${port}` +
         ' on the machine running ws-scrcpy-web, or serve this app over https from a trusted origin ' +

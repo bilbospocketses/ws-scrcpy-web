@@ -932,6 +932,59 @@ describe('an mkcert install in Dependencies enables generate on the Local HTTPS 
     });
 });
 
+// 0.5.3 review (M3): the Local HTTPS tab builds its panel from the
+// /api/service/status response the Service tab fetches, so when that read
+// failed it said "loading…" forever.
+describe('a failed /api/service/status on the Local HTTPS tab', () => {
+    beforeEach(() => {
+        document.body.replaceChildren();
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        stubMeAsAdmin();
+    });
+
+    it("shows couldn't reach server with a retry, and the retry builds the panel once the read succeeds", async () => {
+        let statusOk = false;
+        const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string) => {
+                if (url === '/api/config') {
+                    return json({
+                        config: { webPort: 8000 },
+                        runtime: { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000 },
+                    });
+                }
+                if (url === '/api/service/status') {
+                    return statusOk
+                        ? json({ supported: true, status: 'not-installed', platform: 'win32' })
+                        : json({ error: 'boom' }, 500);
+                }
+                if (url === '/api/tls/state') return json({ status: 'none', candidateIps: ['192.168.86.3'] });
+                return new Promise(() => undefined);
+            }),
+        );
+
+        new SettingsModal();
+        for (let i = 0; i < 5; i++) await flush();
+
+        const tab = document.querySelector<HTMLElement>('dialog.settings-modal [data-settings-tab="local-https"]')!;
+        expect(tab.textContent).not.toContain('loading…');
+        expect(tab.textContent).toContain("couldn't reach server");
+        const retry = tab.querySelector<HTMLButtonElement>('[data-local-https-retry]');
+        expect(retry).not.toBeNull();
+        expect(tab.querySelector('[data-tls-subject]')).toBeNull();
+
+        statusOk = true;
+        retry!.click();
+        for (let i = 0; i < 5; i++) await flush();
+
+        expect(tab.querySelector('[data-tls-subject]')).not.toBeNull();
+        expect(tab.textContent).not.toContain("couldn't reach server");
+        const statusCalls = vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/service/status');
+        expect(statusCalls).toHaveLength(2);
+    });
+});
+
 describe('onInstallService takeover copy (§7 system-service hand-off)', () => {
     /**
      * Drain all pending microtasks (Promise chains, queueMicrotask) without

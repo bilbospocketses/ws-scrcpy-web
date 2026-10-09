@@ -3670,7 +3670,7 @@ above all an answer the definition refuses such as an unexpected mkcert release 
 the same `POST /api/dependencies/mkcert/update` the update button uses. A failed install reads `Error`, with
 the button kept as the retry. The Local HTTPS panel reads `GET /api/dependencies` beside `/api/tls/state`:
 while mkcert is not installed, **generate** and the subject controls (the ip/hostname radios, the subject
-field and the address picker) are disabled, and the very top of the Local HTTPS tab carries an orange (`settings-status-warning`, `--warning-color`) note: `mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.` (since 0.5.3; until then a line under the certificate controls). The https port, exposure modes, revoke and the CA download need no mkcert and are left
+field and the address picker) are disabled, and the very top of the Local HTTPS tab carries an orange (`settings-status-warning`, `--warning-color`) note: `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (since 0.5.3; until then a line under the certificate controls). The note names only the certificate controls because they are all mkcert gates. The https port, exposure modes, revoke and the CA download need no mkcert and are left
 alone. A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
 the Local HTTPS tab re-read mkcert, so generate enables without a reopen. When the panel cannot tell (the read
 failed, was refused, or does not name mkcert) it fails open: generate stays enabled.

@@ -235,7 +235,7 @@ export function certExpiryNotice(state: TlsCertState, now: Date): string | null 
  * Notification 5: a sub-1024 port needs elevated privileges outside win32.
  * M2: an ALLOWLIST (only linux/darwin fire), not a win32-denylist -- an
  * unknown/undefined platform (the caller hasn't learned it yet, or it is
- * genuinely unrecognised) must not fire this, the same "don't know, don't
+ * genuinely unrecognized) must not fire this, the same "don't know, don't
  * claim" rule applied elsewhere in this file. The previous denylist shape
  * fired for anything that WASN'T literally `'win32'`, which included
  * `undefined` -- exactly the case `buildServerTab`'s wiring hit before this
@@ -359,10 +359,13 @@ export async function fetchMkcertInstalled(fetchFn: typeof fetch): Promise<boole
 
 /**
  * The orange note at the very top of the Local HTTPS tab while mkcert is not
- * installed (0.5.3; until then a line under the certificate controls).
+ * installed (0.5.3; until then a line under the certificate controls). It
+ * names only what mkcert gates -- generate and the subject controls
+ * (applyMkcertGate) -- since the https port, the exposure modes, revoke and
+ * the ca download all work without it.
  */
 export const MKCERT_MISSING_NOTICE =
-    'mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.';
+    'install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.';
 
 /**
  * Per-panel re-entry for "mkcert may have just been installed", keyed by the
@@ -509,7 +512,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     //
     // This code makes NO assumption about the ORDER `candidateIps` arrives
     // in -- it renders whatever order it receives and defaults to the first
-    // entry (matching the existing pre-I7 prefill behaviour). Which
+    // entry (matching the existing pre-I7 prefill behavior). Which
     // candidate is preferred (spec §6: the default-route interface) is
     // decided server-side, wherever `candidateIps` is actually resolved for
     // the response this panel reads (see `TlsCertState.candidateIps`'s own
@@ -570,7 +573,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // Notification 2 — ALWAYS shown, beside the subject controls: what each
     // subject choice means, in the terms of the two radios just above. Until
     // 0.5.1 this was a sentence about `allowedHosts`, a config.json key no
-    // control in this dialog is labelled with, so it explained nothing to
+    // control in this dialog is labeled with, so it explained nothing to
     // anyone choosing between the radios. Not conditional on anything: it is
     // guidance for the choice, not a mistake state.
     const subjectGuideNotice = document.createElement('p');
@@ -972,7 +975,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // of THIS generate, not a standing condition, so it belongs in
                 // the transient alert, not a persistent in-panel notice. It
                 // says what the edit does for the user, not the config key's
-                // name (no control in Settings is labelled allowedHosts).
+                // name (no control in Settings is labeled allowedHosts).
                 const allowedHostSuffix: Array<string | { echo: string }> =
                     data.allowedHostAdded && data.subject
                         ? [' this server now also accepts connections addressed to ', { echo: data.subject }, '.']
@@ -1348,6 +1351,7 @@ export function buildLocalHttpsContainerNote(): HTMLElement {
  * the `HTMLElement` its signature promises.
  */
 const serviceStatusAppliers = new WeakMap<HTMLElement, (resp: ServiceStatusResponse) => void>();
+const serviceStatusFailureAppliers = new WeakMap<HTMLElement, (retry: () => void) => void>();
 const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
 const dependencyInstalledAppliers = new WeakMap<HTMLElement, () => Promise<void>>();
 
@@ -1365,7 +1369,8 @@ const dependencyInstalledAppliers = new WeakMap<HTMLElement, () => Promise<void>
  *   2026-09-30), and a later service status never builds the panel over it.
  *
  * Until either arrives the tab holds a placeholder section under the same
- * heading. The root is a plain `<div>`, not a `.settings-section`, so exactly one
+ * heading; if the status read fails, `applyLocalHttpsServiceStatusFailed()`
+ * turns that placeholder into "couldn't reach server" with a retry button. The root is a plain `<div>`, not a `.settings-section`, so exactly one
  * `section.settings-section` with the "Local HTTPS" heading exists at any time.
  *
  * Registers nothing with a `StagedSettingsStore`: every control in the panel
@@ -1427,6 +1432,31 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
     }
 
     /**
+     * The /api/service/status read this tab waits on failed (0.5.3 review, M3).
+     * Until then the placeholder said "loading…" forever. Shows what the
+     * Service tab shows for the same failure -- "couldn't reach server" in the
+     * error tone, with a retry button -- and the retry re-runs that same shared
+     * read (`retry`, from the Service tab), whose success builds the panel here
+     * through `applyServiceStatus` and whose failure lands back here. A no-op
+     * once the tab has been decided.
+     */
+    function applyServiceStatusFailed(retry: () => void): void {
+        if (decided) return;
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'settings-btn';
+        retryBtn.textContent = 'retry';
+        retryBtn.setAttribute('data-local-https-retry', '');
+        retryBtn.addEventListener('click', () => {
+            placeholder.body.replaceChildren(loading);
+            retry();
+        });
+        const row = buildRow("couldn't reach server", retryBtn);
+        row.querySelector('.settings-label')?.classList.add('settings-status-error');
+        placeholder.body.replaceChildren(row);
+    }
+
+    /**
      * A dependency was just installed or updated from the Dependencies tab. The
      * panel re-reads mkcert's state, so an mkcert installed there enables
      * generate without reopening Settings. Nothing to do before the panel
@@ -1437,6 +1467,7 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
     }
 
     serviceStatusAppliers.set(root, applyServiceStatus);
+    serviceStatusFailureAppliers.set(root, applyServiceStatusFailed);
     containerModeAppliers.set(root, applyContainerMode);
     dependencyInstalledAppliers.set(root, applyDependencyInstalled);
     return root;
@@ -1449,6 +1480,16 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
  */
 export function applyLocalHttpsServiceStatus(tab: HTMLElement, resp: ServiceStatusResponse): void {
     serviceStatusAppliers.get(tab)?.(resp);
+}
+
+/**
+ * Tell a Local HTTPS tab that the /api/service/status read it waits on failed:
+ * it shows "couldn't reach server" with a retry button that calls `retry` (the
+ * Service tab's refresh), instead of "loading…" forever. A no-op if `tab` was
+ * never built through `buildLocalHttpsTab`, or once the tab has been decided.
+ */
+export function applyLocalHttpsServiceStatusFailed(tab: HTMLElement, retry: () => void): void {
+    serviceStatusFailureAppliers.get(tab)?.(retry);
 }
 
 /**
