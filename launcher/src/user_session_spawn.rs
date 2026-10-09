@@ -78,6 +78,12 @@ pub struct SpawnResult {
     pub pid: u32,
     pub session_id: u32,
     pub error_message: Option<String>,
+    /// The HRESULT of the Win32 call that failed, when one did. Read by the
+    /// tray supervisor to tell `ERROR_NO_TOKEN` (the session's user is not
+    /// logged on yet, item 175) from a real failure. Not serialised: the
+    /// `spawn-user-launcher` JSON keeps its shape.
+    #[serde(skip)]
+    pub error_code: Option<i32>,
 }
 
 /// Enable a single privilege on the current process token. Required
@@ -192,6 +198,7 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
                     "no active interactive user session found (WTSEnumerateSessions returned no Active session with a logged-on user, and WTSGetActiveConsoleSessionId fallback also failed)"
                         .to_string(),
                 ),
+                error_code: None,
             };
         }
     };
@@ -231,6 +238,7 @@ pub fn spawn_in_session(session_id: u32, args: &SpawnUserLauncherArgs) -> SpawnR
             pid: 0,
             session_id: 0,
             error_message: Some(format!("launcher not found: {}", args.launcher_path)),
+            error_code: None,
         };
     }
 
@@ -257,6 +265,7 @@ pub fn spawn_in_session(session_id: u32, args: &SpawnUserLauncherArgs) -> SpawnR
                 error_message: Some(format!(
                     "WTSQueryUserToken failed (session {session_id}): {e:?}. SE_TCB_NAME enable was attempted; check launcher.log for the enable-step result."
                 )),
+                error_code: Some(e.code().0),
             };
         }
 
@@ -354,6 +363,7 @@ pub fn spawn_in_session(session_id: u32, args: &SpawnUserLauncherArgs) -> SpawnR
                 pid: 0,
                 session_id,
                 error_message: Some(format!("CreateProcessAsUserW failed: {e:?}")),
+                error_code: Some(e.code().0),
             };
         }
 
@@ -370,6 +380,7 @@ pub fn spawn_in_session(session_id: u32, args: &SpawnUserLauncherArgs) -> SpawnR
             pid,
             session_id,
             error_message: None,
+            error_code: None,
         }
     }
 }
