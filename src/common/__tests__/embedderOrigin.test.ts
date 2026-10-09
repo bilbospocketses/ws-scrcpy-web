@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    BOTH_SCHEMES_PORT_ERROR,
     buildEmbedderOrigins,
     embedderOriginsFromInput,
     HOSTNAME_RULES_HINT,
@@ -216,22 +217,24 @@ describe('buildEmbedderOrigins', () => {
         expect(buildEmbedderOrigins('localhost', 80, 'https')).toEqual(['https://localhost:80']);
     });
 
-    it('adds two origins for http & https, http first, each with its own default elided', () => {
-        expect(buildEmbedderOrigins('localhost', 5159, 'both')).toEqual([
-            'http://localhost:5159',
-            'https://localhost:5159',
-        ]);
+    it('adds two origins for http & https, http first, each on its own default port', () => {
         expect(buildEmbedderOrigins('localhost', null, 'both')).toEqual(['http://localhost', 'https://localhost']);
-        expect(buildEmbedderOrigins('localhost', 80, 'both')).toEqual(['http://localhost', 'https://localhost:80']);
-        expect(buildEmbedderOrigins('localhost', 443, 'both')).toEqual(['http://localhost:443', 'https://localhost']);
+        expect(buildEmbedderOrigins('Tools.Example', null, 'both')).toEqual([
+            'http://tools.example',
+            'https://tools.example',
+        ]);
     });
 });
 
 describe('embedderOriginsFromInput', () => {
     it('combines the three boxes', () => {
-        expect(embedderOriginsFromInput({ address: 'LocalHost', port: '5159', scheme: 'both' })).toEqual({
+        expect(embedderOriginsFromInput({ address: 'LocalHost', port: '5159', scheme: 'http' })).toEqual({
             ok: true,
-            origins: ['http://localhost:5159', 'https://localhost:5159'],
+            origins: ['http://localhost:5159'],
+        });
+        expect(embedderOriginsFromInput({ address: 'LocalHost', port: '', scheme: 'both' })).toEqual({
+            ok: true,
+            origins: ['http://localhost', 'https://localhost'],
         });
         expect(embedderOriginsFromInput({ address: '192.168.1.50', port: '', scheme: 'https' })).toEqual({
             ok: true,
@@ -248,6 +251,42 @@ describe('embedderOriginsFromInput', () => {
             ok: false,
             field: 'port',
             error: 'port must be a whole number from 1 to 65535.',
+        });
+    });
+});
+
+// After 0.5.3: one port cannot be the default of both schemes. Port 80 with
+// http & https used to stage https://host:80, an https origin on the http port.
+describe('http & https takes no port', () => {
+    it.each(['80', '443', '5159', ' 8080 ', 'junk'])('refuses http & https with port %j, on the port box', (port) => {
+        expect(embedderOriginsFromInput({ address: 'localhost', port, scheme: 'both' })).toEqual({
+            ok: false,
+            field: 'port',
+            error: BOTH_SCHEMES_PORT_ERROR,
+        });
+    });
+
+    it('says to add each scheme separately', () => {
+        expect(BOTH_SCHEMES_PORT_ERROR).toBe(
+            'http & https uses 80 for http and 443 for https; for another port, add each scheme separately.',
+        );
+    });
+
+    it('still checks the address first', () => {
+        expect(embedderOriginsFromInput({ address: 'bad_host', port: '80', scheme: 'both' })).toMatchObject({
+            ok: false,
+            field: 'address',
+        });
+    });
+
+    it('stages each scheme on its own when added separately with the same port', () => {
+        expect(embedderOriginsFromInput({ address: 'localhost', port: '5159', scheme: 'http' })).toEqual({
+            ok: true,
+            origins: ['http://localhost:5159'],
+        });
+        expect(embedderOriginsFromInput({ address: 'localhost', port: '5159', scheme: 'https' })).toEqual({
+            ok: true,
+            origins: ['https://localhost:5159'],
         });
     });
 });

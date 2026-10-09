@@ -11,7 +11,7 @@ import { SettingsSummaryModal } from './settings/SettingsSummaryModal';
 import { type Change, StagedSettingsStore } from './settings/StagedSettingsStore';
 import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
-import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
+import { applyEmbeddingContainerMode, buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
 import {
     applyLocalHttpsContainerMode,
     applyLocalHttpsDependencyInstalled,
@@ -490,6 +490,13 @@ export class SettingsModal extends Modal {
      */
     private localHttpsTabEl: HTMLElement | null = null;
     /**
+     * The Embedding tab's section, captured the same way: in a container the
+     * constructor tells it so (`applyEmbeddingContainerMode()`), and its https
+     * note then names the reverse proxy alone. Stays null when the role cannot
+     * see Embedding.
+     */
+    private embeddingTabEl: HTMLElement | null = null;
+    /**
      * The Updates tab's root element, captured the same way and for the same
      * reason as `serviceTabEl`. Its /api/updates/status read is held until
      * container mode is known, so the constructor's post-probe block is what
@@ -642,6 +649,9 @@ export class SettingsModal extends Modal {
                         // decision 2026-09-30): its tab shows only the
                         // reverse-proxy note, and nothing there fetches.
                         if (this.localHttpsTabEl) applyLocalHttpsContainerMode(this.localHttpsTabEl);
+                        // ...so the Embedding tab's https note names the
+                        // reverse proxy alone.
+                        if (this.embeddingTabEl) applyEmbeddingContainerMode(this.embeddingTabEl);
                         return;
                     }
                     if (this.canUse('dependencies') && this.dependenciesTabEl) {
@@ -725,7 +735,15 @@ export class SettingsModal extends Modal {
         }
         // Next to Users: both answer "who is allowed to do what with this server".
         if (canSeeSection(this.role, 'embedOrigins')) {
-            tabs.push({ id: 'embedding', label: 'Embedding', build: () => buildEmbeddingTab(ctx, store) });
+            tabs.push({
+                id: 'embedding',
+                label: 'Embedding',
+                build: () => {
+                    const el = buildEmbeddingTab(ctx, store);
+                    this.embeddingTabEl = el; // so the container branch can reword its https note
+                    return el;
+                },
+            });
         }
         // Built unconditionally; applyDockerGating() swaps them for the locked
         // container copy if the probe comes back true. Their refresh calls are

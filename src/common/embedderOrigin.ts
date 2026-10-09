@@ -143,9 +143,22 @@ export function parseEmbedderPort(input: string): Parsed<number | null> {
 }
 
 /**
+ * The refusal for `both` with a port. One port cannot be both schemes' default:
+ * port 80 with `both` used to stage `http://host` and `https://host:80`, an
+ * https origin on the http port that no real embedder serves from. The add row
+ * disables its port box for `both`, so only a value typed before switching, or
+ * a hand-built call, meets this.
+ */
+export const BOTH_SCHEMES_PORT_ERROR =
+    'http & https uses 80 for http and 443 for https; for another port, add each scheme separately.';
+
+/**
  * The origin(s) one add stages: one for `http` or `https`, two for `both`
- * (http first). A default port is dropped per scheme, so port 80 with `both`
- * gives `http://host` and `https://host:80`, which is what a browser sends.
+ * (http first). A scheme's default port is dropped (80 for http, 443 for
+ * https), which is what a browser sends. `both` takes no port -- it means each
+ * scheme on its own default, `http://host` and `https://host` -- and
+ * `embedderOriginsFromInput` refuses one (BOTH_SCHEMES_PORT_ERROR); this
+ * builder applies whatever port it is given, so callers pass `null` with `both`.
  */
 export function buildEmbedderOrigins(host: string, port: number | null, scheme: EmbedderScheme): string[] {
     const schemes: ('http' | 'https')[] = scheme === 'both' ? ['http', 'https'] : [scheme];
@@ -158,7 +171,9 @@ export type EmbedderField = 'address' | 'port';
 
 /**
  * The whole add row at once: the origins to stage, or the first problem and
- * the box it is in. The address is checked before the port.
+ * the box it is in. The address is checked before the port. `both` with any
+ * port at all is refused (BOTH_SCHEMES_PORT_ERROR): it always means each
+ * scheme's default.
  */
 export function embedderOriginsFromInput(input: {
     address: string;
@@ -167,6 +182,9 @@ export function embedderOriginsFromInput(input: {
 }): { ok: true; origins: string[] } | { ok: false; field: EmbedderField; error: string } {
     const address = parseEmbedderAddress(input.address);
     if (!address.ok) return { ok: false, field: 'address', error: address.error };
+    if (input.scheme === 'both' && input.port.trim().length > 0) {
+        return { ok: false, field: 'port', error: BOTH_SCHEMES_PORT_ERROR };
+    }
     const port = parseEmbedderPort(input.port);
     if (!port.ok) return { ok: false, field: 'port', error: port.error };
     return { ok: true, origins: buildEmbedderOrigins(address.value, port.value, input.scheme) };

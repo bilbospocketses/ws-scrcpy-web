@@ -867,6 +867,26 @@ describe('the running version in the dialog footer', () => {
         const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
         expect(urls.filter((u) => u.startsWith('/api/tls/'))).toEqual([]);
     });
+
+    it("in a container the Embedding tab's https note names only the reverse proxy", async () => {
+        stubConfig({ ...base, docker: true, appVersion: '0.5.3' });
+        new SettingsModal();
+        await flush();
+
+        const note = document.querySelector<HTMLElement>('dialog.settings-modal [data-embed-https-note]');
+        expect(note).not.toBeNull();
+        expect(note!.textContent).toMatch(/serve this app over https from your reverse proxy first\.$/);
+        expect(note!.textContent).not.toContain('local https');
+    });
+
+    it("on a host the Embedding tab's https note offers local https or a reverse proxy", async () => {
+        stubConfig({ ...base, appVersion: '0.5.3' });
+        new SettingsModal();
+        await flush();
+
+        const note = document.querySelector<HTMLElement>('dialog.settings-modal [data-embed-https-note]');
+        expect(note!.textContent).toMatch(/set up local https or a reverse proxy first\.$/);
+    });
 });
 
 describe('an mkcert install in Dependencies enables generate on the Local HTTPS tab', () => {

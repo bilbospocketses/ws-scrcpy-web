@@ -102,6 +102,46 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
 /** The staged field's summary label: `Allowed embedders: none added → add http://…`. */
 export const EMBED_ADD_LABEL = 'Allowed embedders';
 
+/** Under the add row while `http & https` is chosen, whose port box is then disabled. */
+export const EMBED_BOTH_SCHEMES_NOTE =
+    'uses 80 for http and 443 for https; for other ports, add each scheme separately.';
+
+/**
+ * Under the add row, always: an https page cannot frame this app over http
+ * (browsers block mixed content in a frame), so pre-approving an https
+ * embedder only works once this app is served over https as well. The last
+ * sentence names the way to get there, which differs in a container, where
+ * Local HTTPS is not supported (`embedHttpsNote`).
+ */
+const EMBED_HTTPS_NOTE_LEAD =
+    'an https page can only embed this app when this app is served over https too; browsers block an http frame inside an https page. ';
+
+/** The https note for a host install, or for a container (`container`), where only a reverse proxy can serve https. */
+export function embedHttpsNote(container: boolean): string {
+    return (
+        EMBED_HTTPS_NOTE_LEAD +
+        (container
+            ? 'serve this app over https from your reverse proxy first.'
+            : 'set up local https or a reverse proxy first.')
+    );
+}
+
+/**
+ * Per-instance container switches, keyed by the section `buildEmbeddingTab`
+ * returned (the same WeakMap shape as the other tabs' appliers): container mode
+ * is learned after every tab is built.
+ */
+const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
+
+/**
+ * Tell an Embedding tab it is running in a container, so its https note names
+ * the reverse proxy alone (Local HTTPS is not supported there). A no-op if
+ * `section` was never built through `buildEmbeddingTab`.
+ */
+export function applyEmbeddingContainerMode(section: HTMLElement): void {
+    containerModeAppliers.get(section)?.();
+}
+
 /**
  * The field's baseline. ONE frozen instance, deliberately: the store compares
  * values with `Object.is`, so removing the last pending origin must put back
@@ -206,6 +246,10 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
     });
 
     void refreshEmbedOrigins(view);
+    containerModeAppliers.set(section, () => {
+        const note = view.adder.querySelector<HTMLElement>('[data-embed-https-note]');
+        if (note) note.textContent = embedHttpsNote(true);
+    });
     return section;
 }
 
@@ -344,6 +388,12 @@ function setAdderVisible(adder: HTMLElement, visible: boolean): void {
  * twice. If every origin one add would stage is a duplicate, nothing changes
  * and the line says so; with `http & https`, the new one is staged and the line
  * names the one that was skipped.
+ *
+ * `http & https` takes no port (after 0.5.3): one port cannot be the default
+ * of both schemes, and port 80 with it used to stage `https://host:80`. While
+ * it is chosen the port box is emptied and disabled, with a note saying how to
+ * add another port; switching back re-enables the box, empty. Below it all, a
+ * standing note that an https embedder needs this app on https too.
  */
 function buildAddRow(view: EmbeddingView): HTMLElement {
     const wrap = document.createElement('div');
@@ -395,6 +445,14 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     controls.append(address, port, scheme, addBtn);
     wrap.appendChild(buildRow('add an embedder', controls));
 
+    const bothNote = document.createElement('p');
+    bothNote.className = 'settings-status';
+    bothNote.style.gridColumn = '1 / -1';
+    bothNote.setAttribute('data-embed-both-note', '');
+    bothNote.textContent = EMBED_BOTH_SCHEMES_NOTE;
+    bothNote.hidden = true;
+    wrap.appendChild(bothNote);
+
     const message = document.createElement('p');
     message.className = 'settings-status';
     message.style.gridColumn = '1 / -1';
@@ -402,6 +460,23 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     message.setAttribute('role', 'status');
     message.hidden = true;
     wrap.appendChild(message);
+
+    // Always shown. The host wording until the dialog learns it is in a
+    // container (applyEmbeddingContainerMode).
+    const httpsNote = document.createElement('p');
+    httpsNote.className = 'settings-status';
+    httpsNote.style.gridColumn = '1 / -1';
+    httpsNote.setAttribute('data-embed-https-note', '');
+    httpsNote.textContent = embedHttpsNote(false);
+    wrap.appendChild(httpsNote);
+
+    /** `http & https` empties and disables the port box; the other two give it back, empty. */
+    const applySchemeToPort = (): void => {
+        const both = scheme.value === 'both';
+        if (both || port.disabled) port.value = '';
+        port.disabled = both;
+        bothNote.hidden = !both;
+    };
 
     const say = (text: string, isError: boolean): void => {
         message.textContent = text;
@@ -436,7 +511,10 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
     };
     address.addEventListener('input', validate);
     port.addEventListener('input', validate);
-    scheme.addEventListener('change', validate);
+    scheme.addEventListener('change', () => {
+        applySchemeToPort();
+        validate();
+    });
 
     const add = (): void => {
         const result = read();
