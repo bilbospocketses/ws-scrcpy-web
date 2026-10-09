@@ -478,14 +478,17 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
         await expect(userModal.locator('ul > li')).toHaveCount(detectedRows);
         await expect(manualRows(userModal)).toHaveCount(0);
 
-        // --- the cheat-sheet link ---
+        // --- the cheat-sheet link, which opens it in the app's own theme (0.5.5) ---
+        const appTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+        expect(appTheme).toMatch(/^(dark|light)$/);
         const popupPromise = admin.context.waitForEvent('page');
         await modal.getByRole('link', { name: 'subnet cheat sheet', exact: true }).click();
         const popup = await popupPromise;
         await popup.waitForLoadState();
-        expect(popup.url()).toBe(`${baseURL}/help/subnets.html`);
+        expect(popup.url()).toBe(`${baseURL}/help/subnets.html?theme=${appTheme}`);
         await expect(popup).toHaveTitle('Subnet & CIDR Cheat Sheet — ws-scrcpy-web');
         await expect(popup.locator('h1')).toHaveText('Subnet & CIDR Cheat Sheet');
+        await expect(popup.locator('html')).toHaveAttribute('data-theme', appTheme!);
         await popup.close();
 
         // --- over 2,048 hosts: the large-scan dialog, with continue / cancel ---
