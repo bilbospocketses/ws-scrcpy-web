@@ -115,6 +115,10 @@ describe('buildCombobox: opening and picking', () => {
         const onOption = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
         options(c)[0]!.dispatchEvent(onOption);
         expect(onOption.defaultPrevented).toBe(true);
+        // The list's own padding, between or around the options, too.
+        const onPadding = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+        c.list.dispatchEvent(onPadding);
+        expect(onPadding.defaultPrevented).toBe(true);
         expect(c.isOpen()).toBe(true);
     });
 

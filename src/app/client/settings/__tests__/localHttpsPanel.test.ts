@@ -511,9 +511,9 @@ describe('local https panel', () => {
     });
 });
 
-// 0.5.5: one-word names are allowed, so the only names refused for being too
-// broad are public suffixes -- said while typing, with generate held back.
-describe('local https panel: public-suffix names', () => {
+// 0.5.5: one-word names are allowed unless they are a real internet TLD (or a
+// public suffix like co.uk) -- said while typing, with generate held back.
+describe('local https panel: internet TLDs and public suffixes', () => {
     async function build(fetchFn: typeof fetch = vi.fn(async () => new Response(JSON.stringify(state())))) {
         const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         const subject = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
@@ -540,7 +540,7 @@ describe('local https panel: public-suffix names', () => {
         p.type('  COM ');
         expect(p.warning.hidden).toBe(false);
         expect(p.warning.textContent).toBe(
-            '"COM" is a public internet suffix, not a computer\'s name, so it can\'t be used. type the name your devices use to reach this computer.',
+            '"COM" is an internet domain ending, not a computer\'s name, so it can\'t be used. use something like COM.lan, or the name your devices use to reach this computer.',
         );
         expect(p.warning.classList.contains('settings-status-warning')).toBe(true);
         expect(p.warning.style.gridColumn).toBe('1 / -1');
@@ -555,13 +555,28 @@ describe('local https panel: public-suffix names', () => {
         expect(p.generate.disabled).toBe(false);
     });
 
-    it.each(['nas', 'dev', 'app', 'me', 'io', 'co', 'devices.lan'])('lets the name "%s" through', async (name) => {
-        const p = await build();
-        p.hostname();
-        p.type(name);
-        expect(p.warning.hidden).toBe(true);
-        expect(p.generate.disabled).toBe(false);
-    });
+    it.each(['de', 'media', 'dev', 'app', 'io', 'De', 'MEDIA', 'xn--p1ai', 'XN--P1AI', 'org.uk'])(
+        'refuses the real TLD or suffix "%s", any case, and holds generate back',
+        async (name) => {
+            const p = await build();
+            p.hostname();
+            p.type(name);
+            expect(p.warning.hidden).toBe(false);
+            expect(p.warning.textContent).toBe(publicSuffixWarning(name));
+            expect(p.generate.disabled).toBe(true);
+        },
+    );
+
+    it.each(['htpc', 'nas', 'lan', 'local', 'home', 'localhost', 'media.lan', 'devices.lan'])(
+        'lets the name "%s" through',
+        async (name) => {
+            const p = await build();
+            p.hostname();
+            p.type(name);
+            expect(p.warning.hidden).toBe(true);
+            expect(p.generate.disabled).toBe(false);
+        },
+    );
 
     it('never warns in ip mode, and a flip to ip lifts a hostname refusal', async () => {
         const p = await build();
@@ -627,7 +642,7 @@ describe('local https panel: public-suffix names', () => {
         expect(p.generate.disabled).toBe(true);
         // A refusal and then a usable name while the request is out: still held.
         p.type('com');
-        p.type('media');
+        p.type('htpc');
         expect(p.generate.disabled).toBe(true);
 
         answer(new Response(JSON.stringify({ status: 'ready', kind: 'hostname', subject: 'nas' })));
@@ -635,7 +650,7 @@ describe('local https panel: public-suffix names', () => {
         expect(p.generate.disabled).toBe(false);
     });
 
-    it('says "name" when a hostname generate is refused without a reason, and "address" for an ip one', async () => {
+    it('says "name" when a hostname generate is refused without a reason, and "address" for an ip one -- the copy the server sends', async () => {
         const refuse = vi.fn(async (url: RequestInfo | URL) =>
             url === '/api/tls/generate'
                 ? new Response('not json', { status: 400 })
@@ -661,7 +676,7 @@ describe('local https panel: public-suffix names', () => {
     it('shows the server reason for a refused generate as given (it already names a name or an address)', async () => {
         const fetchFn = vi.fn(async (url: RequestInfo | URL) =>
             url === '/api/tls/generate'
-                ? new Response(JSON.stringify({ error: 'that name could not be used for a certificate' }), {
+                ? new Response(JSON.stringify({ error: 'that name could not be used for a certificate.' }), {
                       status: 400,
                   })
                 : new Response(JSON.stringify(state())),
@@ -672,7 +687,7 @@ describe('local https panel: public-suffix names', () => {
         p.generate.click();
         await new Promise((r) => setTimeout(r, 0));
         expect(p.el.querySelector('[data-tls-alert]')!.textContent).toBe(
-            'that name could not be used for a certificate',
+            'that name could not be used for a certificate.',
         );
     });
 
@@ -686,13 +701,14 @@ describe('local https panel: public-suffix names', () => {
 
     it('publicSuffixWarning quotes the name as typed', () => {
         expect(publicSuffixWarning('net')).toBe(
-            '"net" is a public internet suffix, not a computer\'s name, so it can\'t be used. type the name your devices use to reach this computer.',
+            '"net" is an internet domain ending, not a computer\'s name, so it can\'t be used. use something like net.lan, or the name your devices use to reach this computer.',
         );
     });
 });
 
-// 0.5.5: the one transient alert shows in the item of the action that caused
-// it; at the bottom of the panel a refused generate reported under Exposure.
+// The one transient alert stays in ONE place: the bottom of the tab, below and
+// outside all three cards, whichever action raised it (user decision after the
+// 0.5.5 review; a version that moved it beside each action was reverted).
 describe('local https panel: where the transient alert shows', () => {
     beforeEach(() => {
         HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
@@ -703,6 +719,7 @@ describe('local https panel: where the transient alert shows', () => {
         });
     });
     afterEach(() => {
+        vi.useRealTimers();
         document.body.replaceChildren();
         vi.restoreAllMocks();
     });
@@ -725,65 +742,56 @@ describe('local https panel: where the transient alert shows', () => {
             );
         });
         const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['10.0.0.5'] });
-        const itemOf = (hook: string) => el.querySelector(`[${hook}]`)!.closest('.settings-item')!;
         const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
-        const settle = () => new Promise((r) => setTimeout(r, 0));
-        return { el, itemOf, alert, settle };
+        return { el, alert };
     }
 
-    it('starts hidden in the certificate item, as the last line', async () => {
-        const { itemOf, alert } = await build();
+    /** Where the alert is: the tab's last element, after every card, in no card or item. */
+    function expectAtTheBottom(el: HTMLElement, alert: HTMLElement): void {
+        expect(alert.parentElement).toBe(el);
+        expect(el.lastElementChild).toBe(alert);
+        expect(alert.closest('.settings-card, .settings-item')).toBeNull();
+        const cards = el.querySelectorAll('.settings-card');
+        expect(cards).toHaveLength(3);
+        expect(cards[2]!.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+
+    it('is the last element of the tab, after the Exposure card, and starts hidden', async () => {
+        const { el, alert } = await build();
         expect(alert.hidden).toBe(true);
-        expect(alert.parentElement).toBe(itemOf('data-tls-generate'));
-    });
-
-    it('generate: the certificate item', async () => {
-        const { el, itemOf, alert, settle } = await build();
-        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
-        await settle();
-        expect(alert.hidden).toBe(false);
-        expect(alert.parentElement).toBe(itemOf('data-tls-generate'));
-        expect(alert.nextElementSibling).toBeNull();
-    });
-
-    it('download ca: the trust item, then generate brings it back to the certificate item', async () => {
-        const { el, itemOf, alert, settle } = await build();
-        el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
-        await settle();
-        expect(alert.textContent).toBe('slow down');
-        expect(alert.parentElement).toBe(itemOf('data-tls-download'));
-        expect(alert.nextElementSibling).toBeNull();
-        // Still the one element, moved rather than copied.
+        expectAtTheBottom(el, alert);
         expect(el.querySelectorAll('[data-tls-alert]')).toHaveLength(1);
-
-        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
-        await settle();
-        expect(alert.parentElement).toBe(itemOf('data-tls-generate'));
     });
 
-    it('exposure ok: the exposure item, below its notices', async () => {
-        const { el, itemOf, alert, settle } = await build();
-        el.querySelector<HTMLButtonElement>('[data-exposure-ok]')!.click();
-        await settle();
-        expect(alert.textContent).toBe('refused');
-        expect(alert.parentElement).toBe(itemOf('data-exposure-ok'));
-        expect(alert.nextElementSibling).toBeNull();
+    it.each([
+        ['generate', '[data-tls-generate]', 'nope'],
+        ['download ca', '[data-tls-download]', 'slow down'],
+        ['exposure ok', '[data-exposure-ok]', 'refused'],
+    ])('%s: reports there, an error held for 10 s and not a moment more', async (_label, button, text) => {
+        vi.useFakeTimers();
+        const { el, alert } = await build();
+        el.querySelector<HTMLButtonElement>(button)!.click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(alert.hidden).toBe(false);
+        expect(alert.textContent).toBe(text);
+        expectAtTheBottom(el, alert);
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(alert.hidden).toBe(false);
+        await vi.advanceTimersByTimeAsync(2);
+        expect(alert.hidden).toBe(true);
     });
 
-    it('revoke: the certificate item', async () => {
-        const { el, itemOf, alert, settle } = await build();
-        el.querySelector<HTMLButtonElement>('[data-exposure-ok]')!.click();
-        await settle();
-        expect(alert.parentElement).toBe(itemOf('data-exposure-ok'));
+    it('revoke: reports there too', async () => {
+        const { el, alert } = await build();
         el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.click();
-        await settle();
+        await new Promise((r) => setTimeout(r, 0));
         const ok = [...document.querySelectorAll<HTMLButtonElement>('dialog button')].find(
             (b) => b.textContent === 'ok',
         )!;
         ok.click();
-        await settle();
+        await new Promise((r) => setTimeout(r, 0));
         expect(alert.textContent).toBe('not here');
-        expect(alert.parentElement).toBe(itemOf('data-tls-revoke'));
+        expectAtTheBottom(el, alert);
     });
 });
 
@@ -1065,10 +1073,10 @@ describe('pure notification helpers', () => {
 });
 
 describe('local https panel — transient alert convention', () => {
-    // This repo's rule: transient outcomes get ONE alert element (5s success /
-    // 10s error), never a status line per control; since 0.5.5 it shows in the
-    // item of the action that caused it (the describe below pins where). Each
-    // test below pins both that the alert
+    // This repo's rule: transient outcomes get ONE alert in one place at the
+    // bottom of the tab (5s success / 10s error), never a status line per
+    // control (the describe above pins where). Each test below pins both that
+    // the alert
     // fires with the right text AND that it stops existing at the wrong
     // moment — a version with no timer (always visible) or an immediate hide
     // (never visible) each fail one of the two assertions.

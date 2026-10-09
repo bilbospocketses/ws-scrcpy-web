@@ -973,6 +973,15 @@ dialog.settings-modal .settings-status[hidden] {
 }
 
 /*
+ * A tab's one transient alert (the Local HTTPS tab's): at the bottom of the
+ * tab, below and outside its cards, set off from the last card so it never
+ * reads as one of that card's notes. No `display`, so `hidden` still works.
+ */
+dialog.settings-modal .settings-status.settings-tab-alert {
+    margin-top: 0.75rem;
+}
+
+/*
  * A help link inside a Settings status line (the Local HTTPS tab's install
  * guide and certificate-subject explainer, 0.5.3). Theme tokens, so it reads in
  * both themes; underlined so it is a link without relying on color alone. The
