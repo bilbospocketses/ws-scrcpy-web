@@ -226,20 +226,32 @@ test.describe('settings / embedding', () => {
         await expect(row.allPending).toHaveCount(0);
         await expect(footerSave(settings)).toBeDisabled();
 
-        // http & https on a new port: two pending origins; a default port is
-        // stored as no port, the way a browser sends it.
-        await row.address.fill('::1');
+        // An IPv6 address, bare or bracketed: refused with its own reason, since a
+        // browser discards an IPv6 frame-ancestors source (0.5.3 review).
+        // Copied from src/common/embedderOrigin.ts (IPV6_EMBEDDER_ERROR).
+        const ipv6Refusal =
+            "browsers don't accept ipv6 addresses for embedding; use a hostname (such as localhost) or an ipv4 address.";
         await row.port.fill('');
+        for (const address of ['::1', '[::1]']) {
+            await row.address.fill(address);
+            await expect(row.message).toHaveText(ipv6Refusal);
+            await expect(row.add).toBeDisabled();
+        }
+        await expect(row.allPending).toHaveCount(0);
+
+        // http & https with no port: two pending origins; a default port is
+        // stored as no port, the way a browser sends it.
+        await row.address.fill('127.0.0.1');
         await row.scheme.selectOption({ label: 'http & https' });
         await row.add.click();
-        await expect(row.pending('http://[::1]')).toBeVisible();
-        await expect(row.pending('https://[::1]')).toBeVisible();
+        await expect(row.pending('http://127.0.0.1')).toBeVisible();
+        await expect(row.pending('https://127.0.0.1')).toBeVisible();
 
         // The same again: already waiting, still two.
-        await row.address.fill('[::1]');
+        await row.address.fill('127.0.0.1');
         await row.add.click();
         await expect(row.message).toHaveText(
-            'http://[::1] is already waiting to be saved; https://[::1] is already waiting to be saved.',
+            'http://127.0.0.1 is already waiting to be saved; https://127.0.0.1 is already waiting to be saved.',
         );
         await expect(row.allPending).toHaveCount(2);
 

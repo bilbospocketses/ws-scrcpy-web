@@ -152,7 +152,12 @@ describe('the add row', () => {
     it.each([
         ['tools_box', '', /not a valid ip address or hostname\. .*\(no underscores\).*punycode form \(xn--…\)/],
         ['256.1.1.1', '', /not a valid ipv4 address/],
-        ['2001:db8::g', '', /not a valid ipv6 address/],
+        [
+            '::1',
+            '',
+            /^browsers don't accept ipv6 addresses for embedding; use a hostname \(such as localhost\) or an ipv4 address\.$/,
+        ],
+        ['[fe80::1]', '', /browsers don't accept ipv6 addresses for embedding/],
         ['localhost:5159', '', /port box/],
         ['localhost', '0', /port must be a whole number from 1 to 65535/],
         ['localhost', '65536', /port must be a whole number from 1 to 65535/],
@@ -243,10 +248,10 @@ describe('adding stages, it does not write', () => {
         ]);
     });
 
-    it('brackets a bare IPv6 address', async () => {
+    it('stages an IPv4 address as typed', async () => {
         const ui = await buildTab();
-        ui.add('::1', '5159');
-        expect(pendingEmbedOrigins(ui.store)).toEqual(['http://[::1]:5159']);
+        ui.add('192.168.1.50', '5159');
+        expect(pendingEmbedOrigins(ui.store)).toEqual(['http://192.168.1.50:5159']);
     });
 
     it('lists already-approved origins above the pending ones, with revoke', async () => {

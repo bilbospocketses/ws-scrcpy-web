@@ -2,7 +2,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildEmbedderOrigins, embedderOriginsFromInput, FRAME_ANCESTORS_ADD_ID } from '../../common/embedderOrigin';
+import {
+    buildEmbedderOrigins,
+    embedderOriginsFromInput,
+    FRAME_ANCESTORS_ADD_ID,
+    IPV6_EMBEDDER_ERROR,
+} from '../../common/embedderOrigin';
 import { EMBED_DECIDED_LOCALLY_ERROR } from '../api/EmbedRequestApi';
 import {
     frameAncestorsAddRefusal,
@@ -114,8 +119,7 @@ describe('the origins the tab stages are exactly what the server stores', () => 
         ['tools.example.com', '443', 'https'],
         ['tools.example.com', '80', 'both'],
         ['192.168.1.50', '8080', 'https'],
-        ['::1', '5159', 'http'],
-        ['[2001:0DB8::0001]', '', 'both'],
+        ['192.168.1.50', '', 'both'],
     ] as const)('%s port %s %s', (address, port, scheme) => {
         const built = embedderOriginsFromInput({ address, port, scheme });
         if (!built.ok) throw new Error(built.error);
@@ -145,6 +149,12 @@ describe('frameAncestorsAddRefusal', () => {
         ['another scheme', ['ftp://files.example'], 'not an http(s) origin with no path: "ftp://files.example"'],
         ['a non-string', [5159], 'not an http(s) origin with no path: 5159'],
         ['a bare host', ['localhost'], 'not an http(s) origin with no path: "localhost"'],
+        // 0.5.3 review: a browser discards an IPv6 frame-ancestors source.
+        [
+            'an IPv6 origin',
+            ['http://localhost:5159', 'http://[::1]:5159'],
+            `"http://[::1]:5159": ${IPV6_EMBEDDER_ERROR}`,
+        ],
     ])('refuses %s', (_name, to, error) => {
         expect(frameAncestorsAddRefusal(to)).toBe(error);
     });
@@ -227,6 +237,23 @@ describe('POST /api/settings/batch with frameAncestorsAdd', () => {
         expect(walCount()).toBe(0);
     });
 
+    it('refuses an IPv6 origin with its own reason, before any write', async () => {
+        const configPath = setup({ ...BOOT, frameAncestors: ['http://localhost:5159'] });
+        const before = fs.readFileSync(configPath, 'utf-8');
+
+        const r = await post([addChange(['http://localhost:6000', 'https://[::1]'])]);
+
+        expect(r.getStatus()).toBe(400);
+        expect(r.getJson()).toEqual({
+            ok: false,
+            applied: [],
+            failed: { id: FRAME_ANCESTORS_ADD_ID, error: `"https://[::1]": ${IPV6_EMBEDDER_ERROR}` },
+        });
+        expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
+        expect(Config.getInstance().frameAncestors).toEqual(['http://localhost:5159']);
+        expect(walCount()).toBe(0);
+    });
+
     it.each([
         ['a wildcard', ['*']],
         ['an empty list', []],
@@ -287,6 +314,43 @@ describe('who may pre-approve an embedder', () => {
         const r = await post([addChange(['http://localhost:5159'])], OFF_BOX);
         expect(r.getStatus()).toBe(403);
         expect(r.getJson()).toEqual({ error: 'admin actions are limited to this machine' });
+    });
+});
+
+/**
+ * An IPv6 entry left in config.json by a build before 0.5.3, which accepted one
+ * though no browser ever honored it. Load skips it (with a warning, pinned in
+ * config.frameAncestors.test.ts), so it is not listed and there is nothing live
+ * to revoke. Deliberately, it survives an unrelated save (`saveToDisk` keeps
+ * the raw key) and is dropped the next time the embedder list itself is
+ * written, which writes the in-memory list whole.
+ */
+describe('an IPv6 entry from an older build', () => {
+    const OLD = ['http://[::1]:47812', 'http://localhost:5159'];
+
+    it('is skipped at load without stopping the server, and is not listed or in the policy', () => {
+        setup({ ...BOOT, frameAncestors: OLD });
+
+        expect(Config.getInstance().frameAncestors).toEqual(['http://localhost:5159']);
+        expect(securityHeaders()['Content-Security-Policy']).toBe("frame-ancestors 'self' http://localhost:5159");
+    });
+
+    it('is kept in config.json through an unrelated save', async () => {
+        const configPath = setup({ ...BOOT, frameAncestors: OLD });
+
+        const r = await post([{ id: 'autoUpdate', label: 'Automatic updates', from: true, to: false }]);
+
+        expect(r.getStatus()).toBe(200);
+        expect(readConfig(configPath)['frameAncestors']).toEqual(OLD);
+    });
+
+    it('is dropped from config.json the next time the embedder list is written', async () => {
+        const configPath = setup({ ...BOOT, frameAncestors: OLD });
+
+        const r = await post([addChange(['http://localhost:6000'])]);
+
+        expect(r.getStatus()).toBe(200);
+        expect(readConfig(configPath)['frameAncestors']).toEqual(['http://localhost:5159', 'http://localhost:6000']);
     });
 });
 

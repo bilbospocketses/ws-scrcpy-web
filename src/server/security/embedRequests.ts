@@ -64,7 +64,10 @@ function expireIfStale(): void {
 
 /**
  * Record a request to embed the app. Returns null when the origin is not a
- * usable frame ancestor, so a caller cannot park junk in the prompt.
+ * usable frame ancestor, so a caller cannot park junk in the prompt. That
+ * includes an IPv6 origin (`parseFrameAncestorOrigin` refuses it, since a
+ * browser would discard it from `frame-ancestors`), so one is never shown to
+ * an admin as approvable.
  */
 export function createRequest(origin: string, appName: string): EmbedRequest | null {
     const normalized = parseFrameAncestorOrigin(origin);
@@ -96,9 +99,30 @@ export function getStatus(id: string): EmbedRequestStatus {
 }
 
 /**
+ * The request a decision names, if it is still pending, WITHOUT deciding it.
+ *
+ * Approving is two steps -- persist the origin, then record the outcome -- and
+ * the outcome must not read "approved" until the origin is actually stored: a
+ * failed config.json write rolls the live policy back, so a request marked
+ * approved first would tell the asking app it may embed while the server still
+ * refuses to be framed. The decision route therefore looks the request up
+ * here, persists, and only then calls `resolveRequest`. Both run in the same
+ * synchronous stretch (the write is sync), so nothing can resolve, cancel or
+ * replace the request in between.
+ */
+export function findPendingRequest(id: string): EmbedRequest | null {
+    expireIfStale();
+    if (!current || current.id !== id || current.status !== 'pending') return null;
+    return { id: current.id, origin: current.origin, appName: current.appName, createdAt: current.createdAt };
+}
+
+/**
  * Record a human's decision. Returns the request it applied to, or null when
  * the id does not match a pending request — a stale prompt (already answered,
  * expired, or superseded) must never approve anything.
+ *
+ * For an approval, call this only once the origin is persisted (see
+ * `findPendingRequest`).
  */
 export function resolveRequest(id: string, approved: boolean): EmbedRequest | null {
     expireIfStale();

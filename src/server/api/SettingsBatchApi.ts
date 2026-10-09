@@ -1,11 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { FRAME_ANCESTORS_ADD_ID } from '../../common/embedderOrigin';
+import { FRAME_ANCESTORS_ADD_ID, IPV6_EMBEDDER_ERROR } from '../../common/embedderOrigin';
 import { resolveUserId } from '../auth/currentUser';
 import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
 import { Logger } from '../Logger';
-import { parseFrameAncestorOrigin } from '../security/frameGuard';
+import { isIpv6FrameAncestor, parseFrameAncestorOrigin } from '../security/frameGuard';
 import { isLoopback } from '../security/loopback';
 import { applyUpdaterConfigChange, type UpdaterControls } from '../updaterConfigSync';
 import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
@@ -62,6 +62,10 @@ export function frameAncestorsAddRefusal(to: unknown): string | null {
         return `at most ${MAX_FRAME_ANCESTORS_PER_ADD} origins can be added in one save`;
     }
     for (const entry of to) {
+        if (typeof entry === 'string' && isIpv6FrameAncestor(entry)) {
+            // Its own reason: a browser discards an IPv6 frame-ancestors source.
+            return `${JSON.stringify(entry)}: ${IPV6_EMBEDDER_ERROR}`;
+        }
         if (typeof entry !== 'string' || parseFrameAncestorOrigin(entry) === null) {
             return `not an http(s) origin with no path: ${JSON.stringify(entry)}`;
         }

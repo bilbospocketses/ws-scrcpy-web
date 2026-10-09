@@ -3,6 +3,7 @@ import {
     buildEmbedderOrigins,
     embedderOriginsFromInput,
     HOSTNAME_RULES_HINT,
+    IPV6_EMBEDDER_ERROR,
     isEmbedderScheme,
     parseEmbedderAddress,
     parseEmbedderPort,
@@ -47,36 +48,51 @@ describe('parseEmbedderAddress: IPv4', () => {
     });
 });
 
-describe('parseEmbedderAddress: IPv6', () => {
-    it('accepts a bare address and emits it bracketed', () => {
-        expect(address('::1')).toBe('[::1]');
-        expect(address('2001:db8::1')).toBe('[2001:db8::1]');
-    });
-
-    it('accepts a bracketed address', () => {
-        expect(address('[::1]')).toBe('[::1]');
-        expect(address('[fe80::1]')).toBe('[fe80::1]');
-    });
-
-    it('compresses and lowercases, the way a browser serializes the origin', () => {
-        expect(address('2001:0DB8:0000:0000:0000:0000:0000:0001')).toBe('[2001:db8::1]');
-        expect(address('[0:0:0:0:0:0:0:1]')).toBe('[::1]');
-    });
-
-    it('accepts an IPv4-mapped address', () => {
-        expect(address('::ffff:192.168.1.5')).toBe('[::ffff:c0a8:105]');
+/**
+ * IPv6 is refused (0.5.3 review): the CSP host-source grammar has no IPv6
+ * literals, so a browser discards a `frame-ancestors` source such as
+ * `http://[::1]:47812` and the embedder stays blocked while the list says it is
+ * allowed. Every form gets the one specific message, not the generic one.
+ */
+describe('parseEmbedderAddress: IPv6 is refused', () => {
+    it('pins the message', () => {
+        expect(IPV6_EMBEDDER_ERROR).toBe(
+            "browsers don't accept ipv6 addresses for embedding; use a hostname (such as localhost) or an ipv4 address.",
+        );
     });
 
     it.each([
+        ['::1', 'bare loopback'],
+        ['[::1]', 'bracketed loopback'],
+        ['fe80::1', 'bare link-local'],
+        ['[fe80::1]', 'bracketed link-local'],
+        ['2001:db8::1', 'a compressed global address'],
+        ['2001:0DB8:0000:0000:0000:0000:0000:0001', 'a full, uppercase address'],
+        ['[0:0:0:0:0:0:0:1]', 'a full, bracketed address'],
+        ['::ffff:192.168.1.5', 'an IPv4-mapped address'],
+        ['fe80::1%eth0', 'a zone id'],
+        ['[::1]:5159', 'a bracketed address with a port (IPv6 is the first problem, not the port)'],
         ['[::1', 'an unclosed bracket'],
         ['::1]', 'an unopened bracket'],
-        ['1:2:3:4:5:6:7:8:9', 'nine groups'],
+        ['  ::1  ', 'surrounding spaces'],
+    ])('refuses %s (%s) with the IPv6 message', (v) => {
+        expect(addressError(v)).toBe(IPV6_EMBEDDER_ERROR);
+    });
+
+    it.each([
         ['2001:db8::g1', 'a non-hex digit'],
-        ['fe80::1%eth0', 'a zone id'],
         ['[]', 'nothing in the brackets'],
-        ['1:::2', 'a triple colon'],
-    ])('refuses %s (%s)', (v) => {
-        expect(addressError(v)).toMatch(/not a valid ipv6 address/);
+        ['[localhost]', 'a bracketed name'],
+    ])('gives %s (%s) the generic message: it is not an IPv6 address either', (v) => {
+        expect(addressError(v)).toMatch(/not a valid ip address or hostname/);
+    });
+
+    it('refuses an IPv6 address as a whole add row, in the address box', () => {
+        expect(embedderOriginsFromInput({ address: '::1', port: '', scheme: 'https' })).toEqual({
+            ok: false,
+            field: 'address',
+            error: IPV6_EMBEDDER_ERROR,
+        });
     });
 });
 
@@ -147,7 +163,6 @@ describe('parseEmbedderAddress: the near misses get a pointed message', () => {
     it('refuses host:port, naming the port box', () => {
         expect(addressError('localhost:5159')).toBe('enter the port in the port box, not after the address.');
         expect(addressError('192.168.1.5:8080')).toBe('enter the port in the port box, not after the address.');
-        expect(addressError('[::1]:5159')).toBe('enter the port in the port box, not after the address.');
     });
 });
 
@@ -210,10 +225,6 @@ describe('buildEmbedderOrigins', () => {
         expect(buildEmbedderOrigins('localhost', 80, 'both')).toEqual(['http://localhost', 'https://localhost:80']);
         expect(buildEmbedderOrigins('localhost', 443, 'both')).toEqual(['http://localhost:443', 'https://localhost']);
     });
-
-    it('keeps an IPv6 host bracketed', () => {
-        expect(buildEmbedderOrigins('[::1]', 5159, 'http')).toEqual(['http://[::1]:5159']);
-    });
 });
 
 describe('embedderOriginsFromInput', () => {
@@ -222,9 +233,9 @@ describe('embedderOriginsFromInput', () => {
             ok: true,
             origins: ['http://localhost:5159', 'https://localhost:5159'],
         });
-        expect(embedderOriginsFromInput({ address: '::1', port: '', scheme: 'https' })).toEqual({
+        expect(embedderOriginsFromInput({ address: '192.168.1.50', port: '', scheme: 'https' })).toEqual({
             ok: true,
-            origins: ['https://[::1]'],
+            origins: ['https://192.168.1.50'],
         });
     });
 

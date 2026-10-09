@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sanitizeFrameAncestors } from '../Config';
-import { parseFrameAncestorOrigin } from '../security/frameGuard';
+import { isIpv6FrameAncestor, parseFrameAncestorOrigin } from '../security/frameGuard';
 
 describe('sanitizeFrameAncestors', () => {
     it('returns an empty list when the key is absent', () => {
@@ -76,6 +76,61 @@ describe('sanitizeFrameAncestors', () => {
         expect(warn).toHaveBeenCalledTimes(4);
         expect(warn.mock.calls[0]?.[0]).toMatch(/no wildcard/);
     });
+
+    // 0.5.3 review: an IPv6 entry, which builds before 0.5.3 accepted, is skipped
+    // with a warning that says why (a browser never honored it), not a crash.
+    it('skips an IPv6 entry with a warning naming the reason, keeping the good ones', () => {
+        const warn = vi.fn();
+
+        expect(
+            sanitizeFrameAncestors(
+                ['http://[::1]:47812', 'http://localhost:5159', 'https://[fe80::1]', 'http://192.168.1.20:8080'],
+                warn,
+            ),
+        ).toEqual(['http://localhost:5159', 'http://192.168.1.20:8080']);
+        expect(warn).toHaveBeenCalledTimes(2);
+        expect(warn.mock.calls[0]?.[0]).toBe(
+            'config.json: frameAncestors entry "http://[::1]:47812" is an IPv6 address, which browsers do not ' +
+                'accept in frame-ancestors, so it never allowed embedding; use a hostname (such as localhost) or ' +
+                'an IPv4 address. Skipping; it is removed from config.json the next time the list of allowed ' +
+                'embedders changes',
+        );
+        expect(warn.mock.calls[1]?.[0]).toMatch(/"https:\/\/\[fe80::1\]" is an IPv6 address/);
+    });
+
+    it('does not give a non-IPv6 refusal the IPv6 reason', () => {
+        const warn = vi.fn();
+        sanitizeFrameAncestors(['http://a_b.lan', 'http://[::1]/path'], warn);
+        expect(warn).toHaveBeenCalledTimes(2);
+        for (const [msg] of warn.mock.calls) {
+            expect(msg).toMatch(/must be an http\(s\) origin only/);
+            expect(msg).not.toMatch(/IPv6/);
+        }
+    });
+});
+
+describe('isIpv6FrameAncestor', () => {
+    it.each([
+        ['http://[::1]:5159'],
+        ['https://[fd00::20]'],
+        ['  HTTP://[0:0:0:0:0:0:0:1]  '],
+        ['http://[::ffff:1.2.3.4]'],
+    ])('is true for %j', (value) => {
+        expect(isIpv6FrameAncestor(value)).toBe(true);
+    });
+
+    it.each([
+        ['http://localhost:5159'],
+        ['http://192.168.1.20'],
+        // Refused for another reason first: a path, a scheme, a separator.
+        ['http://[::1]/embed'],
+        ['ftp://[::1]'],
+        ['http://[::1];sandbox'],
+        ['not a url'],
+        [''],
+    ])('is false for %j', (value) => {
+        expect(isIpv6FrameAncestor(value)).toBe(false);
+    });
 });
 
 /**
@@ -129,11 +184,23 @@ describe('parseFrameAncestorOrigin', () => {
         // A Unicode name normalizes to the same punycode a browser sends.
         ['http://bücher.example', 'http://xn--bcher-kva.example'],
         ['http://my-tool.lan', 'http://my-tool.lan'],
-        // IPv6 acceptance is unchanged in this round.
-        ['http://[::1]:5159', 'http://[::1]:5159'],
-        ['https://[fd00::20]', 'https://[fd00::20]'],
     ])('accepts %j as %j', (value, origin) => {
         expect(parseFrameAncestorOrigin(value)).toBe(origin);
+    });
+
+    // 0.5.3 review: the CSP host-source grammar has no IPv6 literals, so a
+    // browser discards `http://[::1]:47812` from frame-ancestors (proved in
+    // Chromium) and an "allowed" IPv6 embedder stays blocked. Refused at the one
+    // parser, which covers config.json load, the consent route and the batch.
+    it.each([
+        ['http://[::1]:5159'],
+        ['https://[fd00::20]'],
+        ['http://[fe80::1]'],
+        ['http://[2001:db8::1]:8080'],
+        ['http://[0:0:0:0:0:0:0:1]'],
+        ['http://[::ffff:192.168.1.5]'],
+    ])('refuses the IPv6 origin %j', (value) => {
+        expect(parseFrameAncestorOrigin(value)).toBeNull();
     });
 
     it('still refuses a path, query, fragment or non-http scheme', () => {

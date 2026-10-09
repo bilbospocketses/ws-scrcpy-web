@@ -3219,10 +3219,26 @@ Three things the allowlist implies, all easy to state wrongly:
   `frameAncestorsAdd`, whose `to` is the array of origins to add and whose
   `from` is always `[]`. The origins are built with `new URL(...).origin`, the
   same normalization `parseFrameAncestorOrigin` applies and a browser uses for
-  `Origin`: lowercased, IPv6 bracketed and compressed, and a scheme's default
-  port (80 / 443) dropped, so a blank port and a typed `80` with http stage the
-  identical `http://host`. That is what makes the tab's duplicate check exact: an
-  origin already approved or already pending is never staged twice. Pending
+  `Origin`: lowercased, and a scheme's default port (80 / 443) dropped, so a
+  blank port and a typed `80` with http stage the identical `http://host`. That
+  is what makes the tab's duplicate check exact: an origin already approved or
+  already pending is never staged twice. **An IPv6 address is refused** (0.5.3
+  review): the CSP host-source grammar has no IPv6 literals, so a browser
+  discards a `frame-ancestors` source such as `http://[::1]:47812` and the
+  embedder stays blocked while the list says it is allowed. The add row answers
+  any IPv6-looking address, bare or bracketed, with port or without, with
+  `IPV6_EMBEDDER_ERROR` (*browsers don't accept ipv6 addresses for embedding;
+  use a hostname (such as localhost) or an ipv4 address.*). The server refuses
+  one at the one parser every path shares, `parseFrameAncestorOrigin`
+  (`src/server/security/frameGuard.ts`), and `isIpv6FrameAncestor` lets each
+  caller give it its own reason: `POST /embed-request` answers 400 with the same
+  message, so no prompt is raised; a `frameAncestorsAdd` save is refused as
+  `"<origin>": <message>` before anything is written; and `sanitizeFrameAncestors`
+  skips an IPv6 entry left in `config.json` by an earlier version with a warning
+  that it never allowed embedding. A skipped entry is not listed (nothing live to
+  revoke); `saveToDisk` preserves the raw key through unrelated saves, and the
+  entry is dropped the next time the embedder list itself is written, since
+  `applyAndPersistFrameAncestors` writes the in-memory list whole. Pending
   entries are listed with a `pending — saved when you click save` tag and a
   **remove** button; removing the last one sets the field back to its frozen
   baseline array, because the store compares with `Object.is` and a fresh `[]`

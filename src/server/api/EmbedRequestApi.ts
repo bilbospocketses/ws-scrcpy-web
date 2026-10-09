@@ -1,8 +1,17 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { IPV6_EMBEDDER_ERROR } from '../../common/embedderOrigin';
 import { requireAdmin } from '../auth/requireAdmin';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
-import { cancelRequest, createRequest, getPendingRequest, getStatus, resolveRequest } from '../security/embedRequests';
+import {
+    cancelRequest,
+    createRequest,
+    findPendingRequest,
+    getPendingRequest,
+    getStatus,
+    resolveRequest,
+} from '../security/embedRequests';
+import { isIpv6FrameAncestor } from '../security/frameGuard';
 import { isLoopback } from '../security/loopback';
 import { readJsonBody } from './utils';
 
@@ -122,6 +131,13 @@ export class EmbedRequestApi {
         const created = createRequest(origin, appName);
         if (!created) {
             res.writeHead(400);
+            if (isIpv6FrameAncestor(origin)) {
+                // Refused outright rather than shown to an admin as approvable:
+                // a browser discards an IPv6 frame-ancestors source, so an
+                // approval would read as allowed while the embed stayed blocked.
+                res.end(JSON.stringify({ error: IPV6_EMBEDDER_ERROR }));
+                return true;
+            }
             res.end(JSON.stringify({ error: 'origin must be an http(s) origin with no path' }));
             return true;
         }
@@ -217,7 +233,10 @@ export class EmbedRequestApi {
         const id = typeof body['id'] === 'string' ? body['id'] : '';
         const approved = body['approved'] === true;
 
-        const request = resolveRequest(id, approved);
+        // Looked up, not yet decided: an approval is recorded only once the
+        // origin is stored (below), so a failed write never leaves the request
+        // reading "approved" while the server still refuses to be framed.
+        const request = findPendingRequest(id);
         if (!request) {
             // Already answered, expired, or superseded. Never approve on a
             // stale prompt.
@@ -227,19 +246,33 @@ export class EmbedRequestApi {
         }
 
         if (!approved) {
+            resolveRequest(id, false);
             log.info(`Embedding from ${request.origin} was denied`);
             res.writeHead(200);
             res.end(JSON.stringify({ status: 'denied' }));
             return true;
         }
 
-        const persisted = Config.getInstance().addFrameAncestor(request.origin);
+        // Nothing awaits between the lookup above and resolveRequest below, so
+        // the request cannot change underneath this. A failure leaves it
+        // pending: the prompt stays answerable and the asking app keeps waiting
+        // rather than being told it may embed.
+        let persisted: boolean;
+        try {
+            persisted = Config.getInstance().addFrameAncestor(request.origin);
+        } catch (err) {
+            // addFrameAncestor has already rolled the live policy back.
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn(`Approved embedding from ${request.origin} but config.json could not be written: ${message}`);
+            persisted = false;
+        }
         if (!persisted) {
-            log.warn(`Approved embedding from ${request.origin} but it is not a usable frame ancestor`);
+            log.warn(`Could not apply the approved origin ${request.origin}; the request stays pending`);
             res.writeHead(500);
             res.end(JSON.stringify({ error: 'could not apply the approved origin' }));
             return true;
         }
+        resolveRequest(id, true);
 
         log.info(`Embedding from ${request.origin} approved and applied`);
         res.writeHead(200);

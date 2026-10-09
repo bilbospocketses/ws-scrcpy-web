@@ -21,7 +21,7 @@ import { Db, dbDir } from './db/Db';
 import { EnvName } from './EnvName';
 import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
 import { Logger } from './Logger';
-import { parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
+import { isIpv6FrameAncestor, parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
 import { setAllowedHosts } from './security/originGuard';
 import { describeTlsHomeMigration, migrateLegacyTlsHome, resolveCertPaths } from './tls/certPaths';
 import { writeFileAtomicSync } from './util/atomicFile';
@@ -640,9 +640,25 @@ export function sanitizeFrameAncestors(raw: unknown, warn: (msg: string) => void
         // in the host) must not stop the server starting.
         const origin = parseFrameAncestorOrigin(entry);
         if (origin === null) {
+            if (isIpv6FrameAncestor(entry)) {
+                // Accepted by builds before 0.5.3, but it never worked: a browser
+                // discards an IPv6 `frame-ancestors` source. Skipped here, it is not
+                // listed in Settings → Embedding (there is nothing live to revoke).
+                // Like every skipped entry it stays in config.json through other
+                // saves (`saveToDisk` preserves the raw key) and is dropped the next
+                // time the embedder list itself changes, because
+                // `applyAndPersistFrameAncestors` writes the in-memory list whole.
+                warn(
+                    `config.json: frameAncestors entry ${JSON.stringify(entry)} is an IPv6 address, which browsers ` +
+                        'do not accept in frame-ancestors, so it never allowed embedding; use a hostname (such as ' +
+                        'localhost) or an IPv4 address. Skipping; it is removed from config.json the next time the ' +
+                        'list of allowed embedders changes',
+                );
+                continue;
+            }
             warn(
                 `config.json: frameAncestors entry ${JSON.stringify(entry)} must be an http(s) origin only ` +
-                    '(no path, no wildcard; a host of letters, digits, dots and hyphens, or an IPv6 literal); skipping',
+                    '(no path, no wildcard; a host of letters, digits, dots and hyphens); skipping',
             );
             continue;
         }

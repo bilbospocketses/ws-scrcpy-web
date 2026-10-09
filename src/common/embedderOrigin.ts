@@ -10,11 +10,15 @@
  * normalization the server applies to every frame ancestor
  * (`parseFrameAncestorOrigin`, `src/server/security/frameGuard.ts`) and the
  * same serialization a browser uses for `Origin` and for matching
- * `frame-ancestors`: the scheme and host are lowercased, an IPv6 literal is
- * bracketed and compressed, and a scheme's default port (80 for http, 443 for
- * https) is dropped. A staged origin therefore matches, character for
- * character, the one the server stores and the list it returns, which is what
- * makes the tab's duplicate check exact.
+ * `frame-ancestors`: the scheme and host are lowercased and a scheme's default
+ * port (80 for http, 443 for https) is dropped. A staged origin therefore
+ * matches, character for character, the one the server stores and the list it
+ * returns, which is what makes the tab's duplicate check exact.
+ *
+ * An IPv6 address is refused, here and on the server: the CSP host-source
+ * grammar has no IPv6 literals, so a browser discards a `frame-ancestors`
+ * source such as `http://[::1]:47812` and the embedder stays blocked however
+ * the list reads (proved in Chromium in the 0.5.3 review).
  */
 
 /**
@@ -41,25 +45,48 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 const LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 /** A decimal IPv4 octet with no leading zero (a URL parser reads `010` as octal 8). */
 const IPV4_OCTET_RE = /^(?:0|[1-9]\d{0,2})$/;
-/** What may sit inside an IPv6 literal (the dotted tail of `::ffff:1.2.3.4` included). */
-const IPV6_CHARS_RE = /^[0-9a-f:.]+$/i;
+/**
+ * An IPv6 address once any brackets and anything after them are taken off: two
+ * or more colons (no hostname or IPv4 address has any, and one is `host:port`),
+ * hex digits and dots (the tail of `::ffff:1.2.3.4`), and an optional zone id
+ * (`%eth0`). Only good enough to give an IPv6 address its own refusal instead
+ * of the generic hostname one; nothing is accepted by it.
+ */
+const IPV6_LIKE_RE = /^(?=(?:[^:]*:){2})[0-9a-f:.]+(?:%.*)?$/i;
 const MAX_HOSTNAME_LENGTH = 253;
 
 /** The second sentence of the add row's "not a valid ip address or hostname" error. */
 export const HOSTNAME_RULES_HINT =
     'a hostname uses only letters, digits, hyphens and dots (no underscores); type an internationalized name in its punycode form (xn--…).';
 
+/**
+ * The refusal for an IPv6 address, shared with the server (the consent route
+ * and the settings batch) so every place an embedder can be added says the
+ * same thing. A browser discards an IPv6 `frame-ancestors` source, so allowing
+ * one would show as allowed while the embedder stayed blocked.
+ */
+export const IPV6_EMBEDDER_ERROR =
+    "browsers don't accept ipv6 addresses for embedding; use a hostname (such as localhost) or an ipv4 address.";
+
 function fail<T>(error: string): Parsed<T> {
     return { ok: false, error };
 }
 
+/** True for an IPv6 address, bare or bracketed, with or without a port after the brackets. */
+function looksLikeIpv6(value: string): boolean {
+    const inner = value.replace(/^\[/, '').replace(/\].*$/, '');
+    return IPV6_LIKE_RE.test(inner);
+}
+
 /**
- * Validate the address box: an IPv4 address, an IPv6 address (bare or
- * bracketed), a hostname or a fully qualified domain name. Answers the host
- * as it goes into an origin: IPv6 bracketed and compressed, a name lowercased.
+ * Validate the address box: an IPv4 address, a hostname or a fully qualified
+ * domain name. Answers the host as it goes into an origin: a name lowercased.
  *
  * Anything else is refused with a message for the inline error, including the
- * two near misses a user is likely to paste: a whole URL, and `host:port`.
+ * near misses a user is likely to paste: a whole URL, `host:port`, and an IPv6
+ * address, which a browser will not match in `frame-ancestors`
+ * (`IPV6_EMBEDDER_ERROR`). The IPv6 check runs before the port one, so
+ * `[::1]:5159` is told about IPv6 rather than sent to the port box first.
  */
 export function parseEmbedderAddress(input: string): Parsed<string> {
     const value = input.trim();
@@ -67,13 +94,12 @@ export function parseEmbedderAddress(input: string): Parsed<string> {
     if (value.includes('/')) {
         return fail('enter only the address: choose the scheme from the list, and leave out any path.');
     }
+    if (looksLikeIpv6(value)) return fail(IPV6_EMBEDDER_ERROR);
 
-    const bracketed = value.startsWith('[') || value.endsWith(']');
     const colons = (value.match(/:/g) ?? []).length;
-    if ((!bracketed && colons === 1) || /^\[[^\]]*\]:/.test(value)) {
+    if (colons === 1) {
         return fail('enter the port in the port box, not after the address.');
     }
-    if (bracketed || colons > 1) return parseIpv6(value);
 
     // A URL parser reads a host whose LAST label is a number as an IPv4
     // address (WHATWG's "ends in a number"), so `1.2.3` becomes `1.2.0.3` and
@@ -97,23 +123,6 @@ function parseIpv4(value: string): Parsed<string> {
     const parts = value.split('.');
     const valid = parts.length === 4 && parts.every((p) => IPV4_OCTET_RE.test(p) && Number(p) <= 255);
     return valid ? { ok: true, value } : fail(`"${value}" is not a valid ipv4 address.`);
-}
-
-function parseIpv6(value: string): Parsed<string> {
-    let inner = value;
-    if (value.startsWith('[') || value.endsWith(']')) {
-        if (!(value.startsWith('[') && value.endsWith(']'))) return fail(`"${value}" is not a valid ipv6 address.`);
-        inner = value.slice(1, -1);
-    }
-    // The URL parser below is the real check; this keeps a zone id (`%eth0`),
-    // which it refuses anyway, and anything else odd from reaching it.
-    if (!inner.includes(':') || !IPV6_CHARS_RE.test(inner)) return fail(`"${value}" is not a valid ipv6 address.`);
-    try {
-        // `hostname` comes back bracketed and compressed: `[::1]`.
-        return { ok: true, value: new URL(`http://[${inner}]/`).hostname };
-    } catch {
-        return fail(`"${value}" is not a valid ipv6 address.`);
-    }
 }
 
 /**

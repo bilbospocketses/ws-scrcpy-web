@@ -4,6 +4,7 @@ import {
     _setClockForTest,
     cancelRequest,
     createRequest,
+    findPendingRequest,
     getPendingRequest,
     getStatus,
     REQUEST_TTL_MS,
@@ -35,6 +36,36 @@ describe('embedRequests', () => {
         expect(createRequest('not a url', 'Evil')).toBeNull();
         expect(createRequest('ftp://localhost', 'Evil')).toBeNull();
         expect(getPendingRequest()).toBeNull();
+    });
+
+    it('refuses an IPv6 origin, so it is never shown to an admin as approvable', () => {
+        // A browser discards an IPv6 frame-ancestors source (0.5.3 review).
+        expect(createRequest('http://[::1]:47812', 'Control Menu')).toBeNull();
+        expect(createRequest('https://[fe80::1]', 'Control Menu')).toBeNull();
+        expect(getPendingRequest()).toBeNull();
+    });
+
+    it('findPendingRequest looks a pending request up without deciding it', () => {
+        const created = createRequest('http://localhost:5159', 'Control Menu');
+
+        expect(findPendingRequest('some-other-id')).toBeNull();
+        expect(findPendingRequest(created?.id ?? '')).toMatchObject({
+            id: created?.id,
+            origin: 'http://localhost:5159',
+        });
+        // Still pending: the decision route records the outcome only after persisting.
+        expect(getStatus(created?.id ?? '')).toBe('pending');
+
+        resolveRequest(created?.id ?? '', false);
+        expect(findPendingRequest(created?.id ?? '')).toBeNull();
+    });
+
+    it('findPendingRequest does not return an expired request', () => {
+        let clock = 1_000_000;
+        _setClockForTest(() => clock);
+        const created = createRequest('http://localhost:5159', 'Control Menu');
+        clock += REQUEST_TTL_MS;
+        expect(findPendingRequest(created?.id ?? '')).toBeNull();
     });
 
     it('falls back to a generic name when none is supplied', () => {
