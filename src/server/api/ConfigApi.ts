@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
+import { getAppVersion } from '../appVersion';
 import { callerIsLocal, requireOperator, resolveAdminScope } from '../auth/requireOperator';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
@@ -44,6 +45,7 @@ export class ConfigApi {
                         ...cfg.getFirstRunStatus(),
                         adminScope: resolveAdminScope(),
                         callerIsLocal: callerIsLocal(req),
+                        appVersion: getAppVersion(),
                     },
                 };
                 res.writeHead(200);

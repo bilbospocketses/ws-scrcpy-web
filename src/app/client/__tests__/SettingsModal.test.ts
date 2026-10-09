@@ -734,6 +734,94 @@ describe('Settings section restructure (beta.62)', () => {
     });
 });
 
+describe('the running version in the dialog footer', () => {
+    /** A fetch that answers /api/config with the given runtime, and stalls the rest. */
+    function stubConfig(runtime: Record<string, unknown>): void {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string) => {
+                if (url === '/api/config') {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve({ config: { webPort: 8000 }, runtime }),
+                    });
+                }
+                return new Promise(() => undefined);
+            }),
+        );
+    }
+
+    const base = { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000 };
+
+    beforeEach(() => {
+        document.body.replaceChildren();
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        stubMeAsAdmin();
+    });
+
+    function footerParts(): { version: HTMLElement | null; status: HTMLElement | null; save: HTMLElement | null } {
+        const footer = document.querySelector<HTMLElement>('dialog.settings-modal .modal-footer');
+        expect(footer, 'footer missing').not.toBeNull();
+        return {
+            version: footer!.querySelector<HTMLElement>('.settings-version'),
+            status: footer!.querySelector<HTMLElement>('.settings-save-status'),
+            save: footer!.querySelector<HTMLElement>('button.settings-save'),
+        };
+    }
+
+    it('names the version from /api/config, on the Save line, to the left of everything else', async () => {
+        stubConfig({ ...base, appVersion: '0.5.1-beta.1' });
+        new SettingsModal();
+        await flush();
+
+        const { version, status, save } = footerParts();
+        expect(version).not.toBeNull();
+        expect(version!.hidden).toBe(false);
+        expect(version!.textContent).toBe('v0.5.1-beta.1');
+        // Left-aligned means FIRST in the row: version, then the refusal line,
+        // then Save on the right.
+        const kids = Array.from(version!.parentElement!.children);
+        expect(kids.indexOf(version!)).toBe(0);
+        expect(kids.indexOf(version!)).toBeLessThan(kids.indexOf(status!));
+        expect(kids.indexOf(status!)).toBeLessThan(kids.indexOf(save!));
+    });
+
+    it('shows nothing until the version is known (no "vundefined" while /api/config is pending)', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(() => new Promise(() => undefined)),
+        );
+        new SettingsModal();
+        await flush();
+
+        const { version } = footerParts();
+        expect(version).not.toBeNull();
+        expect(version!.hidden).toBe(true);
+        expect(version!.textContent).toBe('');
+    });
+
+    it('stays hidden when the server does not send a version (an older server)', async () => {
+        stubConfig(base);
+        new SettingsModal();
+        await flush();
+
+        const { version } = footerParts();
+        expect(version!.hidden).toBe(true);
+        expect(version!.textContent).not.toContain('undefined');
+    });
+
+    it('still names the version in a container, where the Updates tab is replaced by a note', async () => {
+        stubConfig({ ...base, docker: true, appVersion: '0.5.1' });
+        new SettingsModal();
+        await flush();
+
+        expect(document.querySelector('[data-docker-note="updates"]')).not.toBeNull();
+        const { version } = footerParts();
+        expect(version!.hidden).toBe(false);
+        expect(version!.textContent).toBe('v0.5.1');
+    });
+});
+
 describe('onInstallService takeover copy (§7 system-service hand-off)', () => {
     /**
      * Drain all pending microtasks (Promise chains, queueMicrotask) without
