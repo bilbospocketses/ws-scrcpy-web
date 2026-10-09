@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-09
+
 ### Added
 - **The Settings dialog now shows which version of the app is running.** It sits at the bottom left of the dialog, on the same line as the save button, for example `v0.5.1`. Before this, the version appeared only on the Updates tab, and only while no update was on offer, so once an update was found the running version showed nowhere. It is shown on every install, including the Docker image, a development build and an admin signed in from another machine; nothing is shown until the server has said which version it is (`src/app/client/SettingsModal.ts`, `src/server/api/ConfigApi.ts`, `src/common/ConfigEvents.ts`).
 
