@@ -303,10 +303,12 @@ test.describe('container mode', () => {
         // Local HTTPS is its own tab since 0.5.3. In a container it holds the
         // reverse-proxy note and nothing else; the Server tab holds neither.
         await expect(server.locator('[data-local-https-container-note]')).toHaveCount(0);
+        // The tab's one section IS the note (the marker sits on the section that
+        // openSettingsTab returns), so it is asserted on that element itself.
         const localHttps = await openSettingsTab(settings, 'Local HTTPS');
-        const note = localHttps.locator('[data-local-https-container-note]');
-        await expect(note).toBeVisible();
-        await expect(note).toContainText('reverse proxy');
+        await expect(localHttps).toHaveAttribute('data-local-https-container-note', '');
+        await expect(localHttps).toContainText('reverse proxy');
+        await expect(settings.locator('[data-local-https-container-note]')).toHaveCount(1);
         await expect(settings.locator('[data-tls-subject]')).toHaveCount(0);
         await expect(settings.locator('[data-tls-mkcert-notice]')).toHaveCount(0);
         await expect(localHttps.getByRole('button')).toHaveCount(0);
