@@ -33,7 +33,6 @@ describe('action-only tabs register nothing', () => {
     // action has become stageable and can reach the change summary -- which
     // would make Save claim it is about to install a service or delete a user.
     it.each([
-        ['Embedding', buildEmbeddingTab],
         ['Users', buildUsersTab],
         ['Service', buildServiceTab],
         ['Dependencies', buildDependenciesTab],
@@ -41,6 +40,19 @@ describe('action-only tabs register nothing', () => {
         stubHangingFetch();
         const store = new StagedSettingsStore();
         build(ctx(), store);
+        expect(store.isDirty()).toBe(false);
+        expect(store.changes()).toEqual([]);
+        vi.unstubAllGlobals();
+    });
+
+    // Embedding is no longer action-only (0.5.3): its add row stages
+    // pre-approvals (`frameAncestorsAdd`, embeddingTab.test.ts). Its revoke is
+    // still an action, and an untouched tab must still stage nothing, or every
+    // Save would carry an embed change nobody asked for.
+    it('Embedding contributes no change until an embedder is added', () => {
+        stubHangingFetch();
+        const store = new StagedSettingsStore();
+        buildEmbeddingTab(ctx(), store);
         expect(store.isDirty()).toBe(false);
         expect(store.changes()).toEqual([]);
         vi.unstubAllGlobals();

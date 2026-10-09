@@ -644,10 +644,12 @@ export class SettingsModal extends Modal {
         // The "Users" section (manage users button + auth toggle) is admin-only.
         //
         // `store` is a single StagedSettingsStore shared by every tab this
-        // dialog builds. Users/Embedding/Service (below) take it and register
-        // nothing — they are actions, not staged values (see StagedSettingsStore's
-        // class doc). Server registers `webPort`; Updates registers `channel`,
-        // `autoUpdate` and `updateCheckIntervalMinutes`.
+        // dialog builds. Users/Service (below) take it and register nothing —
+        // they are actions, not staged values (see StagedSettingsStore's class
+        // doc). Embedding registers `frameAncestorsAdd` (the pre-approvals its
+        // add row stages; its revoke is an action). Server registers `webPort`;
+        // Updates registers `channel`, `autoUpdate`,
+        // `updateCheckIntervalMinutes` and `githubOwner`.
         const store = new StagedSettingsStore();
         this.store = store;
         const ctx: TabContext = {

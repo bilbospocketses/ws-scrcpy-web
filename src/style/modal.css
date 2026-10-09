@@ -876,6 +876,18 @@ dialog.settings-modal .settings-help-link {
     text-decoration: underline;
 }
 
+/*
+ * A staged-but-unsaved entry in a Settings list (the Embedding tab's pending
+ * embedders, 0.5.3): the warning tone and the status lines' italic, beside the
+ * entry it marks, so "not saved yet" reads at a glance and not by color alone.
+ */
+dialog.settings-modal .settings-pending-tag {
+    margin-left: 0.5rem;
+    color: var(--warning-color);
+    font-style: italic;
+    font-weight: 600;
+}
+
 dialog.settings-modal .settings-stub-note {
     margin: 0;
     padding-left: 1.25rem;

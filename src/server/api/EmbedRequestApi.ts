@@ -9,6 +9,14 @@ import { readJsonBody } from './utils';
 const log = Logger.for('EmbedRequestApi');
 
 /**
+ * The refusal for an embed decision made from off this machine. Shared with
+ * `SettingsBatchApi`, which applies the same loopback rule to a staged
+ * pre-approval (`frameAncestorsAdd`): granting permission to frame the app is
+ * one class of decision however it is reached.
+ */
+export const EMBED_DECIDED_LOCALLY_ERROR = 'embed permission is decided on this machine only';
+
+/**
  * Consent flow for embedding permission — see security/embedRequests.ts for the
  * reasoning behind the split between these two surfaces.
  *
@@ -24,6 +32,10 @@ const log = Logger.for('EmbedRequestApi');
  * are still behind the Host allowlist, and behind the Origin check for the POST
  * — which is what stops a web page from asking at all, since a browser always
  * sends Origin and it will never match ours.
+ *
+ * Pre-approving an origin from Settings → Embedding has no route here: it is a
+ * staged setting (`frameAncestorsAdd`) applied by `SettingsBatchApi` when the
+ * dialog is saved, under the same admin-and-loopback rule as the routes below.
  */
 export class EmbedRequestApi {
     async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -188,7 +200,7 @@ export class EmbedRequestApi {
     private requireLocalAdmin(req: IncomingMessage, res: ServerResponse): boolean {
         if (!isLoopback(req.socket.remoteAddress ?? '')) {
             res.writeHead(403);
-            res.end(JSON.stringify({ error: 'embed permission is decided on this machine only' }));
+            res.end(JSON.stringify({ error: EMBED_DECIDED_LOCALLY_ERROR }));
             return false;
         }
         return requireAdmin(req, res);

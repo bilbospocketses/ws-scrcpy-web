@@ -66,7 +66,7 @@ ws-scrcpy-web can run as a background **service** that starts at boot/login and 
 
 > **Cross-origin framing is refused by default.** A page that tries to iframe ws-scrcpy-web without being allow-listed gets a browser refusal ("localhost refused to connect") — the response carries
 > `X-Frame-Options: SAMEORIGIN` and no CSP `frame-ancestors` entry for it. Everything below assumes you have opted the host origin in first, either by adding it to `frameAncestors` in `config.json` or
-> by approving the consent prompt the embedding app raises. Settings → Embedding shows what is currently approved and can revoke it.
+> by approving the consent prompt the embedding app raises. Settings → Embedding shows what is currently approved and can revoke it, and can approve an origin ahead of time (it is saved with the dialog's **save**).
 
 > **Embedding from another *site* requires HTTPS.** Browsers withhold a site-scoped cookie from anything a cross-site iframe requests, including the WebSocket handshake the stream rides on — so the app relaxes its cookies to
 > `SameSite=None; Secure; Partitioned` as soon as `frameAncestors` is non-empty. `Secure` is not optional there, so **the browser's connection to the app must be https**, or the cookies stay site-scoped and the embedded stream
@@ -396,7 +396,7 @@ To serve it on a domain name behind a TLS-terminating reverse proxy, add the dom
 { "allowedHosts": ["devices.example.com"] }
 ```
 
-To let another local app embed this one in an iframe, add its origin to `frameAncestors` in `config.json`, or approve the consent prompt the embedding app can raise (Settings → Embedding lists and revokes what you have approved). Cross-origin framing is refused until you do:
+To let another local app embed this one in an iframe, add its origin to `frameAncestors` in `config.json`, approve the consent prompt the embedding app can raise, or add it in Settings → Embedding, which also lists and revokes what you have approved. Cross-origin framing is refused until you do:
 
 ```json
 { "frameAncestors": ["http://localhost:5159"] }

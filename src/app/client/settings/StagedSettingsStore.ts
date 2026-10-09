@@ -37,10 +37,12 @@ export interface StagedField {
  * Dirty state and the change list for the Settings dialog. No DOM, no network.
  *
  * The critical property is what it does NOT do: a field nobody registered can
- * never appear in `changes()`. Action-only tabs (Service, Users, Embedding)
- * register nothing, so "actions must not appear in the summary" is structural
- * rather than a rule someone has to remember -- and a future action cannot leak
- * into the summary by oversight.
+ * never appear in `changes()`. Action-only tabs (Service, Users) register
+ * nothing, so "actions must not appear in the summary" is structural rather
+ * than a rule someone has to remember -- and a future action cannot leak into
+ * the summary by oversight. Embedding registers exactly one field, the staged
+ * pre-approvals (`frameAncestorsAdd`, 0.5.3); its revoke stays an action and
+ * registers nothing.
  */
 export class StagedSettingsStore {
     private fields = new Map<string, StagedField>();

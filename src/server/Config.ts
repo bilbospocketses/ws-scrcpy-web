@@ -1247,6 +1247,41 @@ export class Config {
     }
 
     /**
+     * Pre-approve several embedding origins at once: Settings → Embedding's
+     * staged additions, applied by the settings batch (`frameAncestorsAdd`,
+     * `SettingsBatchApi`). Same store and same normalization as
+     * `addFrameAncestor`, with two differences that matter for a batch:
+     *
+     * - **All or nothing.** Every entry is validated by
+     *   `parseFrameAncestorOrigin` BEFORE anything changes, so one bad entry
+     *   leaves the live policy and config.json exactly as they were and
+     *   returns false.
+     * - **One write.** The list is applied and persisted once, not once per
+     *   origin.
+     *
+     * An origin already allowed is a no-op, as in `addFrameAncestor`. An empty
+     * list is refused (false): the client never stages one, so it can only be
+     * a malformed request.
+     */
+    public addFrameAncestors(origins: readonly string[]): boolean {
+        if (origins.length === 0) return false;
+        const normalized: string[] = [];
+        for (const origin of origins) {
+            const parsed = parseFrameAncestorOrigin(origin);
+            if (parsed === null) return false;
+            normalized.push(parsed);
+        }
+
+        for (const origin of normalized) {
+            if (!this._frameAncestors.includes(origin)) {
+                this._frameAncestors.push(origin);
+            }
+        }
+        this.applyAndPersistFrameAncestors();
+        return true;
+    }
+
+    /**
      * Withdraw an origin's permission to frame the app. Returns false if it was not permitted in
      * the first place, so a stale settings list cannot report a revocation that did not happen.
      *

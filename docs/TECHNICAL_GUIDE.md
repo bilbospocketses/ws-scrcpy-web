@@ -2423,7 +2423,7 @@ Against cross-network and cross-site attackers the server applies four layers, t
 2. **Origin match (CSRF defense)** — `originGuard.isRequestAllowed`. For the sensitive surface (`/api/*` and any state-changing method), a present `Origin` header must equal the request's own origin (`http(s)://<host>`). A *missing* Origin is allowed here (non-browser clients and top-level navigations omit it); the token layer closes that gap.
 3. **Per-instance token** — `instanceToken.ts`. A 256-bit random token is minted once per server launch and handed to the browser as an `HttpOnly` cookie when it loads a document. A page that outlives its server process, as every Settings page does across a service hand-off, is therefore refused until it reloads (§19.4). The device list's websocket cannot tell that refusal from a server that is down (a refused handshake reaches the page as a 1006 close), so before each 2 s retry it asks `GET /api/auth/me` (token-gated, with a 5 s timeout so a hung server cannot stall the loop): the stale-token 403 there stops the retry loop and reloads the page for the new token (`staleTokenReload.ts`). The reload is remembered in `sessionStorage` until the page reaches the server again (a message on the socket, or the probe answering 200). A stale token while that mark is under 60 s old means the reload did not help, so the loop stops and a notice with a **reload** button says so instead of reloading again; a second restart after a reload that worked clears the mark first and reloads as normal. The server logs the first refused handshake per remote address and reason, then at most one line a minute carrying the count it left out (`rejectionLogLimiter.ts`, item 174; before 0.5.1 such a tab logged ~25 lines a minute for as long as it stayed open). The address is the socket's peer, so behind a reverse proxy every client shares the proxy's: one stale tab's minute can then hold back another client's first line. That is accepted, because the summary line still counts every refusal it left out. It is `SameSite=Strict` unless an embedder is allow-listed, in which case `cookiePolicy.ts` relaxes it — and the login session cookie with it — to `SameSite=None; Secure; Partitioned`, because a browser sends neither `Strict` nor `Lax` on a request a cross-site iframe makes, the WebSocket handshake included. Before that, `/embed.html` could not authenticate in any deployment where the embedder was a different site: the page rendered and the socket closed 1006 (#641), or 4401 in locked mode. `Secure` is mandatory with `None`, so the relaxation is also gated on the request being https from the browser's point of view — `forwardedProto.ts` reads `X-Forwarded-Proto`, but only from a loopback peer, since the header is otherwise client-controlled. SameSite was never the CSRF layer here; layer 2 is, and it is unchanged. Every `/api/*` call and every WebSocket upgrade must present it, compared in constant time, with five exceptions (`requiresToken`). Three are process-to-process and loopback-only: the launcher's `GET /api/config` discovery probe; the sibling guard's `GET /api/whoami` identity probe (`siblingInstance.ts`), which a second instance of the app sends with no cookie and, in locked mode, no session -- so it is also exempt from `AuthGate`, and its handler refuses any caller that is not on loopback; and the tray helper's `POST /api/server/shutdown` quit. The fourth, `GET /api/tls/ca-root` (since 2026-09-27), is the one that reaches off-box, deliberately: a device installing the local CA -- a phone following a link, `curl` from another machine -- has never loaded the page. It returns a public certificate, never a key, and it does not bypass sign-in: in locked mode `AuthGate` answers a caller with no session **401** before `TlsApi` runs, and `TlsApi`'s admin gate (§28) answers a signed-in non-admin **403**. The fifth, `GET /api/updates/status` (D15, user decision 2026-09-29), also reaches off-box: an in-app update replaces the server process, so the page that clicked "apply" holds a dead token, and every build before the D15 client fix reloads only on a 200 carrying a new `currentVersion`. `UpdatesApi` answers a caller **without** a valid token with `{ currentVersion }` and nothing else (`versionOnlyStatus`), before the operator gate; a caller with the token gets the full status as before. What it discloses is the running version. `AuthGate` and the Origin check still apply. Read that as the `/api` prefix, not as an inventory of the whole surface: `/embed-request` and `/embed-request/{id}/cancel` sit **outside** `/api` deliberately, so an app that wants to ask for embed permission can do so without first holding a token — and they are loopback-only precisely because they are ungated. A non-browser LAN client that never loaded the page has no token and is refused.
    **It is not an authenticator.** `shouldSetTokenCookie` returns true for any GET/HEAD of an extensionless non-`/api` path, and the cookie is attached with no authentication at all, so anything that can fetch `/` can have one. It raises the cost of a *blind* cross-site or rebinding attack; it does not identify a caller. Only `authEnabled` does that.
-4. **Framing policy (clickjacking)** — `security/frameGuard.ts`. Every response carries `X-Frame-Options: SAMEORIGIN` and, when `frameAncestors` is configured, a matching CSP `frame-ancestors` header. Cross-origin framing is **refused by default**; an operator opts in per origin, either by editing `config.json` or by approving a consent prompt raised by the embedding app (`embedRequests.ts`, `EmbedRequestApi.ts`). See `SECURITY.md` §Framing.
+4. **Framing policy (clickjacking)** — `security/frameGuard.ts`. Every response carries `X-Frame-Options: SAMEORIGIN` and, when `frameAncestors` is configured, a matching CSP `frame-ancestors` header. Cross-origin framing is **refused by default**; an operator opts in per origin, by editing `config.json`, by approving a consent prompt raised by the embedding app (`embedRequests.ts`, `EmbedRequestApi.ts`), or by pre-approving it in Settings → Embedding, which stages it and writes it on Save (`frameAncestorsAdd`, §27.4 and §27.7). All three end in the same `frameAncestors` list. See `SECURITY.md` §Framing.
 
 ### 24.1 `allowedHosts` — serving on a domain / behind a reverse proxy
 
@@ -3148,10 +3148,11 @@ mark-completed-before-restart a race rather than a fact.
 
 The important property is negative. `set()` on an unregistered id is **silently
 ignored**, so a field nobody registered can never appear in `changes()`. The
-action-only tabs (Users, Embedding, Service) register nothing, which makes
-"actions must not appear in the change summary" a structural fact rather than a
-rule someone has to remember — and a future action cannot leak into the summary
-by oversight.
+action-only tabs (Users, Service) register nothing, which makes "actions must not
+appear in the change summary" a structural fact rather than a rule someone has to
+remember — and a future action cannot leak into the summary by oversight.
+Embedding registers exactly one field, `frameAncestorsAdd` (its pre-approvals,
+§27.4); its **revoke** is still an action and registers nothing.
 
 ### 27.3 The tabs
 
@@ -3195,10 +3196,11 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'autoUpdate',
     'updateCheckIntervalMinutes',
     'githubOwner',
+    FRAME_ANCESTORS_ADD_ID, // 'frameAncestorsAdd', src/common/embedderOrigin.ts
 ]);
 ```
 
-Two things the allowlist implies, both easy to state wrongly:
+Three things the allowlist implies, all easy to state wrongly:
 
 - **`githubOwner` stages like the rest.** The Updates tab's GitHub-owner field
   used to write immediately on blur via `PATCH /api/updates/config`; it now
@@ -3207,9 +3209,27 @@ Two things the allowlist implies, both easy to state wrongly:
   nothing was removed from the endpoint — the tab simply no longer calls it. In a
   container it answers 409, as every updater route does (§26.5).
 - **"check for updates now" and "apply update" are actions**, as are everything
-  on Users, Embedding and Service and the Server tab's reset / change password /
-  log out / install for all users / stop & exit / uninstall. They fire on click
-  and register nothing.
+  on Users and Service, Embedding's **revoke**, and the Server tab's reset /
+  change password / log out / install for all users / stop & exit / uninstall.
+  They fire on click and register nothing.
+- **Pre-approving an embedder stages; revoking one does not** (0.5.3). The
+  Embedding tab's **add an embedder** row (address, optional port, scheme
+  `http` / `https` / `http & https`) validates with `embedderOriginsFromInput`
+  (`src/common/embedderOrigin.ts`) and stages the resulting origins as
+  `frameAncestorsAdd`, whose `to` is the array of origins to add and whose
+  `from` is always `[]`. The origins are built with `new URL(...).origin`, the
+  same normalization `parseFrameAncestorOrigin` applies and a browser uses for
+  `Origin`: lowercased, IPv6 bracketed and compressed, and a scheme's default
+  port (80 / 443) dropped, so a blank port and a typed `80` with http stage the
+  identical `http://host`. That is what makes the tab's duplicate check exact: an
+  origin already approved or already pending is never staged twice. Pending
+  entries are listed with a `pending — saved when you click save` tag and a
+  **remove** button; removing the last one sets the field back to its frozen
+  baseline array, because the store compares with `Object.is` and a fresh `[]`
+  would leave Save enabled over nothing. After a successful Save, `commit()`
+  makes the staged array the baseline, so the tab notices its field is no longer
+  a change, re-registers it empty and re-reads `/api/embed-origins`. Revoke stays
+  an immediate, confirmed `POST /api/embed-origins/revoke`.
 
 **Every staged text/number field refuses bad input the same way**: the typed
 value stays on screen, an inline message says what is wrong, and nothing is
@@ -3296,6 +3316,27 @@ written, so a rejected batch leaves no trace to reason about later. In a contain
 so is a batch naming a host-only key (`webPort` or an updater key): 409
 `reason: unsupported`, the same refusal `PATCH /api/config` gives (§26.5).
 
+**`frameAncestorsAdd` carries two extra pre-WAL checks** (0.5.3), both answered in
+the rejected-apply shape (`{ ok: false, applied: [], failed: { id, error } }`), so
+the dialog names the change and nothing in the batch has been applied:
+
+- **From this machine only: 403** `embed permission is decided on this machine
+  only` (`EMBED_DECIDED_LOCALLY_ERROR`, shared with `EmbedRequestApi`). Granting
+  permission to frame the app is the same decision as approving a consent prompt,
+  and those routes are admin **and** loopback. `requireOperator` alone would also
+  admit a signed-in admin or the remote-admin opt-out from off-box.
+- **A usable value: 400** from `frameAncestorsAddRefusal()` unless `to` is a list
+  of 1-32 strings that `parseFrameAncestorOrigin` accepts — the validator the
+  config loader and the consent prompt use, so an origin meets one standard however
+  it arrives.
+
+In the apply loop it is routed to `Config.addFrameAncestors()` instead of
+`updateAppConfig` (`frameAncestors` is not an `AppConfig` key): the consent
+prompt's store, validated all-or-nothing again, applied to the running server
+(`setFrameAncestors`) and written to `config.json` once, with every other key
+kept. It is not host-only, so a container accepts it as it accepts a consent
+approval — though only from loopback, which in a container is normally nobody.
+
 **Routing: the per-user `SettingsApi` must yield this path.** It is registered
 first and used to claim every `/api/settings…` URL, answering 404 for a path it did
 not know, so Save was answered 404 on every install from the tabbed dialog (#692,
@@ -3363,7 +3404,8 @@ stays bounded; `pending` rows are never pruned.
 | `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server, Local HTTPS |
 | `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save, `performStagedSave`, `performDirtyClose`, the dirty-close prompt |
 | `src/app/client/DependencyAlertCard.ts` | The top-bar dependency-update indicator (§14.3) |
-| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, the apply loop and the WAL marks |
+| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, `frameAncestorsAddRefusal()`, the apply loop and the WAL marks |
+| `src/common/embedderOrigin.ts` | `FRAME_ANCESTORS_ADD_ID`, the Embedding add row's address / port validators and origin builder |
 | `src/server/db/PendingSettingsStore.ts` | The WAL rows and their transitions |
 | `src/server/db/reconcilePendingSettings.ts` | Boot-time abandon + prune |
 | `src/server/db/migrations/002_pending_settings.ts` | The `pending_settings` table |
