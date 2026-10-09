@@ -1,5 +1,18 @@
-import { expect, request, test } from '@playwright/test';
-import { openSettings, openSettingsTab } from './support/auth';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import tls from 'node:tls';
+import { chromium, expect, request, test } from '@playwright/test';
+import { dismissPromptsFor, expectSpaHtml, mintToken, openSettings, openSettingsTab } from './support/auth';
+import {
+    removePrivateRoot,
+    type ServerHandle,
+    seedPrivateDataRoot,
+    spawnServer,
+    stopQuietly,
+    stopServer,
+    waitForServer,
+} from './support/privateServer';
+import { tlsServerPaths } from './support/tlsFixtures';
 
 /**
  * Local HTTPS — the one spec in this plan that runs the feature in a real
@@ -315,6 +328,119 @@ test.describe('local https', () => {
             await expect(alert).toHaveText(/^certificate generated\./);
         } finally {
             await ctx.close();
+        }
+    });
+});
+
+/**
+ * A one-word hostname certificate made by REAL mkcert, served by a real
+ * listener and checked end to end (0.5.5 review, M1). Since 0.5.5 a name that
+ * is not a delegated TLD (`htpc`, `nas`) may be a certificate subject; every
+ * other spec stubs mkcert or plants a certificate, so nothing else proves that
+ * mkcert actually mints a CA and a leaf for one label that a TLS client then
+ * accepts under that name.
+ *
+ * Runs only when QA_MKCERT_EXE names a real mkcert binary (the
+ * bilbospocketses/mkcert fork the app installs, e.g. the one a Local HTTPS
+ * install keeps in `<data root>/dependencies/mkcert/`). The fast tier has no
+ * mkcert and must not download one (GitHub's unauthenticated rate limit), so
+ * it skips there. It is safe to run anywhere: the server is the spec's own,
+ * on its own data root and LOCALAPPDATA, and mkcert runs with
+ * TRUST_STORES=none (CertService), so no trust store on the machine is touched.
+ *
+ * What it proves, and how:
+ *   - generate answers 200 for `e2enas`, writes the name to allowedHosts, and
+ *     the same server still refuses a real TLD (`de`) with 400;
+ *   - after a restart (the listener set is built at boot), a TLS client that
+ *     trusts ONLY the minted CA completes a handshake with SNI `e2enas`:
+ *     OpenSSL verifies the chain, the CA's name constraints and the name. The
+ *     same handshake for another name fails, so the check can fail;
+ *   - Chromium, resolving `e2enas` to this machine, loads the app from
+ *     `https://e2enas:<https port>/`: the listener serves it under that name and
+ *     the Host guard admits it. Chromium here does not trust the CA (that would
+ *     need the OS store), so it is told to ignore the certificate; the TLS
+ *     client above is what proves the certificate.
+ */
+const REAL_MKCERT = process.env['QA_MKCERT_EXE'];
+
+/** A handshake that trusts only `ca`; resolves the leaf's SAN, rejects on any verification failure. */
+function verifiedHandshake(port: number, servername: string, ca: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const socket = tls.connect({ host: '127.0.0.1', port, servername, ca, timeout: 5_000 }, () => {
+            const san = socket.getPeerCertificate().subjectaltname ?? '';
+            socket.end();
+            resolve(san);
+        });
+        socket.on('timeout', () => socket.destroy(new Error('timeout')));
+        socket.on('error', reject);
+    });
+}
+
+test.describe('local https: a one-word hostname certificate from real mkcert', () => {
+    test.skip(!REAL_MKCERT, 'QA_MKCERT_EXE not set -- see the doc comment above for what it needs.');
+
+    test('mkcert mints e2enas, a client trusting only its CA accepts it under that name, and the app loads at https://e2enas', async () => {
+        test.setTimeout(180_000);
+        // http 8197, https 8198: next to local-https-fast.spec.ts's 8191-8196.
+        const P = tlsServerPaths('ws-scrcpy-web-e2e-real-mkcert', 8197);
+        const HTTPS_PORT = 8198;
+        const NAME = 'e2enas';
+        seedPrivateDataRoot(P, { httpsPort: HTTPS_PORT });
+        mkdirSync(path.dirname(P.mkcertExe), { recursive: true });
+        copyFileSync(REAL_MKCERT!, P.mkcertExe);
+        if (process.platform !== 'win32') chmodSync(P.mkcertExe, 0o755);
+        let handle: ServerHandle | undefined = spawnServer(P);
+        try {
+            await waitForServer(handle, P.baseURL);
+            const api = await request.newContext({ baseURL: P.baseURL });
+            try {
+                await mintToken(api);
+                await dismissPromptsFor(api);
+                const res = await api.post('/api/tls/generate', { data: { kind: 'hostname', value: NAME } });
+                expect(res.status(), await res.text()).toBe(200);
+                expect(await res.json()).toMatchObject({
+                    status: 'ready',
+                    kind: 'hostname',
+                    subject: NAME,
+                    allowedHostAdded: true,
+                });
+                expect(existsSync(P.caPemFile), 'the minted CA').toBe(true);
+                const ca = readFileSync(P.caPemFile, 'utf8');
+                // The control on the same real server: a delegated TLD is refused, the CA untouched.
+                const refused = await api.post('/api/tls/generate', { data: { kind: 'hostname', value: 'de' } });
+                expect(refused.status()).toBe(400);
+                expect(await refused.json()).toEqual({ error: 'that name could not be used for a certificate.' });
+                expect(readFileSync(P.caPemFile, 'utf8'), 'CA after the refusal').toBe(ca);
+            } finally {
+                await api.dispose();
+            }
+
+            // The listener set is built at boot: restart so it serves the new leaf.
+            await stopServer(handle);
+            handle = spawnServer(P);
+            await waitForServer(handle, P.baseURL);
+            const ca = readFileSync(P.caPemFile, 'utf8');
+            await expect
+                .poll(() => verifiedHandshake(HTTPS_PORT, NAME, ca).catch((e: Error) => e.message), { timeout: 30_000 })
+                .toBe(`DNS:${NAME}`);
+            // The check can fail: the same leaf, asked for under another name, is refused.
+            await expect(verifiedHandshake(HTTPS_PORT, 'e2eother', ca)).rejects.toThrow(/e2eother|altnames/i);
+
+            const browser = await chromium.launch({ args: [`--host-resolver-rules=MAP ${NAME} 127.0.0.1`] });
+            try {
+                const context = await browser.newContext({ ignoreHTTPSErrors: true });
+                const page = await context.newPage();
+                const response = await page.goto(`https://${NAME}:${HTTPS_PORT}/`);
+                expect(response?.status()).toBe(200);
+                expectSpaHtml(await response!.text());
+                expect(page.url()).toBe(`https://${NAME}:${HTTPS_PORT}/`);
+                expect(await page.evaluate(() => window.isSecureContext)).toBe(true);
+            } finally {
+                await browser.close();
+            }
+        } finally {
+            await stopQuietly(handle, 'real-mkcert server');
+            removePrivateRoot(P);
         }
     });
 });

@@ -52,9 +52,9 @@ const CA_RATE_LIMIT = 10; // TlsApi.ts CA_ROOT_RATE_LIMIT
 const CA_DOWNLOADED_LOG = 'CA root downloaded'; // TlsApi.ts
 const KIND_400 = { error: 'kind must be "ip" or "hostname"' }; // TlsApi.ts
 const VALUE_400 = { error: 'value is required' }; // TlsApi.ts
-// TlsApi.ts refusedSubjectMessage: a name in hostname mode, an address in ip mode (0.5.5).
-const SUBJECT_400_ADDRESS = { error: 'that address could not be used for a certificate' };
-const SUBJECT_400_NAME = { error: 'that name could not be used for a certificate' };
+// src/common/refusedSubject.ts: a name in hostname mode, an address in ip mode (0.5.5).
+const SUBJECT_400_ADDRESS = { error: 'that address could not be used for a certificate.' };
+const SUBJECT_400_NAME = { error: 'that name could not be used for a certificate.' };
 const GENERATE_500 = { error: 'certificate generation failed; see the server logs for the cause' }; // TlsApi.ts
 const PORT_400 = { error: 'port must be an integer between 1 and 65535' }; // src/server/Config.ts validateHttpsPortInput
 
@@ -94,7 +94,7 @@ const SUBJECT_HELP_LINK_NAME = 'how this works (opens in a new tab)';
 const TRUST_HELP = 'install it on each device that connects (firefox has its own store). install guide ↗';
 const TRUST_HELP_LINK_NAME = 'install guide (opens in a new tab)';
 const suffixWarning = (name: string) =>
-    `"${name}" is a public internet suffix, not a computer's name, so it can't be used. type the name your devices use to reach this computer.`;
+    `"${name}" is an internet domain ending, not a computer's name, so it can't be used. use something like ${name}.lan, or the name your devices use to reach this computer.`;
 
 /** A help link's href as the app writes it: the app's current theme in the query, ahead of the #hash (helpLink.ts). */
 function themedHref(href: string, theme: string): string {
@@ -645,13 +645,15 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         await expect(subject).toHaveAttribute('placeholder', 'hostname or domain name');
         await expect(panel.locator('[data-tls-subject-guide]')).toHaveText(SUBJECT_GUIDE_NAME);
 
-        // A public suffix is called out while typed, and generate waits for a real name.
+        // A real internet TLD is called out while typed, and generate waits for a real name.
         const warning = panel.locator('[data-tls-subject-suffix-warning]');
-        await subject.fill('com');
-        await expect(warning).toBeVisible();
-        await expect(warning).toHaveText(suffixWarning('com'));
-        await expect(generate).toBeDisabled();
-        // A one-word name is fine.
+        for (const tld of ['com', 'de', 'Media']) {
+            await subject.fill(tld);
+            await expect(warning, tld).toBeVisible();
+            await expect(warning, tld).toHaveText(suffixWarning(tld));
+            await expect(generate, tld).toBeDisabled();
+        }
+        // A one-word name that is not a TLD is fine.
         await subject.fill('e2enas');
         await expect(warning).toBeHidden();
         await expect(generate).toBeEnabled();
@@ -662,17 +664,16 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         await panel.locator('input[name="tls-subject-kind"][value="hostname"]').check();
         await expect(subject).toHaveValue('e2enas');
 
-        // A refused generate reports in the certificate's item, not at the panel's bottom under Exposure.
+        // A refused generate reports in the tab's one place for results: at the
+        // bottom, below and outside every card, never inside Exposure's.
         await generate.click();
         const alert = panel.locator('[data-tls-alert]');
         await expect(alert).toBeVisible();
         await expect(alert).toHaveText(SUBJECT_400_NAME.error);
-        // `has` takes a locator relative to the item: a fresh one, not `generate`, which starts at the dialog.
-        const certificateItem = panel.locator('.settings-item', { has: page.locator('[data-tls-generate]') });
-        await expect(certificateItem.locator('[data-tls-alert]')).toHaveCount(1);
-        const exposureBox = await panel.locator('[data-exposure-ok]').boundingBox();
+        await expect(panel.locator('.settings-card [data-tls-alert]')).toHaveCount(0);
+        const lastCard = await panel.locator('.settings-card').last().boundingBox();
         const alertBox = await alert.boundingBox();
-        expect(alertBox!.y).toBeLessThan(exposureBox!.y);
+        expect(alertBox!.y).toBeGreaterThanOrEqual(lastCard!.y + lastCard!.height);
         expect(writes.writes).toEqual([
             { method: 'POST', pathname: '/api/tls/generate', body: { kind: 'hostname', value: 'e2enas' } },
         ]);
@@ -919,21 +920,36 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
                 echoes: ['10.164.9.8'],
                 logged: `kind 'hostname' but "10.164.9.8" is an IP address`,
             },
-            // One-word names pass since 0.5.5 (the next row generates one); a
-            // one-word PUBLIC SUFFIX is still refused.
+            // One-word names that are not delegated pass since 0.5.5 (the next
+            // row generates one); a real internet TLD is refused, `de` and
+            // `media` as surely as `com`.
             {
-                name: 'a single-label public suffix',
+                name: 'a single-label TLD',
                 body: { kind: 'hostname', value: 'com' },
                 expected: SUBJECT_400_NAME,
                 echoes: [],
-                logged: '"com" is a public suffix',
+                logged: '"com" is an internet TLD or public suffix',
+            },
+            {
+                name: 'a country-code TLD',
+                body: { kind: 'hostname', value: 'de' },
+                expected: SUBJECT_400_NAME,
+                echoes: [],
+                logged: '"de" is an internet TLD or public suffix',
+            },
+            {
+                name: 'a word that is a TLD',
+                body: { kind: 'hostname', value: 'MEDIA' },
+                expected: SUBJECT_400_NAME,
+                echoes: [],
+                logged: '"MEDIA" is an internet TLD or public suffix',
             },
             {
                 name: 'a public suffix',
                 body: { kind: 'hostname', value: 'co.uk' },
                 expected: SUBJECT_400_NAME,
                 echoes: ['co.uk'],
-                logged: '"co.uk" is a public suffix',
+                logged: '"co.uk" is an internet TLD or public suffix',
             },
             {
                 name: 'a subject with a port',
