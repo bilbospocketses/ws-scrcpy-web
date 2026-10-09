@@ -146,17 +146,27 @@ describe('PATCH /api/config -- the system service refuses a busy web port', () =
 });
 
 describe('POST /api/settings/batch -- the system service refuses a busy web port', () => {
-    const batch = (webPort: number) => ({
-        changes: [
-            { id: 'webPort', label: 'Web port', from: 8000, to: webPort },
-            { id: 'channel', label: 'Update channel', from: 'stable', to: 'beta' },
-        ],
-    });
+    /**
+     * The channel change goes AWAY from whatever channel the config loaded on.
+     * That is the build's channel unless pinned (config.channelPin.test.ts), so a
+     * fixed `stable` -> `beta` would be a no-op on a beta build, and asserting
+     * `stable` afterwards failed once the package version became a beta.
+     */
+    const batch = (webPort: number) => {
+        const from = Config.getInstance().getAppConfig().channel;
+        return {
+            changes: [
+                { id: 'webPort', label: 'Web port', from: 8000, to: webPort },
+                { id: 'channel', label: 'Update channel', from, to: from === 'beta' ? 'stable' : 'beta' },
+            ],
+        };
+    };
 
     it('409s before the WAL row and before any change in the batch is applied', async () => {
         const { dir, configPath } = setup();
         const busy = await heldPort();
         const before = fs.readFileSync(configPath, 'utf-8');
+        const channelBefore = Config.getInstance().getAppConfig().channel;
         const schedule = vi.fn();
         const exit = vi.fn();
 
@@ -168,7 +178,7 @@ describe('POST /api/settings/batch -- the system service refuses a busy web port
         // "couldn't save Web port: <error>" (settingsSave.test.ts).
         expect(r.getJson()).toEqual({ ok: false, applied: [], failed: { id: 'webPort', error: inUse(busy) } });
         const cfg = Config.getInstance();
-        expect(cfg.getAppConfig().channel).toBe('stable');
+        expect(cfg.getAppConfig().channel).toBe(channelBefore);
         expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
         const rows = cfg.db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as { n: number };
         expect(rows.n).toBe(0);
