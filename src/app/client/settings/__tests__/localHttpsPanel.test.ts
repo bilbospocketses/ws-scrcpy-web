@@ -175,8 +175,8 @@ describe('local https panel', () => {
         expect(notice.textContent).toMatch(/must resolve on every machine/i);
     });
 
-    it('shows a persistent allowedHosts note for the current hostname cert, not just at generate time (I9)', async () => {
-        // Unlike the transient "added X to allowedHosts" alert (which fires
+    it('shows a persistent accepted-name note for the current hostname cert, not just at generate time (I9)', async () => {
+        // Unlike the transient "now also accepts connections addressed to X" alert (which fires
         // once, at generate time), this reflects the STANDING fact that a
         // hostname-kind cert's subject is registered -- true on every load,
         // not only right after a generate.
@@ -202,7 +202,10 @@ describe('local https panel', () => {
         const notice = elHost.querySelector<HTMLElement>('[data-tls-allowed-host-notice]')!;
         expect(notice.hidden).toBe(false);
         expect(notice.textContent).toContain(payload);
-        expect(notice.textContent).toMatch(/registered in allowedHosts/i);
+        expect(notice.textContent).toBe(`this server accepts connections addressed to ${payload}.`);
+        // It says what happens, not the name of a config.json key no control in
+        // Settings is labelled with.
+        expect(notice.textContent).not.toMatch(/allowedHosts/i);
         expect(notice.querySelector('img')).toBeNull();
     });
 
@@ -589,7 +592,7 @@ describe('local https panel — transient alert convention', () => {
         }
     });
 
-    it('names the allowedHosts edit in the same alert, echoing the subject via textContent (I11)', async () => {
+    it('states the accepted-name edit in the same alert, echoing the subject via textContent (I11)', async () => {
         // A real markup-shaped payload, not `devices.lan` -- a plain hostname
         // contains no markup, so a version that swapped this composition's
         // `textContent` for `innerHTML` would pass against it just as well.
@@ -615,7 +618,10 @@ describe('local https panel — transient alert convention', () => {
         // Paired: the payload was actually rendered as text (ruling out the
         // trivial pass where it is dropped entirely)...
         expect(alert.textContent).toContain(payload);
-        expect(alert.textContent).toMatch(/added .* to allowedhosts/i);
+        expect(alert.textContent).toBe(
+            `certificate generated. this server now also accepts connections addressed to ${payload}.`,
+        );
+        expect(alert.textContent).not.toMatch(/allowedHosts/i);
         // ...AND it never became markup.
         expect(alert.querySelector('img')).toBeNull();
     });

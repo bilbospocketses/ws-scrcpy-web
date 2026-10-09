@@ -1043,14 +1043,19 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         // reflects the CURRENT state every time, not just right after a
         // generate. Text-node + span, same pattern as `certSummary`'s
         // subject -- `state.subject` is round-tripped user input.
+        // The wording says what the registration DOES for the user: the
+        // Host-header guard (`isHostAllowed`, security/originGuard.ts) lets
+        // in requests addressed to that name. Until 0.5.1 it named `allowedHosts`, a config.json key
+        // with no control anywhere in Settings.
         allowedHostPersistentNotice.textContent = '';
         if (state.kind === 'hostname' && state.subject) {
             const hostSpan = document.createElement('span');
             hostSpan.textContent = state.subject;
-            allowedHostPersistentNotice.appendChild(hostSpan);
             allowedHostPersistentNotice.appendChild(
-                document.createTextNode(' is registered in allowedHosts, so this server answers to that name.'),
+                document.createTextNode('this server accepts connections addressed to '),
             );
+            allowedHostPersistentNotice.appendChild(hostSpan);
+            allowedHostPersistentNotice.appendChild(document.createTextNode('.'));
             allowedHostPersistentNotice.hidden = false;
         } else {
             allowedHostPersistentNotice.hidden = true;
@@ -1144,14 +1149,12 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // Resolved Decision 2: state the allowedHosts edit plainly
                 // rather than mutate it silently. This is a one-time outcome
                 // of THIS generate, not a standing condition, so it belongs in
-                // the transient alert, not a persistent in-panel notice.
+                // the transient alert, not a persistent in-panel notice. It
+                // says what the edit does for the user, not the config key's
+                // name (no control in Settings is labelled allowedHosts).
                 const allowedHostSuffix: Array<string | { echo: string }> =
                     data.allowedHostAdded && data.subject
-                        ? [
-                              ' added ',
-                              { echo: data.subject },
-                              ' to allowedHosts so the server will answer to that name.',
-                          ]
+                        ? [' this server now also accepts connections addressed to ', { echo: data.subject }, '.']
                         : [];
                 // C1/NF-1: the review's headline case -- a fresh certificate
                 // with no restart yet has no HTTPS listener genuinely
