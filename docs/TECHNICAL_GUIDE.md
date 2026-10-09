@@ -1419,7 +1419,7 @@ Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancell
 | `src/app/client/AddSubnetModal.ts` | Add-or-edit dialog. Accepts `{ onSubmit, mode?: 'add' \| 'edit', initialValue?: string }`. Edit mode re-titles to "Edit Subnet", switches the button to "save", pre-fills the input, and re-runs validation so a valid pre-filled value leaves save enabled immediately. Live validation via `parseSubnetInput`; error messages embed a clickable link to the subnet cheat sheet when relevant. |
 | `src/app/client/LargeSubnetWarningModal.ts` | Fires when combined scan size > 2,048 hosts. Shows total host count + per-subnet breakdown, user confirms or cancels. Nested-modal readability handled by a CSS `:has()` rule in `src/style/modal.css` that makes the topmost stacked dialog use a fully opaque frame (instead of compounding the glassmorphism of both layers). |
 | `src/app/client/ScanProgressChip.ts` | Lifecycle chip with four states: `scanning`, `draining`, `complete`, `cancelled`. Full-width inside its slot with `min-height: 32px` so all three label states occupy the same footprint regardless of which child button (cancel / × / none) is visible. `setScanning` is a no-op after the chip leaves `scanning` state — prevents stale `scan.progress` messages arriving during drain from resurrecting the scanning label. Drain label holds for a minimum 1200 ms before transitioning to `cancelled` (the real drain can complete in ~300 ms, which is too fast to read). Auto-dismisses 5 s after `complete` / 10 s after `cancelled`, via the `onDismiss?` callback restoring the panel's default info text. |
-| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate-subject radios links to the top, the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust`. Same back-link as the cheat sheet. |
+| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate subject links to the top (its `click here for help on how this works` link, after 0.5.3), the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust`. Same back-link as the cheat sheet. |
 | `public/help/subnets.html` | Subnet/CIDR cheat sheet. Opens in a new tab from `ScanNetworkModal` (the "New to CIDR?" link) and from `AddSubnetModal` validation-error messages. Back-link uses `window.close()` so the tab actually closes instead of navigating the new tab back to the app (which would accumulate stale tabs on repeat cheat-sheet visits). |
 
 #### 14.2.5 Config Tuning Knobs
@@ -3035,10 +3035,14 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   question false for `docker: true` explicitly (`mountsUpdateButton`,
   `showsWelcomeWizard`, `offersSystemWideUpdate`) instead of relying on the server's
   replies happening to keep the control quiet.
-- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the web-port row and makes
-  "reset all my settings" send the per-user reset only, with no first-run `PATCH`.
+- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the http and https port rows (the
+  https port, its notes and the restart note under both, after 0.5.3) and makes "reset all my
+  settings" send the per-user reset only, with no first-run `PATCH`. The https port's
+  `/api/tls/state` read is never made there.
 - **Settings → Local HTTPS** (`applyLocalHttpsContainerMode`, its own tab since 0.5.3) shows only a
   note naming the reverse proxy: no panel, no mkcert note, and no `/api/tls/*` read.
+- **Settings → Embedding** (`applyEmbeddingContainerMode`, after 0.5.3): the note under the add row
+  names the reverse proxy alone as the way to serve the app over https.
 - **No browser is auto-opened** (`openBrowser.ts`, `inContainer`): there is no desktop.
 - **Node.js and mkcert are not managed dependencies** (`hostOnly`, §13.1). The container's list is adb and scrcpy-server, and nothing in it names mkcert.
 - **Local HTTPS is not supported in a container** (user decision, 2026-09-30). A
@@ -3179,7 +3183,8 @@ copy through `TabStrip.replaceTabBody()`, not a direct `replaceWith` — a fresh
 carries no `hidden` attribute, so a direct swap rendered visible beside whatever tab
 was actually active and orphaned the strip's cache. The Server tab stays, and
 `applyServerContainerMode()` (`ServerTab.ts`) applies its two container decisions:
-the web-port row is hidden (the port inside the image is always 8000), and "reset all
+the http port row is hidden (the port inside the image is always 8000), with the https
+port row and its notes beside it (Local HTTPS is not supported there), and "reset all
 my settings" stops sending the first-run reset (§26.5). The Local HTTPS tab stays too:
 `applyLocalHttpsContainerMode()` (`LocalHttpsTab.ts`) shows only a note naming the
 reverse proxy, and a later service status never builds the panel over it.
@@ -3192,6 +3197,7 @@ refused outright with a 400 rather than passed to a writer that might accept it:
 ```ts
 export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'webPort',
+    HTTPS_PORT_ID, // 'httpsPort', the Server tab's https port (after 0.5.3)
     'channel',
     'autoUpdate',
     'updateCheckIntervalMinutes',
@@ -3199,6 +3205,29 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     FRAME_ANCESTORS_ADD_ID, // 'frameAncestorsAdd', src/common/embedderOrigin.ts
 ]);
 ```
+
+**The https port stages beside the http port (after 0.5.3).** Until then it sat on
+the Local HTTPS tab with its own **ok** button and route. The Server tab's
+**https port** row (`ServerTab.ts`) now registers `httpsPort` (label `HTTPS port`)
+and Save sends it in the batch, where `SettingsBatchApi` validates it with
+`validateHttpsPortInput` (1-65535, as `POST /api/tls/https-port` does) and applies
+it with `Config.setHttpsPort`, second to last, straight before `webPort`
+(`orderChanges`). It is not an `AppConfig` key, so like `frameAncestorsAdd` it has
+its own branch in the apply loop. Before the WAL row, a container refuses it with
+the `/api/tls/*` copy, and a batch whose resulting http port would equal its https
+port is refused with **409** (`portCollisionError`), whichever side moved; the tab
+refuses the same thing inline on the row being edited. **One restart covers
+either port moving**: a moved https port schedules the same exit-75 restart as a
+moved web port, `redirectPort` stays the web port's alone (the page follows the
+http port), and a web port refused after the https port was written still
+schedules the restart that port needs. The row is disabled until mkcert is
+installed AND `/api/tls/state` reports a certificate (`status: 'ready'`); it reads
+both on the dialog's non-container path (`refreshServerHttps`), and again after a
+dependency install and after Local HTTPS generates or revokes a certificate (the
+panel bubbles `ws-tls-cert-changed`, `TLS_CERT_CHANGED_EVENT`). An mkcert state
+the server cannot report does not hold the row shut on its own when a certificate
+exists. `POST /api/tls/https-port` stays for external callers; nothing in the UI
+calls it.
 
 Three things the allowlist implies, all easy to state wrongly:
 
@@ -3245,7 +3274,16 @@ Three things the allowlist implies, all easy to state wrongly:
   would leave Save enabled over nothing. After a successful Save, `commit()`
   makes the staged array the baseline, so the tab notices its field is no longer
   a change, re-registers it empty and re-reads `/api/embed-origins`. Revoke stays
-  an immediate, confirmed `POST /api/embed-origins/revoke`.
+  an immediate, confirmed `POST /api/embed-origins/revoke`. **`http & https`
+  takes no port** (after 0.5.3): one port cannot be both schemes' default, and
+  port 80 with it used to stage `https://host:80`. While it is chosen the port box
+  is emptied and disabled, with a note under the row, and
+  `embedderOriginsFromInput` refuses it with any port (`BOTH_SCHEMES_PORT_ERROR`).
+  The batch receives only the origins, so it cannot tell a `both` add from two
+  single ones and refuses no particular scheme/port pair on its own. A standing
+  note under the add row says an https page can embed the app only when it is
+  served over https too, naming local https or a reverse proxy on a host and the
+  reverse proxy alone in a container (`applyEmbeddingContainerMode`).
 
 **Every staged text/number field refuses bad input the same way**: the typed
 value stays on screen, an inline message says what is wrong, and nothing is
@@ -3452,7 +3490,7 @@ The admin-gated `/api/tls/*` routes (`src/server/api/TlsApi.ts`) are the whole s
 `GET /state`, `POST /generate`, `POST /revoke`, `GET /ca-root` (rate-limited to 10 downloads per 60
 seconds, tracked on the one `TlsApi` instance the composition root constructs — handing out a root CA
 is the shape of a malware-delivery step even though this CA is only dangerous to whoever installs
-it), `POST /exposure`, and `POST /https-port`. The admin gate runs **before** the route table, so a
+it), `POST /exposure`, and `POST /https-port` (kept for external callers; Settings stages the port through `POST /api/settings/batch` since after 0.5.3, §27.4). The admin gate runs **before** the route table, so a
 route added later cannot land ungated.
 
 **Every write also needs proof of operator (since 2026-09-27, item 153), and the reads do not.** The
@@ -3686,9 +3724,9 @@ above all an answer the definition refuses such as an unexpected mkcert release 
 the same `POST /api/dependencies/mkcert/update` the update button uses. A failed install reads `Error`, with
 the button kept as the retry. The Local HTTPS panel reads `GET /api/dependencies` beside `/api/tls/state`:
 while mkcert is not installed, **generate** and the subject controls (the ip/hostname radios, the subject
-field and the address picker) are disabled, and the very top of the Local HTTPS tab carries an orange (`settings-status-warning`, `--warning-color`) note: `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (since 0.5.3; until then a line under the certificate controls). The note names only the certificate controls because they are all mkcert gates. The https port, exposure modes, revoke and the CA download need no mkcert and are left
-alone. A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
-the Local HTTPS tab re-read mkcert, so generate enables without a reopen. When the panel cannot tell (the read
+field and the address picker) are disabled, and the very first element of the Local HTTPS tab, above its heading, is an orange boxed callout (`.settings-callout`: the Dependencies card's border, radius, padding and background, in `--warning-color`): `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (a callout above the heading since after 0.5.3; in 0.5.3 a line under the heading; until then a line under the certificate controls). Its **dependencies tab** is a `<button>` styled as a link (`.settings-inline-link`: bold, underlined, a focus ring), which switches the dialog to the Dependencies tab through the optional `TabContext.showTab`. The note names only the certificate controls because they are all mkcert gates. The exposure modes, revoke and the CA download need no mkcert and are left
+alone; the https port is on the Server tab since after 0.5.3, gated on mkcert AND a certificate (§27.4). A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
+the Local HTTPS tab re-read mkcert, so generate enables without a reopen, and the Server tab re-read its https port's gate. When the panel cannot tell (the read
 failed, was refused, or does not name mkcert) it fails open: generate stays enabled.
 
 `createCertService.ts`'s `ensureMkcertInstalled(exe)` stays as the server-side backstop: called from the
@@ -3809,18 +3847,20 @@ optional.
 
 ### 28.6 Restart semantics, and why they are not symmetric
 
-Two controls in the same panel have opposite truths, and the panel's copy is written to match each
-one rather than a single generic "may require a restart":
+Two controls have opposite truths, and each one's copy is written to match it rather than a single
+generic "may require a restart":
 
 - **Exposure mode (`POST /api/tls/exposure`) needs NO restart.** It writes straight to the database,
   and `HttpServer.ts` re-reads that key fresh on every plain-HTTP request — there is no cache to
   invalidate and no listener to rebind. A mode change takes effect on the very next request.
 - **Enabling HTTPS for the first time, regenerating the certificate, and changing the HTTPS port
-  (`POST /api/tls/https-port`) all DO need a restart.** The listener set (the module-level `buildServerList()` in `Config.ts`, deliberately NOT the private
+  (the Server tab's staged `httpsPort`, or `POST /api/tls/https-port`) all DO need a restart.** The listener set (the module-level `buildServerList()` in `Config.ts`, deliberately NOT the private
   static `Config.buildServers` that calls it) is
   built once at boot with no in-process rebind, so a certificate that did not exist at boot, or a port
-  that has changed, is simply not reflected until the process restarts. `https-port` schedules a
-  restart through the same exit-75 marker path `webPort` already uses.
+  that has changed, is simply not reflected until the process restarts. Both port paths schedule a
+  restart through the same exit-75 marker path `webPort` already uses, and a batch moving both ports
+  schedules one. The Server tab says so under its two port rows: `changing either port restarts the
+  server; any active streams will drop.`
 
   **This claim is now enforced, not merely stated (NF-1).** A regenerate used to look identical to
   success: the bound listener is a genuinely live socket, so `httpsListener.bound` stayed `true` while
@@ -3833,7 +3873,10 @@ one rather than a single generic "may require a restart":
 The two HTTP/HTTPS ports are independent, with independent defaults (the module-level `DEFAULT_HTTPS_PORT = 8443`
 in `Config.ts`): setting the HTTP port to `80` never moves HTTPS, and setting the HTTPS port never moves HTTP.
 If the two are ever set to the same value, `Config.buildServers` skips the HTTPS entry for that boot
-rather than erroring.
+rather than erroring. Settings no longer lets them meet: the Server tab refuses either port on the
+other's value (`the http and https ports must differ.`), and `POST /api/settings/batch` refuses such a
+batch with 409 before anything is applied. A hand-edited `config.json`, or `POST /api/tls/https-port`,
+which does not check the http port, can still set them equal, and the boot-time skip covers that.
 
 A present-but-broken certificate can never stop the app from booting. `Config.ts`'s
 `readCertMaterial` validates **content**, not just readability: `tls.createSecureContext({cert, key})`
@@ -3859,5 +3902,7 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, verify them (`createSigstoreVerifier`: `@sigstore/tuf` + `@sigstore/verify`) against the tag-pinned release-workflow identity, and check the statement names the manifest |
 | `tests/e2e/support/githubRefusal.ts` | The e2e refused-lookup rule as a pure function (`isExcusableNullLatest(dep, seqBefore)`), used by row 9.4 on a host and unit-tested in `tests/unit/githubRefusal.test.ts` so the refused branch runs on every build. It excuses a null Latest only for a GitHub-backed dependency whose own `latestLookup` was refused with 403 or 429 by a lookup newer than the one read before the press. The `/rate_limit` re-query it replaced (`githubQuota.ts`, deleted 2026-10-06) raced the hourly reset. The container rows 20.9 and 1.9 excuse nothing since a container stopped listing mkcert (2026-10-01) |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
-| `src/app/client/settings/tabs/LocalHttpsTab.ts` | The Settings → Local HTTPS tab (`buildLocalHttpsTab`) and its panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
+| `src/app/client/settings/tabs/LocalHttpsTab.ts` | The Settings → Local HTTPS tab (`buildLocalHttpsTab`) and its panel; the mkcert callout above the heading and its link to Dependencies; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `TLS_CERT_CHANGED_EVENT`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
+| `src/app/client/settings/tabs/ServerTab.ts` | The http and https port rows (after 0.5.3): the https port's gate on mkcert and a certificate (`refreshServerHttps`), the inline collision refusal, the restart note under both rows, `subPrivilegedPortNotice()` |
+| `src/server/api/SettingsBatchApi.ts` | The `httpsPort` batch id: validation, the container refusal, the 409 for equal ports, the single restart (§27.4) |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design as of 2026-09-18: measured facts, rejected alternatives, the UI notification table. §28.4, §28.2 and §28's route list supersede its mkcert pin, its Windows TLS path and its token-gated CA download |
