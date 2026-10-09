@@ -147,7 +147,7 @@ export class EmbedRequestApi {
         res.setHeader('Content-Type', 'application/json');
         if (!isLoopback(req.socket.remoteAddress ?? '')) {
             res.writeHead(403);
-            res.end(JSON.stringify({ error: 'embed requests are cancelled from this machine only' }));
+            res.end(JSON.stringify({ error: 'embed requests are canceled from this machine only' }));
             return true;
         }
 

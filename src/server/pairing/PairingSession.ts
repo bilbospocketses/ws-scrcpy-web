@@ -204,7 +204,7 @@ export class PairingSession {
             return;
         }
         this._state = 'failed';
-        this._message = 'cancelled';
+        this._message = 'canceled';
     }
 }
 

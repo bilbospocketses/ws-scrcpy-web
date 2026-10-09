@@ -174,7 +174,7 @@ export class PairingService {
         if (!s || s.id !== sessionId) {
             return;
         }
-        log.info(`session ${s.id} cancelled`);
+        log.info(`session ${s.id} canceled`);
         this.terminate(s, () => s.cancel());
         this.stop();
     }

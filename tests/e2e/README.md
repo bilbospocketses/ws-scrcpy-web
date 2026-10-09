@@ -304,7 +304,7 @@ row as passing while it fails; the day the bug is fixed it fails with "expected 
 fail, but passed", which is the cue to delete the line, never to loosen the row. No
 row carries one today.
 
-## The suite as an artefact: the bundle and the manifest
+## The suite as an artifact: the bundle and the manifest
 
 qa-harness does not check this repo out. It mounts `wssw-suite-<version>.tar.gz` — attached to
 every release next to the installers — into a Linux runner and runs the suite against the

@@ -114,7 +114,7 @@ describe('PairingSession', () => {
         s.cancel();
         s.markPaired();
         expect(s.state).toBe('failed');
-        expect(s.message).toBe('cancelled');
+        expect(s.message).toBe('canceled');
 
         // And the direction cancel() already covered, kept explicit.
         const t = newSession('qr', T0);

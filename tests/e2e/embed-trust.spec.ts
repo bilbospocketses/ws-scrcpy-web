@@ -46,7 +46,7 @@ const THEME_REQUEST = 'ws-scrcpy-web:theme-request';
 
 /** Copied from src/server/api/EmbedRequestApi.ts. */
 const ASK_REFUSED_REMOTE = 'embed requests are accepted from this machine only';
-const CANCEL_REFUSED_REMOTE = 'embed requests are cancelled from this machine only';
+const CANCEL_REFUSED_REMOTE = 'embed requests are canceled from this machine only';
 const DECIDE_REFUSED_REMOTE = 'embed permission is decided on this machine only';
 
 /** Copied from src/app/public/embed-entry.ts; the error colour is `#f06c75`. */

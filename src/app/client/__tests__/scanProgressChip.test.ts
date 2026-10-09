@@ -37,7 +37,7 @@ describe('ScanProgressChip — drain minimum display 1200ms', () => {
 
         // Cross the 1200ms boundary — now cancelled
         vi.advanceTimersByTime(1);
-        expect(labelOf(parent)).toContain('Scan cancelled');
+        expect(labelOf(parent)).toContain('Scan canceled');
         expect(labelOf(parent)).toContain('3 devices found');
     });
 
@@ -51,7 +51,7 @@ describe('ScanProgressChip — drain minimum display 1200ms', () => {
         chip.setCancelled(2);
 
         // Drain already ran past 1200ms — no extra delay
-        expect(labelOf(parent)).toContain('Scan cancelled');
+        expect(labelOf(parent)).toContain('Scan canceled');
         expect(labelOf(parent)).toContain('2 devices found');
     });
 
@@ -82,7 +82,7 @@ describe('ScanProgressChip — drain minimum display 1200ms', () => {
 
         chip.setCancelled(1);
         // No draining ever started — cancel must display immediately
-        expect(labelOf(parent)).toContain('Scan cancelled');
+        expect(labelOf(parent)).toContain('Scan canceled');
         expect(labelOf(parent)).toContain('1 device found');
     });
 });

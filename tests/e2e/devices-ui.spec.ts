@@ -115,7 +115,7 @@ test.describe('7.14 pairing edges, shared server', () => {
         await expect.poll(() => fetchCount(page, '/api/devices/pair/status')).toBeGreaterThan(0);
 
         await cancel.click();
-        await expect(status).toHaveText('Pairing cancelled.');
+        await expect(status).toHaveText('Pairing canceled.');
         await expect(qrBox).toBeHidden();
         await expect(qrBox.locator('svg')).toHaveCount(0);
         await expect(cancel).toBeHidden();
@@ -163,7 +163,7 @@ test.describe('7.14 pairing edges, shared server', () => {
         await expect(action).toBeHidden();
 
         await section.getByRole('button', { name: 'cancel', exact: true }).click();
-        await expect(status).toHaveText('Pairing cancelled.');
+        await expect(status).toHaveText('Pairing canceled.');
         await expect
             .poll(() => pairStatus(page.request, second.sessionId))
             .toEqual({ status: 404, body: { error: NO_SUCH_SESSION } });

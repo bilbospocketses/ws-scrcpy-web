@@ -327,8 +327,8 @@ describe('renderPairingSection', () => {
         expect(text).not.toMatch(/pre-?fill/i);
     });
 
-    it('treats the 404 that follows the user cancelling as confirmation, not an error', async () => {
-        // Cancelling drops the session server-side, so an in-flight status poll
+    it('treats the 404 that follows the user canceling as confirmation, not an error', async () => {
+        // Canceling drops the session server-side, so an in-flight status poll
         // lands on a 404. Reporting that as a failure tells the user pairing
         // broke when in fact they stopped it themselves.
         let resolveStatus: ((v: unknown) => void) | undefined;
@@ -354,7 +354,7 @@ describe('renderPairingSection', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         const line = statusLine(el);
-        expect(line.textContent).toMatch(/cancelled/i);
+        expect(line.textContent).toMatch(/canceled/i);
         expect(line.textContent).not.toMatch(/failed|error|no longer available/i);
         expect(line.classList.contains('error')).toBe(false);
         expect(actionButton(el).hidden).toBe(true);
@@ -363,7 +363,7 @@ describe('renderPairingSection', () => {
     it('does not re-arm the poll when an in-flight status resolves after a cancel', async () => {
         // The dangerous half of the same race. `cancelSession` clears the timer
         // but cannot recall a request already in flight; if that reply is allowed
-        // through it renders over "Pairing cancelled." AND schedules another
+        // through it renders over "Pairing canceled." AND schedules another
         // poll, so a session the user stopped can run on to announce success.
         let resolveStatus: ((v: unknown) => void) | undefined;
         fetchFn
@@ -387,7 +387,7 @@ describe('renderPairingSection', () => {
         resolveStatus!(jsonRes(200, { state: 'awaiting-scan' }));
         await vi.advanceTimersByTimeAsync(0);
 
-        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        expect(statusLine(el).textContent).toMatch(/canceled/i);
         await vi.advanceTimersByTimeAsync(5000);
         expect(fetchFn.mock.calls.length).toBe(afterCancel);
     });
@@ -422,9 +422,9 @@ describe('renderPairingSection', () => {
         resolveJson!({ state: 'awaiting-scan' });
         await vi.advanceTimersByTimeAsync(0);
 
-        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        expect(statusLine(el).textContent).toMatch(/canceled/i);
         await vi.advanceTimersByTimeAsync(5000);
-        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        expect(statusLine(el).textContent).toMatch(/canceled/i);
         expect(fetchFn.mock.calls.length).toBe(afterCancel);
     });
 
@@ -454,12 +454,12 @@ describe('renderPairingSection', () => {
         resolveJson!({ error: 'internal error' });
         await vi.advanceTimersByTimeAsync(0);
 
-        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        expect(statusLine(el).textContent).toMatch(/canceled/i);
         expect(statusLine(el).classList.contains('error')).toBe(false);
         expect(actionButton(el).hidden).toBe(true);
     });
 
-    it('does not overwrite the cancelled line when an in-flight poll ERRORS after a cancel', async () => {
+    it('does not overwrite the canceled line when an in-flight poll ERRORS after a cancel', async () => {
         let rejectStatus: ((e: unknown) => void) | undefined;
         fetchFn
             .mockResolvedValueOnce(qrStartRes())
@@ -485,7 +485,7 @@ describe('renderPairingSection', () => {
         rejectStatus!(new Error('network down'));
         await vi.advanceTimersByTimeAsync(0);
 
-        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        expect(statusLine(el).textContent).toMatch(/canceled/i);
         expect(statusLine(el).classList.contains('error')).toBe(false);
         expect(actionButton(el).hidden).toBe(true);
 
@@ -493,7 +493,7 @@ describe('renderPairingSection', () => {
         // failure-tolerance means a single unguarded error only re-arms — the red
         // "Lost contact…" arrives on the third one, several seconds later.
         await vi.advanceTimersByTimeAsync(5000);
-        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        expect(statusLine(el).textContent).toMatch(/canceled/i);
         expect(statusLine(el).classList.contains('error')).toBe(false);
         expect(fetchFn.mock.calls.length).toBe(afterCancel);
     });
@@ -652,9 +652,9 @@ describe('renderPairingSection', () => {
     });
 
     it('withdraws Cancel once pairing has started, because it can no longer stop it', async () => {
-        // Cancelling during `pairing` cannot recall the `adb pair` already in
+        // Canceling during `pairing` cannot recall the `adb pair` already in
         // flight: it completes, the phone ends up paired, and the page says
-        // "Pairing cancelled." Offering the button there promises what the
+        // "Pairing canceled." Offering the button there promises what the
         // server cannot deliver.
         fetchFn.mockResolvedValueOnce(qrStartRes()).mockResolvedValue(jsonRes(200, { state: 'pairing' }));
         const el = mount();

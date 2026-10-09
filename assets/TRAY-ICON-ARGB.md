@@ -6,6 +6,6 @@ from `tray-icon.png` by hand; regenerate when the icon changes:
 
     magick assets/tray-icon.png -resize 22x22 -depth 8 RGBA:- | node scripts/rgba-to-argb.mjs > assets/tray-icon-22.argb
 
-`common/src/tray_policy.rs` pins its length and its corner/centre pixels in a
+`common/src/tray_policy.rs` pins its length and its corner/center pixels in a
 unit test, so a wrong byte order or size fails `cargo test`. No build or run
 step invokes ImageMagick, so neither needs it installed on the host.

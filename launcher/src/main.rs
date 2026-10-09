@@ -527,7 +527,7 @@ fn main() {
     {
         use std::sync::atomic::Ordering;
         if let Some(flag) = &tray_stop_flag {
-            log::info("tray-supervisor: signalling stop_flag before reap");
+            log::info("tray-supervisor: signaling stop_flag before reap");
             flag.store(true, Ordering::SeqCst);
         }
         if let Some(dr) = common::config::data_root_from_env() {

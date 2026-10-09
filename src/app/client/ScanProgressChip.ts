@@ -52,7 +52,7 @@ export class ScanProgressChip {
 
     setScanning(checked: number, total: number, foundSoFar: number): void {
         // Once drain has begun (or the chip is terminal), ignore stale progress updates
-        // so they don't overwrite "Finishing active scans…" or "Scan cancelled/complete".
+        // so they don't overwrite "Finishing active scans…" or "Scan canceled/complete".
         if (this.state !== 'scanning') return;
         this.setState('scanning');
         const counter = total > 0 ? ` · ${checked} / ${total}` : '';
@@ -85,7 +85,7 @@ export class ScanProgressChip {
 
     private applyCancelled(found: number): void {
         this.setState('cancelled');
-        this.label.textContent = `Scan cancelled · ${found} device${found === 1 ? '' : 's'} found`;
+        this.label.textContent = `Scan canceled · ${found} device${found === 1 ? '' : 's'} found`;
         this.scheduleAutoHide(10000);
     }
 

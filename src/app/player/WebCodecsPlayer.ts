@@ -363,7 +363,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 this.detectedCodec = 'av1';
                 return parseAv1SequenceHeader(data);
             }
-            return this.rejectConfig(data, 'no annex-b start code and not a recognisable AV1 sequence header');
+            return this.rejectConfig(data, 'no annex-b start code and not a recognizable AV1 sequence header');
         }
 
         return this.rejectConfig(data, 'config packet too short to identify');

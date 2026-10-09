@@ -54,7 +54,7 @@ describe('Settings → Service: a declined system-scope uninstall prompt', () =>
                     jsonResponse(
                         {
                             ok: false,
-                            error: 'uninstall was cancelled or not authorized at the authentication prompt',
+                            error: 'uninstall was canceled or not authorized at the authentication prompt',
                             reason: 'uac-declined',
                         },
                         403,

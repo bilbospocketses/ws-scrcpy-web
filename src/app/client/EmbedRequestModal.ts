@@ -78,7 +78,7 @@ export class EmbedRequestModal extends Modal {
         warning.style.cssText = 'margin: 0 0 8px;';
         warning.textContent =
             'Approving lets that address show this app in a frame, and saves it to your config. ' +
-            'Only approve if you recognise it and started the request yourself.';
+            'Only approve if you recognize it and started the request yourself.';
         container.appendChild(warning);
 
         this.countdownEl = document.createElement('p');

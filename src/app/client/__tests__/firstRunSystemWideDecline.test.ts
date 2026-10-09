@@ -74,7 +74,7 @@ describe('runSystemWideInstall: what the first-run flow does after "yes, all use
                 jsonResponse(
                     {
                         ok: false,
-                        error: 'authentication was dismissed or not authorized. install-system-wide cancelled.',
+                        error: 'authentication was dismissed or not authorized. install-system-wide canceled.',
                         reason: 'uac-declined',
                     },
                     403,
