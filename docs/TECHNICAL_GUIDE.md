@@ -1301,6 +1301,8 @@ All action-button pairs on the home page (`.discovery-connect-btn` + `.discovery
 
 The subnet cheat sheet (`public/help/subnets.html`) is a standalone HTML page served from `/help/subnets.html`. It defines its own local `--bg` / `--panel` / `--text` / `--muted` / `--accent` / `--border` variables keyed on `[data-theme="dark"]` / `[data-theme="light"]`, and runs a small inline script at the top of `<head>` that reads `ws-scrcpy-web-theme` from localStorage and applies `data-theme` before the first paint so the cheat sheet matches whatever theme the user left the app on — no flash.
 
+The certificate-subject explainer (`public/help/certificate-subject.html`, 0.5.3) is built the same way: the same inline theme bootstrap (byte for byte, pinned by `tests/unit/certificateSubjectHelp.test.ts`), the same local tokens, no external resources, and the same copy step (`CopyHelpDirPlugin` copies the whole `public/help/` folder). It is served from `/help/certificate-subject.html` by the static handler, behind sign-in when login is on, exactly like the cheat sheet. Every `h2` and each OS subsection of section 4 carries a stable `id` (`4-installing-a-certificate-establishing-trust`, `windows`, `macos`, `linux`, `ubuntu-debian`, `fedora-rhel`, `android`, `ios-ipados`, `firefox`), because the Local HTTPS tab links straight to section 4.
+
 ### 14.1 Connected Devices
 
 Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The server polls `adb devices` every 5 seconds (`ControlCenter.POLL_INTERVAL`). Devices appear automatically when ADB detects them.
@@ -1417,6 +1419,7 @@ Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancell
 | `src/app/client/AddSubnetModal.ts` | Add-or-edit dialog. Accepts `{ onSubmit, mode?: 'add' \| 'edit', initialValue?: string }`. Edit mode re-titles to "Edit Subnet", switches the button to "save", pre-fills the input, and re-runs validation so a valid pre-filled value leaves save enabled immediately. Live validation via `parseSubnetInput`; error messages embed a clickable link to the subnet cheat sheet when relevant. |
 | `src/app/client/LargeSubnetWarningModal.ts` | Fires when combined scan size > 2,048 hosts. Shows total host count + per-subnet breakdown, user confirms or cancels. Nested-modal readability handled by a CSS `:has()` rule in `src/style/modal.css` that makes the topmost stacked dialog use a fully opaque frame (instead of compounding the glassmorphism of both layers). |
 | `src/app/client/ScanProgressChip.ts` | Lifecycle chip with four states: `scanning`, `draining`, `complete`, `cancelled`. Full-width inside its slot with `min-height: 32px` so all three label states occupy the same footprint regardless of which child button (cancel / × / none) is visible. `setScanning` is a no-op after the chip leaves `scanning` state — prevents stale `scan.progress` messages arriving during drain from resurrecting the scanning label. Drain label holds for a minimum 1200 ms before transitioning to `cancelled` (the real drain can complete in ~300 ms, which is too fast to read). Auto-dismisses 5 s after `complete` / 10 s after `cancelled`, via the `onDismiss?` callback restoring the panel's default info text. |
+| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate-subject radios links to the top, the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust`. Same back-link as the cheat sheet. |
 | `public/help/subnets.html` | Subnet/CIDR cheat sheet. Opens in a new tab from `ScanNetworkModal` (the "New to CIDR?" link) and from `AddSubnetModal` validation-error messages. Back-link uses `window.close()` so the tab actually closes instead of navigating the new tab back to the app (which would accumulate stale tabs on repeat cheat-sheet visits). |
 
 #### 14.2.5 Config Tuning Knobs
@@ -2420,7 +2423,7 @@ Against cross-network and cross-site attackers the server applies four layers, t
 2. **Origin match (CSRF defense)** — `originGuard.isRequestAllowed`. For the sensitive surface (`/api/*` and any state-changing method), a present `Origin` header must equal the request's own origin (`http(s)://<host>`). A *missing* Origin is allowed here (non-browser clients and top-level navigations omit it); the token layer closes that gap.
 3. **Per-instance token** — `instanceToken.ts`. A 256-bit random token is minted once per server launch and handed to the browser as an `HttpOnly` cookie when it loads a document. A page that outlives its server process, as every Settings page does across a service hand-off, is therefore refused until it reloads (§19.4). The device list's websocket cannot tell that refusal from a server that is down (a refused handshake reaches the page as a 1006 close), so before each 2 s retry it asks `GET /api/auth/me` (token-gated, with a 5 s timeout so a hung server cannot stall the loop): the stale-token 403 there stops the retry loop and reloads the page for the new token (`staleTokenReload.ts`). The reload is remembered in `sessionStorage` until the page reaches the server again (a message on the socket, or the probe answering 200). A stale token while that mark is under 60 s old means the reload did not help, so the loop stops and a notice with a **reload** button says so instead of reloading again; a second restart after a reload that worked clears the mark first and reloads as normal. The server logs the first refused handshake per remote address and reason, then at most one line a minute carrying the count it left out (`rejectionLogLimiter.ts`, item 174; before 0.5.1 such a tab logged ~25 lines a minute for as long as it stayed open). The address is the socket's peer, so behind a reverse proxy every client shares the proxy's: one stale tab's minute can then hold back another client's first line. That is accepted, because the summary line still counts every refusal it left out. It is `SameSite=Strict` unless an embedder is allow-listed, in which case `cookiePolicy.ts` relaxes it — and the login session cookie with it — to `SameSite=None; Secure; Partitioned`, because a browser sends neither `Strict` nor `Lax` on a request a cross-site iframe makes, the WebSocket handshake included. Before that, `/embed.html` could not authenticate in any deployment where the embedder was a different site: the page rendered and the socket closed 1006 (#641), or 4401 in locked mode. `Secure` is mandatory with `None`, so the relaxation is also gated on the request being https from the browser's point of view — `forwardedProto.ts` reads `X-Forwarded-Proto`, but only from a loopback peer, since the header is otherwise client-controlled. SameSite was never the CSRF layer here; layer 2 is, and it is unchanged. Every `/api/*` call and every WebSocket upgrade must present it, compared in constant time, with five exceptions (`requiresToken`). Three are process-to-process and loopback-only: the launcher's `GET /api/config` discovery probe; the sibling guard's `GET /api/whoami` identity probe (`siblingInstance.ts`), which a second instance of the app sends with no cookie and, in locked mode, no session -- so it is also exempt from `AuthGate`, and its handler refuses any caller that is not on loopback; and the tray helper's `POST /api/server/shutdown` quit. The fourth, `GET /api/tls/ca-root` (since 2026-09-27), is the one that reaches off-box, deliberately: a device installing the local CA -- a phone following a link, `curl` from another machine -- has never loaded the page. It returns a public certificate, never a key, and it does not bypass sign-in: in locked mode `AuthGate` answers a caller with no session **401** before `TlsApi` runs, and `TlsApi`'s admin gate (§28) answers a signed-in non-admin **403**. The fifth, `GET /api/updates/status` (D15, user decision 2026-09-29), also reaches off-box: an in-app update replaces the server process, so the page that clicked "apply" holds a dead token, and every build before the D15 client fix reloads only on a 200 carrying a new `currentVersion`. `UpdatesApi` answers a caller **without** a valid token with `{ currentVersion }` and nothing else (`versionOnlyStatus`), before the operator gate; a caller with the token gets the full status as before. What it discloses is the running version. `AuthGate` and the Origin check still apply. Read that as the `/api` prefix, not as an inventory of the whole surface: `/embed-request` and `/embed-request/{id}/cancel` sit **outside** `/api` deliberately, so an app that wants to ask for embed permission can do so without first holding a token — and they are loopback-only precisely because they are ungated. A non-browser LAN client that never loaded the page has no token and is refused.
    **It is not an authenticator.** `shouldSetTokenCookie` returns true for any GET/HEAD of an extensionless non-`/api` path, and the cookie is attached with no authentication at all, so anything that can fetch `/` can have one. It raises the cost of a *blind* cross-site or rebinding attack; it does not identify a caller. Only `authEnabled` does that.
-4. **Framing policy (clickjacking)** — `security/frameGuard.ts`. Every response carries `X-Frame-Options: SAMEORIGIN` and, when `frameAncestors` is configured, a matching CSP `frame-ancestors` header. Cross-origin framing is **refused by default**; an operator opts in per origin, either by editing `config.json` or by approving a consent prompt raised by the embedding app (`embedRequests.ts`, `EmbedRequestApi.ts`). See `SECURITY.md` §Framing.
+4. **Framing policy (clickjacking)** — `security/frameGuard.ts`. Every response carries `X-Frame-Options: SAMEORIGIN` and, when `frameAncestors` is configured, a matching CSP `frame-ancestors` header. Cross-origin framing is **refused by default**; an operator opts in per origin, by editing `config.json`, by approving a consent prompt raised by the embedding app (`embedRequests.ts`, `EmbedRequestApi.ts`), or by pre-approving it in Settings → Embedding, which stages it and writes it on Save (`frameAncestorsAdd`, §27.4 and §27.7). All three end in the same `frameAncestors` list. See `SECURITY.md` §Framing.
 
 ### 24.1 `allowedHosts` — serving on a domain / behind a reverse proxy
 
@@ -3032,9 +3035,10 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   question false for `docker: true` explicitly (`mountsUpdateButton`,
   `showsWelcomeWizard`, `offersSystemWideUpdate`) instead of relying on the server's
   replies happening to keep the control quiet.
-- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the web-port row,
-  replaces the Local HTTPS panel with a note naming the reverse proxy, and makes
+- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the web-port row and makes
   "reset all my settings" send the per-user reset only, with no first-run `PATCH`.
+- **Settings → Local HTTPS** (`applyLocalHttpsContainerMode`, its own tab since 0.5.3) shows only a
+  note naming the reverse proxy: no panel, no mkcert note, and no `/api/tls/*` read.
 - **No browser is auto-opened** (`openBrowser.ts`, `inContainer`): there is no desktop.
 - **Node.js and mkcert are not managed dependencies** (`hostOnly`, §13.1). The container's list is adb and scrcpy-server, and nothing in it names mkcert.
 - **Local HTTPS is not supported in a container** (user decision, 2026-09-30). A
@@ -3062,7 +3066,7 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   section gives the reverse-proxy recipe; the three rules it states — `allowedHosts`
   lists the name, `Host` is forwarded unchanged, WebSocket upgrades pass — are §24's
   layers seen from the proxy's side. **The app's own Local HTTPS (§28) is off in a
-  container**: every `/api/tls/*` route answers 409, the two reads included (since 2026-10-01; the page never asks for them there, and a container carries no hint of the local CA), and the Server tab shows a note,
+  container**: every `/api/tls/*` route answers 409, the two reads included (since 2026-10-01; the page never asks for them there, and a container carries no hint of the local CA), and the Local HTTPS tab shows only a note,
   so the reverse proxy is the only supported HTTPS.
 
 ### 26.7 Verification
@@ -3144,10 +3148,11 @@ mark-completed-before-restart a race rather than a fact.
 
 The important property is negative. `set()` on an unregistered id is **silently
 ignored**, so a field nobody registered can never appear in `changes()`. The
-action-only tabs (Users, Embedding, Service) register nothing, which makes
-"actions must not appear in the change summary" a structural fact rather than a
-rule someone has to remember — and a future action cannot leak into the summary
-by oversight.
+action-only tabs (Users, Service) register nothing, which makes "actions must not
+appear in the change summary" a structural fact rather than a rule someone has to
+remember — and a future action cannot leak into the summary by oversight.
+Embedding registers exactly one field, `frameAncestorsAdd` (its pre-approvals,
+§27.4); its **revoke** is still an action and registers nothing.
 
 ### 27.3 The tabs
 
@@ -3161,9 +3166,10 @@ and never rebuilds. Two consequences:
 - Every section is in the DOM from the start, which is what the pre-tabs
   regression tests (and `SettingsModal`'s unconditional refresh calls) assume.
 
-Tabs, in order, each gated by `canSeeSection` on the caller's role except the
-last: **Users**, **Embedding**, **Updates**, **Service**, **Dependencies**,
-**Server** (always built — it carries the user-level reset row). A caller may ask
+Tabs, in order, each gated by `canSeeSection` on the caller's role except Server:
+**Users**, **Embedding**, **Updates**, **Service**, **Dependencies**,
+**Server** (always built — it carries the user-level reset row), **Local HTTPS**
+(admin-only; its own tab since 0.5.3, `LocalHttpsTab.ts`). A caller may ask
 for a starting tab (`new SettingsModal({ initialTab: 'dependencies' })`), which
 is what the home page's dependency alert uses; an id that was never built is a
 no-op and lands on the first tab.
@@ -3172,10 +3178,11 @@ Container mode swaps the Updates, Service and Dependencies bodies for the locked
 copy through `TabStrip.replaceTabBody()`, not a direct `replaceWith` — a fresh node
 carries no `hidden` attribute, so a direct swap rendered visible beside whatever tab
 was actually active and orphaned the strip's cache. The Server tab stays, and
-`applyServerContainerMode()` (`ServerTab.ts`) applies its three container decisions:
-the web-port row is hidden (the port inside the image is always 8000), Local HTTPS is
-replaced by a note naming the reverse proxy, and "reset all my settings" stops
-sending the first-run reset (§26.5).
+`applyServerContainerMode()` (`ServerTab.ts`) applies its two container decisions:
+the web-port row is hidden (the port inside the image is always 8000), and "reset all
+my settings" stops sending the first-run reset (§26.5). The Local HTTPS tab stays too:
+`applyLocalHttpsContainerMode()` (`LocalHttpsTab.ts`) shows only a note naming the
+reverse proxy, and a later service status never builds the panel over it.
 
 ### 27.4 What stages, and what still writes immediately
 
@@ -3189,10 +3196,11 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'autoUpdate',
     'updateCheckIntervalMinutes',
     'githubOwner',
+    FRAME_ANCESTORS_ADD_ID, // 'frameAncestorsAdd', src/common/embedderOrigin.ts
 ]);
 ```
 
-Two things the allowlist implies, both easy to state wrongly:
+Three things the allowlist implies, all easy to state wrongly:
 
 - **`githubOwner` stages like the rest.** The Updates tab's GitHub-owner field
   used to write immediately on blur via `PATCH /api/updates/config`; it now
@@ -3201,9 +3209,43 @@ Two things the allowlist implies, both easy to state wrongly:
   nothing was removed from the endpoint — the tab simply no longer calls it. In a
   container it answers 409, as every updater route does (§26.5).
 - **"check for updates now" and "apply update" are actions**, as are everything
-  on Users, Embedding and Service and the Server tab's reset / change password /
-  log out / install for all users / stop & exit / uninstall. They fire on click
-  and register nothing.
+  on Users and Service, Embedding's **revoke**, and the Server tab's reset /
+  change password / log out / install for all users / stop & exit / uninstall.
+  They fire on click and register nothing.
+- **Pre-approving an embedder stages; revoking one does not** (0.5.3). The
+  Embedding tab's **add an embedder** row (address, optional port, scheme
+  `http` / `https` / `http & https`) validates with `embedderOriginsFromInput`
+  (`src/common/embedderOrigin.ts`) and stages the resulting origins as
+  `frameAncestorsAdd`, whose `to` is the array of origins to add and whose
+  `from` is always `[]`. The origins are built with `new URL(...).origin`, the
+  same normalization `parseFrameAncestorOrigin` applies and a browser uses for
+  `Origin`: lowercased, and a scheme's default port (80 / 443) dropped, so a
+  blank port and a typed `80` with http stage the identical `http://host`. That
+  is what makes the tab's duplicate check exact: an origin already approved or
+  already pending is never staged twice. **An IPv6 address is refused** (0.5.3
+  review): the CSP host-source grammar has no IPv6 literals, so a browser
+  discards a `frame-ancestors` source such as `http://[::1]:47812` and the
+  embedder stays blocked while the list says it is allowed. The add row answers
+  any IPv6-looking address, bare or bracketed, with port or without, with
+  `IPV6_EMBEDDER_ERROR` (*browsers don't accept ipv6 addresses for embedding;
+  use a hostname (such as localhost) or an ipv4 address.*). The server refuses
+  one at the one parser every path shares, `parseFrameAncestorOrigin`
+  (`src/server/security/frameGuard.ts`), and `isIpv6FrameAncestor` lets each
+  caller give it its own reason: `POST /embed-request` answers 400 with the same
+  message, so no prompt is raised; a `frameAncestorsAdd` save is refused as
+  `"<origin>": <message>` before anything is written; and `sanitizeFrameAncestors`
+  skips an IPv6 entry left in `config.json` by an earlier version with a warning
+  that it never allowed embedding. A skipped entry is not listed (nothing live to
+  revoke); `saveToDisk` preserves the raw key through unrelated saves, and the
+  entry is dropped the next time the embedder list itself is written, since
+  `applyAndPersistFrameAncestors` writes the in-memory list whole. Pending
+  entries are listed with a `pending — saved when you click save` tag and a
+  **remove** button; removing the last one sets the field back to its frozen
+  baseline array, because the store compares with `Object.is` and a fresh `[]`
+  would leave Save enabled over nothing. After a successful Save, `commit()`
+  makes the staged array the baseline, so the tab notices its field is no longer
+  a change, re-registers it empty and re-reads `/api/embed-origins`. Revoke stays
+  an immediate, confirmed `POST /api/embed-origins/revoke`.
 
 **Every staged text/number field refuses bad input the same way**: the typed
 value stays on screen, an inline message says what is wrong, and nothing is
@@ -3290,6 +3332,27 @@ written, so a rejected batch leaves no trace to reason about later. In a contain
 so is a batch naming a host-only key (`webPort` or an updater key): 409
 `reason: unsupported`, the same refusal `PATCH /api/config` gives (§26.5).
 
+**`frameAncestorsAdd` carries two extra pre-WAL checks** (0.5.3), both answered in
+the rejected-apply shape (`{ ok: false, applied: [], failed: { id, error } }`), so
+the dialog names the change and nothing in the batch has been applied:
+
+- **From this machine only: 403** `embed permission is decided on this machine
+  only` (`EMBED_DECIDED_LOCALLY_ERROR`, shared with `EmbedRequestApi`). Granting
+  permission to frame the app is the same decision as approving a consent prompt,
+  and those routes are admin **and** loopback. `requireOperator` alone would also
+  admit a signed-in admin or the remote-admin opt-out from off-box.
+- **A usable value: 400** from `frameAncestorsAddRefusal()` unless `to` is a list
+  of 1-32 strings that `parseFrameAncestorOrigin` accepts — the validator the
+  config loader and the consent prompt use, so an origin meets one standard however
+  it arrives.
+
+In the apply loop it is routed to `Config.addFrameAncestors()` instead of
+`updateAppConfig` (`frameAncestors` is not an `AppConfig` key): the consent
+prompt's store, validated all-or-nothing again, applied to the running server
+(`setFrameAncestors`) and written to `config.json` once, with every other key
+kept. It is not host-only, so a container accepts it as it accepts a consent
+approval — though only from loopback, which in a container is normally nobody.
+
 **Routing: the per-user `SettingsApi` must yield this path.** It is registered
 first and used to claim every `/api/settings…` URL, answering 404 for a path it did
 not know, so Save was answered 404 on every install from the tabbed dialog (#692,
@@ -3354,10 +3417,11 @@ stays bounded; `pending` rows are never pruned.
 | `src/app/client/settings/SettingsSummaryModal.ts` | The pre-save review list, rendered from `changes()` |
 | `src/app/client/settings/closeIntent.ts` | `prompt` vs `close`, as a pure function of the store |
 | `src/app/client/settings/SaveRunner.ts` | `runSave()` and the `res.ok` normalization of a refused batch |
-| `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server |
+| `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server, Local HTTPS |
 | `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save, `performStagedSave`, `performDirtyClose`, the dirty-close prompt |
 | `src/app/client/DependencyAlertCard.ts` | The top-bar dependency-update indicator (§14.3) |
-| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, the apply loop and the WAL marks |
+| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, `frameAncestorsAddRefusal()`, the apply loop and the WAL marks |
+| `src/common/embedderOrigin.ts` | `FRAME_ANCESTORS_ADD_ID`, the Embedding add row's address / port validators and origin builder |
 | `src/server/db/PendingSettingsStore.ts` | The WAL rows and their transitions |
 | `src/server/db/reconcilePendingSettings.ts` | Boot-time abandon + prune |
 | `src/server/db/migrations/002_pending_settings.ts` | The `pending_settings` table |
@@ -3369,7 +3433,7 @@ stays bounded; `pending` rows are never pruned.
 Streaming needs a secure context: the browser exposes its video decoder (WebCodecs) only on
 `https://`, `http://localhost`, or `http://127.0.0.1`, so `http://<lan-ip>:8000` lists devices and
 plays nothing (§24, and the README's Access-control section). Local HTTPS closes that gap without a
-domain, a public CA, or a reverse proxy: a **Settings → Server → Local HTTPS** panel drives a
+domain, a public CA, or a reverse proxy: a **Settings → Local HTTPS** tab (its own tab since 0.5.3, right after Server; until then a section of the Server tab) drives a
 vendored, hardened fork of `mkcert` (`bilbospocketses/mkcert` — see §13's dependency-manager pattern,
 which this dependency joins) to mint a certificate for this machine's LAN IP or a chosen hostname,
 and an HTTPS listener starts alongside the existing plain-HTTP one once that certificate exists. The
@@ -3380,7 +3444,7 @@ its token-gated CA download have since changed, and §28.2, §28.4 and the route
 on each.
 
 **Host installs only.** Local HTTPS is not supported in a container (user decision, 2026-09-30):
-every `/api/tls/*` route answers 409 there, the reads included (2026-10-01), naming the reverse proxy, and the Server tab shows a note
+every `/api/tls/*` route answers 409 there, the reads included (2026-10-01), naming the reverse proxy, and the Local HTTPS tab shows only a note
 in place of the panel. A reverse proxy in front of the container is the only supported HTTPS for the
 image (§26.5, §26.6).
 
@@ -3396,7 +3460,7 @@ gate is keyed on the method: `GET`/`HEAD` go through `requireAdmin`, anything el
 `requireOperator` (§24.0), so a write route added later is operator-gated too. Before this, in open
 mode, any LAN client that had loaded a page could regenerate the CA every device trusts, revoke it,
 change the exposure, or restart the server through the port. The two reads stay reachable off-box on
-purpose: a second machine opening Settings → Server → Local HTTPS to download the CA is the feature
+purpose: a second machine opening Settings → Local HTTPS to download the CA is the feature
 (smoke 21.2), so the panel still renders there, and a write from it is answered
 `403 {"error":"admin actions are limited to this machine"}`, which the panel shows as it is.
 `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` and a signed-in admin session pass the gate as they do everywhere else.
@@ -3405,7 +3469,12 @@ purpose: a second machine opening Settings → Server → Local HTTPS to downloa
 installing the CA has never loaded the page, so it has no cookie. In open mode, where everyone is the
 implicit admin, a bare link, a QR code or `curl -k https://<LAN IP>:<https port>/api/tls/ca-root`
 (`-k` because the device does not trust this CA yet; that is why it is fetching it) therefore downloads
-`ws-scrcpy-web-local-ca.pem` directly. It does not bypass sign-in: in locked mode `AuthGate` answers a
+`ws-scrcpy-web-local-ca.crt` directly. The file holds PEM; since 0.5.3 it is named `.crt` (it was
+`.pem`), one name for every device, from `CA_ROOT_DOWNLOAD_FILE_NAME` in `src/common/CaDownload.ts`, which
+the panel's save uses too. Every platform the install guide covers, and Firefox, accepts a PEM
+certificate under `.crt`, and Linux's `update-ca-certificates` reads only `*.crt`. The per-OS install
+steps are not in the panel any more: one line links to section 4 of `public/help/certificate-subject.html`,
+opening in a new tab. It does not bypass sign-in: in locked mode `AuthGate` answers a
 caller with no session 401 before this handler runs, and the admin gate answers a signed-in non-admin
 403. The rate limit and the per-download log line are unchanged.
 
@@ -3617,10 +3686,9 @@ above all an answer the definition refuses such as an unexpected mkcert release 
 the same `POST /api/dependencies/mkcert/update` the update button uses. A failed install reads `Error`, with
 the button kept as the retry. The Local HTTPS panel reads `GET /api/dependencies` beside `/api/tls/state`:
 while mkcert is not installed, **generate** and the subject controls (the ip/hostname radios, the subject
-field and the address picker) are disabled with `install mkcert in the dependencies tab to generate a
-certificate.`; the https port, exposure modes, revoke and the CA download need no mkcert and are left
+field and the address picker) are disabled, and the very top of the Local HTTPS tab carries an orange (`settings-status-warning`, `--warning-color`) note: `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (since 0.5.3; until then a line under the certificate controls). The note names only the certificate controls because they are all mkcert gates. The https port, exposure modes, revoke and the CA download need no mkcert and are left
 alone. A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
-the Server tab re-read mkcert, so generate enables without a reopen. When the panel cannot tell (the read
+the Local HTTPS tab re-read mkcert, so generate enables without a reopen. When the panel cannot tell (the read
 failed, was refused, or does not name mkcert) it fails open: generate stays enabled.
 
 `createCertService.ts`'s `ensureMkcertInstalled(exe)` stays as the server-side backstop: called from the
@@ -3791,5 +3859,5 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, verify them (`createSigstoreVerifier`: `@sigstore/tuf` + `@sigstore/verify`) against the tag-pinned release-workflow identity, and check the statement names the manifest |
 | `tests/e2e/support/githubRefusal.ts` | The e2e refused-lookup rule as a pure function (`isExcusableNullLatest(dep, seqBefore)`), used by row 9.4 on a host and unit-tested in `tests/unit/githubRefusal.test.ts` so the refused branch runs on every build. It excuses a null Latest only for a GitHub-backed dependency whose own `latestLookup` was refused with 403 or 429 by a lookup newer than the one read before the press. The `/rate_limit` re-query it replaced (`githubQuota.ts`, deleted 2026-10-06) raced the hourly reset. The container rows 20.9 and 1.9 excuse nothing since a container stopped listing mkcert (2026-10-01) |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
-| `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
+| `src/app/client/settings/tabs/LocalHttpsTab.ts` | The Settings → Local HTTPS tab (`buildLocalHttpsTab`) and its panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design as of 2026-09-18: measured facts, rejected alternatives, the UI notification table. §28.4, §28.2 and §28's route list supersede its mkcert pin, its Windows TLS path and its token-gated CA download |

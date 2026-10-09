@@ -87,4 +87,35 @@ describe('StagedSettingsStore', () => {
         expect(change).not.toHaveProperty('fromText');
         expect(change).not.toHaveProperty('toText');
     });
+
+    describe('commitField (0.5.3, a batch applied in part)', () => {
+        it('re-baselines that one field only, and notifies', () => {
+            let notified = 0;
+            store.subscribe(() => {
+                notified += 1;
+            });
+            store.set('webPort', 8010);
+            store.set('channel', 'beta');
+            notified = 0;
+
+            store.commitField('channel');
+
+            expect(notified).toBe(1);
+            expect(store.changes()).toEqual([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
+            expect(store.get('channel')).toBe('beta');
+            // The new baseline: setting it back is now a change.
+            store.set('channel', 'stable');
+            expect(store.changes().find((c) => c.id === 'channel')).toMatchObject({ from: 'beta', to: 'stable' });
+        });
+
+        it('is a no-op for an unregistered id', () => {
+            let notified = 0;
+            store.subscribe(() => {
+                notified += 1;
+            });
+            store.commitField('nope');
+            expect(notified).toBe(0);
+            expect(store.changes()).toEqual([]);
+        });
+    });
 });

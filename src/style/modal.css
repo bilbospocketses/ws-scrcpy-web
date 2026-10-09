@@ -840,7 +840,7 @@ dialog.settings-modal .settings-status-ready {
  * Local HTTPS panel notices (notifications 3-9): a warning-toned variant of
  * .settings-status, layered the same way .settings-status-error is above.
  * Deliberately sets NO `display` -- these rows are shown/hidden via the HTML
- * `hidden` attribute (see ServerTab.ts's buildNoticeRow/setNotice), and this
+ * `hidden` attribute (see LocalHttpsTab.ts's buildNoticeRow/setNotice), and this
  * repo already found the bug where a class rule setting `display` outranks
  * the UA stylesheet's `[hidden] { display: none }` and leaves a "hidden"
  * element on screen (.dependency-alert-badge, above).
@@ -865,15 +865,27 @@ dialog.settings-modal .settings-status[hidden] {
     display: none;
 }
 
-/* Local HTTPS panel's per-OS trust-instructions accordion. */
-dialog.settings-modal .settings-control details {
-    width: 100%;
+/*
+ * A help link inside a Settings status line (the Local HTTPS tab's install
+ * guide and certificate-subject explainer, 0.5.3). Theme tokens, so it reads in
+ * both themes; underlined so it is a link without relying on color alone. The
+ * per-OS trust accordion these links replaced is gone, and its rules with it.
+ */
+dialog.settings-modal .settings-help-link {
+    color: var(--link-color);
+    text-decoration: underline;
 }
 
-dialog.settings-modal .settings-control details summary {
-    cursor: pointer;
-    color: var(--text-color, #ddd);
-    font-size: 13px;
+/*
+ * A staged-but-unsaved entry in a Settings list (the Embedding tab's pending
+ * embedders, 0.5.3): the warning tone and the status lines' italic, beside the
+ * entry it marks, so "not saved yet" reads at a glance and not by color alone.
+ */
+dialog.settings-modal .settings-pending-tag {
+    margin-left: 0.5rem;
+    color: var(--warning-color);
+    font-style: italic;
+    font-weight: 600;
 }
 
 dialog.settings-modal .settings-stub-note {

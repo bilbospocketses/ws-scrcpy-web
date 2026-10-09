@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { networkInterfaces } from 'os';
+import { CA_ROOT_DOWNLOAD_FILE_NAME } from '../../common/CaDownload';
 import { requireAdmin } from '../auth/requireAdmin';
 import { requireOperator } from '../auth/requireOperator';
 import { Config, DEFAULT_HTTPS_PORT, validateHttpsPortInput } from '../Config';
@@ -325,7 +326,8 @@ export class TlsApi {
 
                 log.info('CA root downloaded');
                 res.setHeader('Content-Type', 'application/x-pem-file');
-                res.setHeader('Content-Disposition', 'attachment; filename="ws-scrcpy-web-local-ca.pem"');
+                // PEM content under a .crt name (0.5.3; .pem before): see CaDownload.ts.
+                res.setHeader('Content-Disposition', `attachment; filename="${CA_ROOT_DOWNLOAD_FILE_NAME}"`);
                 res.writeHead(200);
                 res.end(pem);
                 return true;

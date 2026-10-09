@@ -51,7 +51,10 @@ describe('insecureOriginNotice', () => {
         expect(insecureOriginNotice(secure)).toBeNull();
         const notice = insecureOriginNotice(lan);
         expect(notice).toMatch(/local https/i);
-        expect(notice).toMatch(/settings.*server.*local https/i);
+        // Local HTTPS is its own Settings tab since 0.5.3, no longer a
+        // section of the Server tab, so the pointer names the tab directly.
+        expect(notice).toContain('settings → local https');
+        expect(notice).not.toMatch(/server →/i);
         // The reverse-proxy remedy stays -- Local HTTPS is the quick fix for
         // a home LAN, not a replacement for a real deployment.
         expect(notice?.toLowerCase()).toContain('https from a trusted origin');

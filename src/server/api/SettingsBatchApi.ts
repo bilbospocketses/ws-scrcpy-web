@@ -1,11 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { FRAME_ANCESTORS_ADD_ID, IPV6_EMBEDDER_ERROR } from '../../common/embedderOrigin';
 import { resolveUserId } from '../auth/currentUser';
 import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
 import { Logger } from '../Logger';
+import { isIpv6FrameAncestor, parseFrameAncestorOrigin } from '../security/frameGuard';
+import { isLoopback } from '../security/loopback';
 import { applyUpdaterConfigChange, type UpdaterControls } from '../updaterConfigSync';
 import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
+import { EMBED_DECIDED_LOCALLY_ERROR } from './EmbedRequestApi';
 import { scheduleRestartForPortChange } from './restartRequest';
 import { type SystemServicePortGuardDeps, systemServicePortRefusal } from './systemServicePortGuard';
 import { BodyTooLargeError, readBodyCapped } from './utils';
@@ -20,6 +24,14 @@ const log = Logger.for('SettingsBatchApi');
  * delete user, dependency install) are deliberately NOT here -- they fire UAC,
  * destroy data, or carry their own confirmations, and a summary screen that
  * implied Save would perform them would be lying.
+ *
+ * `frameAncestorsAdd` (0.5.3) is Settings → Embedding's pre-approval: origins
+ * to ADD to `frameAncestors`, staged in the dialog and written only by Save.
+ * It is not an `AppConfig` key, so the apply loop routes it to
+ * `Config.addFrameAncestors` -- the store a consent-prompt approval writes --
+ * rather than `updateAppConfig`, and it carries the consent routes' loopback
+ * rule on top of this route's operator gate (see `frameAncestorsAddRefusal`
+ * and the check in `handle`). Revoking an origin stays an immediate action.
  */
 export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'webPort',
@@ -27,7 +39,39 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'autoUpdate',
     'updateCheckIntervalMinutes',
     'githubOwner',
+    FRAME_ANCESTORS_ADD_ID,
 ]);
+
+/**
+ * At most this many origins in one `frameAncestorsAdd`. The tab adds one or two
+ * per click, so a real save is far below it; the cap only bounds what a crafted
+ * request can make the server validate and write.
+ */
+export const MAX_FRAME_ANCESTORS_PER_ADD = 32;
+
+/**
+ * Why a `frameAncestorsAdd` value is unusable, or null when it is a list of
+ * 1-32 strings that `parseFrameAncestorOrigin` accepts -- the same validator the
+ * config loader and the consent prompt use, so an origin is held to one
+ * standard however it arrives. Pure; checked before the WAL row is written.
+ */
+export function frameAncestorsAddRefusal(to: unknown): string | null {
+    if (!Array.isArray(to)) return 'must be a list of origins';
+    if (to.length === 0) return 'no origins to add';
+    if (to.length > MAX_FRAME_ANCESTORS_PER_ADD) {
+        return `at most ${MAX_FRAME_ANCESTORS_PER_ADD} origins can be added in one save`;
+    }
+    for (const entry of to) {
+        if (typeof entry === 'string' && isIpv6FrameAncestor(entry)) {
+            // Its own reason: a browser discards an IPv6 frame-ancestors source.
+            return `${JSON.stringify(entry)}: ${IPV6_EMBEDDER_ERROR}`;
+        }
+        if (typeof entry !== 'string' || parseFrameAncestorOrigin(entry) === null) {
+            return `not an http(s) origin with no path: ${JSON.stringify(entry)}`;
+        }
+    }
+    return null;
+}
 
 /**
  * `webPort` LAST, always.
@@ -118,6 +162,38 @@ export class SettingsBatchApi {
             res.writeHead(400, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ error: `not a stageable setting: ${unknown.id}` }));
             return true;
+        }
+
+        // A pre-approved embedder (Settings → Embedding) is the same decision as
+        // approving a consent prompt, so it carries that decision's rule as well
+        // as this route's: from this machine only. `requireOperator` above has
+        // already established an admin, but it also admits a signed-in admin or
+        // the remote-admin opt-out from off-box, which the consent routes
+        // (`EmbedRequestApi.requireLocalAdmin`) deliberately do not. Then the
+        // value itself, through `parseFrameAncestorOrigin`. Both are refused
+        // before the WAL row, in the rejected-apply shape, so the dialog names
+        // the change ("couldn't save Allowed embedders: …") and nothing else in
+        // the batch has been applied.
+        for (const embed of changes.filter((c) => c.id === FRAME_ANCESTORS_ADD_ID)) {
+            if (!isLoopback(req.socket?.remoteAddress ?? '')) {
+                log.warn('refusing batch: an embedder pre-approval from off this machine');
+                res.writeHead(403, { 'content-type': 'application/json' });
+                res.end(
+                    JSON.stringify({
+                        ok: false,
+                        applied: [],
+                        failed: { id: embed.id, error: EMBED_DECIDED_LOCALLY_ERROR },
+                    }),
+                );
+                return true;
+            }
+            const refusal = frameAncestorsAddRefusal(embed.to);
+            if (refusal) {
+                log.warn(`refusing batch: ${embed.id} ${refusal}`);
+                res.writeHead(400, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, applied: [], failed: { id: embed.id, error: refusal } }));
+                return true;
+            }
         }
 
         // Every stageable setting (the web port and the updater's) is host-only,
@@ -242,6 +318,25 @@ export class SettingsBatchApi {
                     }),
                 );
                 return true;
+            }
+            if (change.id === FRAME_ANCESTORS_ADD_ID) {
+                // The consent prompt's store, not AppConfig: applied to the
+                // running server and written to config.json's `frameAncestors`
+                // in one step, all or nothing. Validated above, so a false here
+                // is not expected; it is still a refusal rather than an
+                // `applied` entry, so the WAL never claims a write that did not
+                // happen.
+                const origins = change.to as string[];
+                try {
+                    if (!cfg.addFrameAncestors(origins)) {
+                        return failBatch(change.id, new Error('not a usable frame ancestor'));
+                    }
+                } catch (err) {
+                    return failBatch(change.id, err);
+                }
+                applied.push(change.id);
+                log.info(`Embedding pre-approved in Settings for ${origins.join(', ')}`);
+                continue;
             }
             try {
                 cfg.updateAppConfig({ [change.id]: change.to } as never);

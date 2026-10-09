@@ -84,7 +84,7 @@ The dependency manager checks each standalone runtime dependency for a newer ver
   attestation is checked against (cached in `dependencies/.sigstore` and refreshed on each later install or
   update). **Unlike the other
   downloads, these are not fetched on first run.** Nothing is downloaded until you open Settings →
-  Server → Local HTTPS and generate a certificate, or update mkcert from Settings → Dependencies, so a
+  Local HTTPS and generate a certificate, or update mkcert from Settings → Dependencies, so a
   deployment that never uses that feature never contacts them. The certificate itself is then minted
   entirely on your machine -- the binary runs locally and sends nothing anywhere. Setting the
   `WS_SCRCPY_MKCERT_URL_BASE` environment variable moves the version lookup, both downloads and the

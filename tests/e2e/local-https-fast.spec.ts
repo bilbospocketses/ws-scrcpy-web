@@ -55,7 +55,7 @@ const SUBJECT_400 = { error: 'that address could not be used for a certificate' 
 const GENERATE_500 = { error: 'certificate generation failed; see the server logs for the cause' }; // TlsApi.ts
 const PORT_400 = { error: 'port must be an integer between 1 and 65535' }; // src/server/Config.ts validateHttpsPortInput
 
-// src/app/client/settings/tabs/ServerTab.ts
+// src/app/client/settings/tabs/LocalHttpsTab.ts
 const PANEL_PORT_REFUSAL = 'port must be an integer between 1 and 65535.';
 const PANEL_PORT_SAVED = 'https port saved. the server is restarting for the change to take effect.';
 const SUB_1024_ADVISORY = 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
@@ -68,13 +68,17 @@ const LISTENER_NOT_STARTED =
 const LISTENER_STALE =
     'the https listener is running, but it is still serving the certificate from before your last regenerate — including a ca that no longer exists. restart the server so it serves the new one; until then, a device using the new ca will not match what is actually being served.';
 const CA_RESTORE = 'regenerate to restore the ca download.';
-const MKCERT_MISSING = 'install mkcert in the dependencies tab to generate a certificate.';
+const MKCERT_MISSING =
+    'install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.';
 const EXPIRY_SOON_RE =
     /^this certificate expires on .+\. regenerate before then, or streaming stops working from other machines\.$/;
-// The row says "on this device"; the panel's own words are "on your device".
-const TRUST_SUMMARY = 'how to trust this certificate on your device';
-const TRUST_LABELS = ['windows:', 'macos:', 'linux:', 'android:', 'ios / ipados:'];
-const FIREFOX_NOTE_RE = /^using firefox\? firefox keeps its own certificate store/;
+// Since 0.5.3 the per-OS install steps live on the help page; the panel links to section 4.
+const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-certificate-establishing-trust';
+const CA_FILE_NAME = 'ws-scrcpy-web-local-ca.crt'; // src/common/CaDownload.ts
+const SUBJECT_HELP_HREF = 'help/certificate-subject.html';
+// public/help/certificate-subject.html
+const HELP_TITLE = 'TLS Certificates: The Subject Name Explained — ws-scrcpy-web';
+const HELP_H1 = 'Understanding TLS Certificates: The "Subject Name" Explained Simply';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -274,6 +278,8 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         }
         await expect(notice).toBeVisible();
         await expect(notice).toHaveText(MKCERT_MISSING);
+        // 0.5.3: the note is the very first thing in the Local HTTPS tab.
+        await expect(panel.locator('.settings-section-body > *').first()).toHaveAttribute('data-tls-mkcert-notice', '');
         // What needs no mkcert stays usable.
         await expect(panelParts(panel).port).toBeEnabled();
         await expect(panelParts(panel).portOk).toBeEnabled();
@@ -311,7 +317,7 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         }
 
         // The advisory is per platform: the server's, as /api/service/status
-        // reports it to the panel (ServerTab.ts subPrivilegedPortNotice).
+        // reports it to the panel (LocalHttpsTab.ts subPrivilegedPortNotice).
         const status = await page.request.get('/api/service/status');
         expect(status.status(), 'GET /api/service/status').toBe(200);
         const platform = ((await status.json()) as { platform?: string }).platform;
@@ -359,7 +365,7 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         expect(writes.writes).toEqual([]);
     });
 
-    test('21.9 notices and the trust guide: five platforms plus Firefox; the expiry notice inside 30 days; restart-required while bound; "regenerate to restore the ca download." with the CA gone', async ({
+    test('21.9 notices and the trust guide: one link to the install guide, opening in a new tab; the expiry notice inside 30 days; restart-required while bound; "regenerate to restore the ca download." with the CA gone', async ({
         page,
     }) => {
         const writes = await guardTlsWrites(page);
@@ -395,18 +401,120 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         await expect(p.caRestoreNotice).toBeHidden();
         await expect(p.download).toBeEnabled();
 
-        // The trust guide: collapsed until expanded, then five platforms and the Firefox note.
-        const guide = panel.locator('details').filter({ has: page.locator('summary', { hasText: TRUST_SUMMARY }) });
-        const labels = guide.locator('p.settings-status > strong');
-        const firefox = guide.locator('p.settings-status').filter({ hasText: FIREFOX_NOTE_RE });
-        await expect(labels.first()).toBeHidden();
-        await guide.locator('summary').click();
-        await expect(labels).toHaveText(TRUST_LABELS);
-        for (let i = 0; i < TRUST_LABELS.length; i++) await expect(labels.nth(i)).toBeVisible();
-        await expect(firefox).toBeVisible();
+        // The trust guide (0.5.3): one link to the help page's install section,
+        // opening in a new tab, in place of the per-OS accordion.
+        await expect(panel.locator('details')).toHaveCount(0);
+        const guide = panel.locator('[data-tls-trust-help] a');
+        await expect(guide).toHaveCount(1);
+        await expect(guide).toBeVisible();
+        await expect(guide).toHaveAttribute('href', TRUST_HELP_HREF);
+        await expect(guide).toHaveAttribute('target', '_blank');
+        await expect(guide).toHaveAttribute('rel', 'noopener noreferrer');
+        await expect(guide).toContainText('opens in a new tab');
         expect(writes.writes).toEqual([]);
     });
 });
+
+test.describe('local https fast tier: the help page (smoke §21.16)', () => {
+    test('21.16 the subject line and the install-guide line each open public/help/certificate-subject.html in a new tab, themed, at the right place', async ({
+        page,
+        context,
+        baseURL,
+    }) => {
+        const writes = await guardTlsWrites(page);
+        await stubTlsState(page, readyState({ httpsListener: BOUND_LISTENER }));
+        await page.goto('/');
+        const panel = await openLocalHttpsPanel(page);
+
+        // Under the subject radios: one short line and a link to the explainer.
+        const subjectLink = panel.locator('[data-tls-subject-guide] a');
+        await expect(subjectLink).toHaveAttribute('href', SUBJECT_HELP_HREF);
+        await expect(subjectLink).toHaveAttribute('target', '_blank');
+        await expect(subjectLink).toHaveAttribute('rel', 'noopener noreferrer');
+        await expect(subjectLink).toContainText('opens in a new tab');
+
+        let popupPromise = context.waitForEvent('page');
+        await subjectLink.click();
+        let popup = await popupPromise;
+        await popup.waitForLoadState();
+        expect(popup.url()).toBe(`${baseURL}/${SUBJECT_HELP_HREF}`);
+        await expect(popup).toHaveTitle(HELP_TITLE);
+        await expect(popup.locator('h1')).toHaveText(HELP_H1);
+        // Themed before paint from the app's own key, like subnets.html.
+        await expect(popup.locator('html')).toHaveAttribute('data-theme', /^(dark|light)$/);
+        await expect(popup.locator('h2')).toHaveCount(5);
+        for (const h2 of await popup.locator('h2').all()) await expect(h2).toHaveAttribute('id', /.+/);
+        // The explainer's own link lands on section 4.
+        await popup.locator('a[href="#4-installing-a-certificate-establishing-trust"]').first().click();
+        await expect(popup).toHaveURL(/#4-installing-a-certificate-establishing-trust$/);
+        await popup.close();
+
+        // Under the download: the install guide, opened straight at section 4.
+        popupPromise = context.waitForEvent('page');
+        await panel.locator('[data-tls-trust-help] a').click();
+        popup = await popupPromise;
+        await popup.waitForLoadState();
+        expect(popup.url()).toBe(`${baseURL}/${TRUST_HELP_HREF}`);
+        // An attribute selector: `#4-…` is not valid CSS (an id selector cannot start with a digit).
+        await expect(popup.locator('[id="4-installing-a-certificate-establishing-trust"]')).toBeInViewport();
+        for (const id of [
+            'windows',
+            'macos',
+            'linux',
+            'ubuntu-debian',
+            'fedora-rhel',
+            'android',
+            'ios-ipados',
+            'firefox',
+        ]) {
+            await expect(popup.locator(`#${id}`), id).toHaveCount(1);
+        }
+        await popup.close();
+        expect(writes.writes).toEqual([]);
+    });
+
+    // 0.5.3 review (M1): "← Close tab" closes a tab the panel opened, and when
+    // the browser will not close the tab it follows its own link (../) instead
+    // of doing nothing.
+    test('21.16 "← Close tab" closes the help tab the panel opened', async ({ page, context }) => {
+        await stubTlsState(page, readyState({ httpsListener: BOUND_LISTENER }));
+        await page.goto('/');
+        const panel = await openLocalHttpsPanel(page);
+        const popupPromise = context.waitForEvent('page');
+        await panel.locator('[data-tls-subject-guide] a').click();
+        const popup = await popupPromise;
+        await popup.waitForLoadState();
+        const closed = popup.waitForEvent('close');
+        // The click handler closes the page it runs in, so the click can still be
+        // settling when the page goes away; that one error means it worked.
+        await popup
+            .locator('a.back')
+            .click({ noWaitAfter: true })
+            .catch((err: unknown) => {
+                if (!/has been closed/.test(String(err))) throw err;
+            });
+        await closed;
+        expect(popup.isClosed()).toBe(true);
+    });
+
+    test('21.16 "← Close tab" goes to the app when the browser ignores window.close()', async ({ page, baseURL }) => {
+        // What a browser does for a tab it will not close by script (opened
+        // directly, or one that has navigated): nothing.
+        await page.addInitScript(() => {
+            window.close = () => undefined;
+        });
+        await page.goto(`/${SUBJECT_HELP_HREF}`);
+        await followSectionLink(page);
+        await page.locator('a.back').click();
+        await expect(page).toHaveURL(`${baseURL}/`);
+    });
+});
+
+/** Follow one of the help page's own in-page links first, as a reader would. */
+async function followSectionLink(help: Page): Promise<void> {
+    await help.locator('a[href="#4-installing-a-certificate-establishing-trust"]').first().click();
+    await expect(help).toHaveURL(/#4-installing-a-certificate-establishing-trust$/);
+}
 
 // ===========================================================================
 // One spec-owned server, real TLS state, rows that need the server itself.
@@ -487,7 +595,7 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
             const res = await api.get('/api/tls/ca-root');
             expect(res.status(), `download ${i + 1}`).toBe(200);
             expect(res.headers()['content-type']).toBe('application/x-pem-file');
-            expect(res.headers()['content-disposition']).toBe('attachment; filename="ws-scrcpy-web-local-ca.pem"');
+            expect(res.headers()['content-disposition']).toBe(`attachment; filename="${CA_FILE_NAME}"`);
             expect(await res.text(), `download ${i + 1} is the CA on disk`).toBe(planted.ca.cert);
         }
         const eleventh = await api.get('/api/tls/ca-root');

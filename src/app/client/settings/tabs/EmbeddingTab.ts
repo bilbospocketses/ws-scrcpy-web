@@ -1,3 +1,10 @@
+import {
+    EMBEDDER_SCHEMES,
+    type EmbedderScheme,
+    embedderOriginsFromInput,
+    FRAME_ANCESTORS_ADD_ID,
+    isEmbedderScheme,
+} from '../../../../common/embedderOrigin';
 import type { Role } from '../../AuthClient';
 import { ConfirmModal } from '../../ConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
@@ -85,57 +92,160 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
     return row;
 }
 
+/** The staged field's summary label: `Allowed embedders: none added → add http://…`. */
+export const EMBED_ADD_LABEL = 'Allowed embedders';
+
+/**
+ * The field's baseline. ONE frozen instance, deliberately: the store compares
+ * values with `Object.is`, so removing the last pending origin must put back
+ * this very array for the field to read as unchanged again. A fresh `[]` would
+ * leave Save enabled over nothing.
+ */
+const NONE_PENDING: readonly string[] = Object.freeze([]);
+
+/** Summary text for the staged additions. */
+export function formatEmbedAdditions(value: unknown): string {
+    return Array.isArray(value) && value.length > 0 ? `add ${value.join(', ')}` : 'none added';
+}
+
+function registerEmbedAddField(store: StagedSettingsStore): void {
+    store.register({
+        id: FRAME_ANCESTORS_ADD_ID,
+        label: EMBED_ADD_LABEL,
+        initial: NONE_PENDING,
+        format: formatEmbedAdditions,
+    });
+}
+
+/**
+ * The origins staged for addition and not yet saved, read off the store so
+ * the tab and the batch cannot disagree.
+ *
+ * Read through `changes()` rather than `get()`: after a successful Save,
+ * `commit()` makes the staged array the new BASELINE, so it is no longer a
+ * change -- and no longer pending -- even though `get()` still returns it.
+ */
+export function pendingEmbedOrigins(store: StagedSettingsStore): string[] {
+    const change = store.changes().find((c) => c.id === FRAME_ANCESTORS_ADD_ID);
+    return Array.isArray(change?.to) ? (change.to as string[]) : [];
+}
+
+/** Everything one Embedding tab instance holds between renders. */
+interface EmbeddingView {
+    askChild: AskChild;
+    store: StagedSettingsStore;
+    /** The approved and pending rows (`display: contents`, so they stay grid rows). */
+    list: HTMLElement;
+    /** The add row and its error line; hidden until the approved list has loaded. */
+    adder: HTMLElement;
+    /** As the server last listed them; `null` while the first read is in flight. */
+    approved: string[] | null;
+    /** Why the list could not be read, if it could not. */
+    error: string | null;
+}
+
 /**
  * The Embedding tab (admin-only) — origins allowed to frame this app, each
- * with a revoke button.
+ * with a revoke button, and below them a row to pre-approve another.
  *
- * Permission is granted through the consent prompt, which is a one-way door
- * without this — approving wrote an origin into config.json and there was no
- * way back short of hand-editing the file. Revoking takes effect on the
- * running server immediately.
+ * Permission is granted through the consent prompt the embedding app raises,
+ * or (since 0.5.3) added here ahead of time. Without this tab the prompt was a
+ * one-way door: approving wrote an origin into config.json and there was no
+ * way back short of hand-editing the file.
  *
- * Registers nothing with `store`: revoking an origin is an action (an
- * immediate POST), not a value that can be staged and saved later.
+ * The two halves deliberately behave differently:
+ *
+ * - **Revoke is an action**, an immediate confirmed POST that takes effect on
+ *   the running server at once. Nothing about it is staged.
+ * - **Adding is a staged setting** (`frameAncestorsAdd`). The add row only puts
+ *   the origin(s) in the store; they show in the list marked as pending, can
+ *   be removed again, and are written only when the dialog's Save sends the
+ *   batch (`SettingsBatchApi` → `Config.addFrameAncestors`, the same store a
+ *   consent approval writes). Closing without saving discards them, through the
+ *   dialog's ordinary unsaved-changes prompt.
  */
-export function buildEmbeddingTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
+export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
     const { section, body } = buildSection('Embedding');
-    renderEmbedOrigins(ctx.askChild, body, null);
-    void refreshEmbedOrigins(ctx.askChild, body);
+    registerEmbedAddField(store);
+
+    const list = document.createElement('div');
+    list.style.display = 'contents';
+    list.setAttribute('data-embed-list', '');
+
+    const view: EmbeddingView = {
+        askChild: ctx.askChild,
+        store,
+        list,
+        adder: document.createElement('div'),
+        approved: null,
+        error: null,
+    };
+    view.adder = buildAddRow(view);
+    body.append(list, view.adder);
+    renderEmbedOrigins(view);
+
+    store.subscribe(() => {
+        // A successful Save commits: the staged array becomes the baseline and
+        // stops being a change. Re-baseline to "nothing pending", so a later
+        // removal compares against the empty list again, and re-read the list,
+        // which now holds what was just saved.
+        const value = store.get(FRAME_ANCESTORS_ADD_ID);
+        if (Array.isArray(value) && value.length > 0 && pendingEmbedOrigins(store).length === 0) {
+            registerEmbedAddField(store);
+            void refreshEmbedOrigins(view);
+            return;
+        }
+        renderEmbedOrigins(view);
+    });
+
+    void refreshEmbedOrigins(view);
     return section;
 }
 
-async function refreshEmbedOrigins(askChild: AskChild, body: HTMLElement): Promise<void> {
+async function refreshEmbedOrigins(view: EmbeddingView): Promise<void> {
     try {
         const res = await fetch('/api/embed-origins', { headers: { Accept: 'application/json' } });
         if (!res.ok) {
-            renderEmbedOrigins(askChild, body, [], 'could not read the list — see server logs.');
-            return;
+            view.error = 'could not read the list — see server logs.';
+        } else {
+            const data = (await res.json()) as { origins?: string[] };
+            view.approved = data.origins ?? [];
+            view.error = null;
         }
-        const data = (await res.json()) as { origins?: string[] };
-        renderEmbedOrigins(askChild, body, data.origins ?? []);
     } catch {
-        renderEmbedOrigins(askChild, body, [], 'could not reach the server.');
+        view.error = 'could not reach the server.';
     }
+    renderEmbedOrigins(view);
 }
 
-/** `origins === null` means "still loading". */
-function renderEmbedOrigins(askChild: AskChild, body: HTMLElement, origins: string[] | null, error?: string): void {
-    body.textContent = '';
+/**
+ * Redraw the approved and pending rows. The add row is NOT rebuilt, so what
+ * the user has typed into it survives every redraw.
+ */
+function renderEmbedOrigins(view: EmbeddingView): void {
+    const { list, askChild, store } = view;
+    list.textContent = '';
+    // The add row needs the approved list for its duplicate check, and a list
+    // that could not be read (another machine, say) means Save would be refused.
+    setAdderVisible(view.adder, view.approved !== null && view.error === null);
 
-    if (error) {
-        body.appendChild(buildRow(error, document.createElement('span')));
+    const pending = pendingEmbedOrigins(store);
+    // On a read error the approved list is unknown, but anything already
+    // pending is still staged and Save would still send it, so it stays listed.
+    let approved: string[] = [];
+    if (view.error) {
+        list.appendChild(buildRow(view.error, document.createElement('span')));
+    } else if (view.approved === null) {
+        list.appendChild(buildRow('loading…', document.createElement('span')));
         return;
-    }
-    if (origins === null) {
-        body.appendChild(buildRow('loading…', document.createElement('span')));
+    } else if (view.approved.length === 0 && pending.length === 0) {
+        list.appendChild(buildRow('No other origins may embed this app.', document.createElement('span')));
         return;
-    }
-    if (origins.length === 0) {
-        body.appendChild(buildRow('No other origins may embed this app.', document.createElement('span')));
-        return;
+    } else {
+        approved = view.approved;
     }
 
-    for (const origin of origins) {
+    for (const origin of approved) {
         const revokeBtn = document.createElement('button');
         revokeBtn.type = 'button';
         revokeBtn.className = 'modal-button';
@@ -167,16 +277,197 @@ function renderEmbedOrigins(askChild: AskChild, body: HTMLElement, origins: stri
                     });
                     if (res.ok) {
                         const updated = (await res.json()) as { origins?: string[] };
-                        renderEmbedOrigins(askChild, body, updated.origins ?? []);
+                        view.approved = updated.origins ?? [];
+                        view.error = null;
+                        renderEmbedOrigins(view);
                     } else {
                         // Most likely a stale list — re-read rather than guess.
-                        await refreshEmbedOrigins(askChild, body);
+                        await refreshEmbedOrigins(view);
                     }
                 } catch {
-                    renderEmbedOrigins(askChild, body, [], 'could not reach the server.');
+                    view.error = 'could not reach the server.';
+                    renderEmbedOrigins(view);
                 }
             })();
         });
-        body.appendChild(buildRow(origin, revokeBtn));
+        list.appendChild(buildRow(origin, revokeBtn));
     }
+
+    // Pending additions: staged, not saved. Marked as such, and removable with
+    // no confirmation, since removing one changes nothing on the server.
+    for (const origin of pending) {
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'modal-button';
+        removeBtn.textContent = 'remove';
+        removeBtn.setAttribute('aria-label', `remove ${origin} before saving`);
+        removeBtn.addEventListener('click', () => {
+            const rest = pendingEmbedOrigins(store).filter((o) => o !== origin);
+            // Back to the baseline instance itself when nothing is left, so the
+            // field reads as unchanged (see NONE_PENDING).
+            store.set(FRAME_ANCESTORS_ADD_ID, rest.length > 0 ? rest : NONE_PENDING);
+        });
+
+        const row = buildRow(origin, removeBtn);
+        row.setAttribute('data-embed-pending', origin);
+        const tag = document.createElement('span');
+        tag.className = 'settings-pending-tag';
+        tag.textContent = 'pending — saved when you click save';
+        row.querySelector('.settings-label')?.appendChild(tag);
+        list.appendChild(row);
+    }
+}
+
+/** Show or hide the add row. Inline `display`, which `hidden` alone would lose to (`display: contents`). */
+function setAdderVisible(adder: HTMLElement, visible: boolean): void {
+    adder.hidden = !visible;
+    adder.style.display = visible ? 'contents' : 'none';
+}
+
+/**
+ * The bottom row: address, port, scheme, add. Built once per tab; a redraw of
+ * the list never touches it, so a half-typed entry survives one.
+ *
+ * Validated as the user types (`embedderOriginsFromInput`): a bad address or
+ * port shows its reason on the line under the row and disables add, and an
+ * empty address simply disables add with nothing to complain about yet. The
+ * click validates again rather than trusting the button state.
+ *
+ * An origin that is already allowed, or already pending, is never staged
+ * twice. If every origin one add would stage is a duplicate, nothing changes
+ * and the line says so; with `http & https`, the new one is staged and the line
+ * names the one that was skipped.
+ */
+function buildAddRow(view: EmbeddingView): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.setAttribute('data-embed-add', '');
+
+    const address = document.createElement('input');
+    address.type = 'text';
+    address.className = 'settings-input';
+    address.placeholder = 'ip address or hostname';
+    address.setAttribute('aria-label', 'embedder address');
+    address.setAttribute('data-embed-address', '');
+    address.autocomplete = 'off';
+    address.spellcheck = false;
+
+    // A text box, not type="number": a number input reports an entry it cannot
+    // parse as '', which would read as "blank" and silently drop the port.
+    const port = document.createElement('input');
+    port.type = 'text';
+    port.inputMode = 'numeric';
+    port.className = 'settings-input';
+    port.style.maxWidth = '80px';
+    port.placeholder = '80';
+    port.setAttribute('aria-label', 'embedder port');
+    port.setAttribute('data-embed-port', '');
+    port.autocomplete = 'off';
+
+    const scheme = document.createElement('select');
+    scheme.className = 'settings-input';
+    scheme.style.maxWidth = '130px';
+    scheme.setAttribute('aria-label', 'embedder scheme');
+    scheme.setAttribute('data-embed-scheme', '');
+    const schemeText: Record<EmbedderScheme, string> = { http: 'http', https: 'https', both: 'http & https' };
+    for (const value of EMBEDDER_SCHEMES) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = schemeText[value];
+        scheme.appendChild(opt);
+    }
+    scheme.value = 'http';
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'modal-button';
+    addBtn.textContent = 'add';
+    addBtn.setAttribute('data-embed-add-button', '');
+    addBtn.disabled = true;
+
+    const controls = document.createDocumentFragment();
+    controls.append(address, port, scheme, addBtn);
+    wrap.appendChild(buildRow('add an embedder', controls));
+
+    const message = document.createElement('p');
+    message.className = 'settings-status';
+    message.style.gridColumn = '1 / -1';
+    message.setAttribute('data-embed-add-message', '');
+    message.setAttribute('role', 'status');
+    message.hidden = true;
+    wrap.appendChild(message);
+
+    const say = (text: string, isError: boolean): void => {
+        message.textContent = text;
+        message.hidden = text.length === 0;
+        message.classList.toggle('settings-status-error', isError);
+    };
+
+    const read = () =>
+        embedderOriginsFromInput({
+            address: address.value,
+            port: port.value,
+            scheme: isEmbedderScheme(scheme.value) ? scheme.value : 'http',
+        });
+
+    // Live check: an empty address is not yet an error (nothing typed), it
+    // just leaves add disabled; anything else that fails is shown at once.
+    const validate = (): void => {
+        const result = read();
+        address.setAttribute(
+            'aria-invalid',
+            String(!result.ok && result.field === 'address' && address.value.trim() !== ''),
+        );
+        port.setAttribute('aria-invalid', String(!result.ok && result.field === 'port'));
+        if (result.ok) {
+            addBtn.disabled = false;
+            say('', false);
+            return;
+        }
+        addBtn.disabled = true;
+        const nothingTyped = result.field === 'address' && address.value.trim() === '';
+        say(nothingTyped ? '' : result.error, !nothingTyped);
+    };
+    address.addEventListener('input', validate);
+    port.addEventListener('input', validate);
+    scheme.addEventListener('change', validate);
+
+    const add = (): void => {
+        const result = read();
+        if (!result.ok) {
+            validate();
+            if (result.field === 'address' && address.value.trim() === '') say(result.error, true);
+            return;
+        }
+        const approved = view.approved ?? [];
+        const pending = pendingEmbedOrigins(view.store);
+        const fresh = result.origins.filter((o) => !approved.includes(o) && !pending.includes(o));
+        const skipped = result.origins.filter((o) => !fresh.includes(o));
+        const describe = (o: string): string =>
+            approved.includes(o) ? `${o} is already allowed` : `${o} is already waiting to be saved`;
+
+        if (fresh.length === 0) {
+            // Nothing new: refuse, keep what was typed so it can be corrected.
+            say(`${skipped.map(describe).join('; ')}.`, true);
+            return;
+        }
+        view.store.set(FRAME_ANCESTORS_ADD_ID, [...pending, ...fresh]);
+        address.value = '';
+        port.value = '';
+        addBtn.disabled = true;
+        address.setAttribute('aria-invalid', 'false');
+        port.setAttribute('aria-invalid', 'false');
+        say(skipped.length > 0 ? `${skipped.map(describe).join('; ')}; added ${fresh.join(', ')}.` : '', false);
+    };
+    addBtn.addEventListener('click', add);
+    // Enter in either box adds, like a one-line form.
+    for (const input of [address, port]) {
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                add();
+            }
+        });
+    }
+
+    return wrap;
 }

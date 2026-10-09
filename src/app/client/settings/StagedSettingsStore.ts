@@ -37,10 +37,12 @@ export interface StagedField {
  * Dirty state and the change list for the Settings dialog. No DOM, no network.
  *
  * The critical property is what it does NOT do: a field nobody registered can
- * never appear in `changes()`. Action-only tabs (Service, Users, Embedding)
- * register nothing, so "actions must not appear in the summary" is structural
- * rather than a rule someone has to remember -- and a future action cannot leak
- * into the summary by oversight.
+ * never appear in `changes()`. Action-only tabs (Service, Users) register
+ * nothing, so "actions must not appear in the summary" is structural rather
+ * than a rule someone has to remember -- and a future action cannot leak into
+ * the summary by oversight. Embedding registers exactly one field, the staged
+ * pre-approvals (`frameAncestorsAdd`, 0.5.3); its revoke stays an action and
+ * registers nothing.
  */
 export class StagedSettingsStore {
     private fields = new Map<string, StagedField>();
@@ -141,6 +143,23 @@ export class StagedSettingsStore {
         for (const [id, field] of this.fields) {
             this.fields.set(id, { ...field, initial: this.values.get(id) });
         }
+        this.notify();
+    }
+
+    /**
+     * `commit()` for ONE field: adopt its current value as its baseline, so it
+     * stops being a change. A no-op for an unregistered id.
+     *
+     * For a batch the server applied only in part (0.5.3 review, M4): a change
+     * it reports as applied is saved, even though the batch as a whole failed.
+     * `performStagedSave` uses this only for the fields whose tab would
+     * otherwise go on describing a saved value as unsaved (see
+     * `COMMIT_WHEN_APPLIED` in SettingsModal.ts).
+     */
+    commitField(id: string): void {
+        const field = this.fields.get(id);
+        if (!field) return;
+        this.fields.set(id, { ...field, initial: this.values.get(id) });
         this.notify();
     }
 

@@ -174,6 +174,17 @@ describe('TlsApi', () => {
         expect(r.getHeader('content-disposition')).toContain('attachment');
     });
 
+    // --- 0.5.3: the download is named .crt (it was .pem); the content stays PEM ---
+
+    it('names the CA download ws-scrcpy-web-local-ca.crt, still served as PEM', async () => {
+        const { api, svc } = makeApi();
+        const r = makeReqRes('GET', '/api/tls/ca-root');
+        await api.handle(r.req, r.res);
+        expect(r.getStatus()).toBe(200);
+        expect(r.getHeader('content-disposition')).toBe('attachment; filename="ws-scrcpy-web-local-ca.crt"');
+        expect(r.getHeader('content-type')).toBe('application/x-pem-file');
+        expect(svc.caRootPem).toHaveBeenCalledTimes(1);
+    });
     it('rejects a generate with a missing subject, without calling the service', async () => {
         const { api, svc } = makeApi();
         const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip' });

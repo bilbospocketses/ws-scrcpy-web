@@ -458,11 +458,12 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             'Service',
             'Dependencies',
             'Server',
+            'Local HTTPS',
         ]);
-        // 'Local HTTPS' is a second section INSIDE the Server tab, which is why
-        // the tab assertion above is unchanged while this one grew. Keeping
-        // both is the point: the tab strip catches a whole tab appearing, this
-        // catches a section appearing, and neither substitutes for the other.
+        // 'Local HTTPS' has been its own tab since 0.5.3 (until then a second
+        // section INSIDE the Server tab). Keeping both assertions is the point:
+        // the tab strip catches a whole tab appearing, this catches a section
+        // appearing, and neither substitutes for the other.
         await expect(sectionHeadings(settings)).toHaveText([
             'Users',
             'Embedding',
@@ -909,6 +910,7 @@ test.describe('auth / opt-in login (smoke §18)', () => {
                 'Service',
                 'Dependencies',
                 'Server',
+                'Local HTTPS',
             ]);
             await expect(sectionHeadings(adminSettings)).toHaveText([
                 'Users',

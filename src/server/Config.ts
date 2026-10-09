@@ -21,7 +21,7 @@ import { Db, dbDir } from './db/Db';
 import { EnvName } from './EnvName';
 import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
 import { Logger } from './Logger';
-import { parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
+import { isIpv6FrameAncestor, parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
 import { setAllowedHosts } from './security/originGuard';
 import { describeTlsHomeMigration, migrateLegacyTlsHome, resolveCertPaths } from './tls/certPaths';
 import { writeFileAtomicSync } from './util/atomicFile';
@@ -613,7 +613,9 @@ export function sanitizeAllowedHosts(raw: unknown, warn: (msg: string) => void):
  * and drops bad entries with a warning, but it is stricter about shape: each
  * entry must be a bare absolute origin (scheme + host, optional port) because
  * that is all CSP `frame-ancestors` accepts, and `*` is rejected outright —
- * allowing any embedder is exactly what the header exists to prevent.
+ * allowing any embedder is exactly what the header exists to prevent. The full
+ * rule (host characters, no wildcard or CSP/header separators anywhere) is
+ * `parseFrameAncestorOrigin`'s.
  */
 export function sanitizeFrameAncestors(raw: unknown, warn: (msg: string) => void): string[] {
     if (raw === undefined) return [];
@@ -632,11 +634,32 @@ export function sanitizeFrameAncestors(raw: unknown, warn: (msg: string) => void
             continue;
         }
         // Same validator the embed-request API uses, so a hand-written entry and
-        // a requested one are held to identical standards.
+        // a requested one are held to identical standards. A refused entry is
+        // skipped with a warning like every other bad entry here, never fatal:
+        // an entry an older build accepted (`http://*.example`, an underscore
+        // in the host) must not stop the server starting.
         const origin = parseFrameAncestorOrigin(entry);
         if (origin === null) {
+            if (isIpv6FrameAncestor(entry)) {
+                // Accepted by builds before 0.5.3, but it never worked: a browser
+                // discards an IPv6 `frame-ancestors` source. Skipped here, it is not
+                // listed in Settings → Embedding (there is nothing live to revoke).
+                // Like every skipped entry it stays in config.json through other
+                // saves (`saveToDisk` preserves the raw key) and is dropped the next
+                // time the embedder list itself changes, because
+                // `applyAndPersistFrameAncestors` writes the in-memory list whole.
+                warn(
+                    `config.json: frameAncestors entry ${JSON.stringify(entry)} is an IPv6 address, which browsers ` +
+                        'do not accept in frame-ancestors, so it never allowed embedding; use a hostname (such as ' +
+                        'localhost) or an IPv4 address. Skipping; it is removed from config.json the next time the ' +
+                        'list of allowed embedders changes',
+                );
+                continue;
+            }
             warn(
-                `config.json: frameAncestors entry ${JSON.stringify(entry)} must be an http(s) origin only (no path); skipping`,
+                `config.json: frameAncestors entry ${JSON.stringify(entry)} must be an http(s) origin only ` +
+                    '(no path, no wildcard; a host of letters, digits, dots and hyphens). Skipping; it is ' +
+                    'removed from config.json the next time the list of allowed embedders changes',
             );
             continue;
         }
@@ -1239,10 +1262,50 @@ export class Config {
         const normalized = parseFrameAncestorOrigin(origin);
         if (normalized === null) return false;
 
+        const previous = [...this._frameAncestors];
         if (!this._frameAncestors.includes(normalized)) {
             this._frameAncestors.push(normalized);
         }
-        this.applyAndPersistFrameAncestors();
+        this.applyAndPersistFrameAncestors(previous);
+        return true;
+    }
+
+    /**
+     * Pre-approve several embedding origins at once: Settings → Embedding's
+     * staged additions, applied by the settings batch (`frameAncestorsAdd`,
+     * `SettingsBatchApi`). Same store and same normalization as
+     * `addFrameAncestor`, with two differences that matter for a batch:
+     *
+     * - **All or nothing.** Every entry is validated by
+     *   `parseFrameAncestorOrigin` BEFORE anything changes, so one bad entry
+     *   leaves the live policy and config.json exactly as they were and
+     *   returns false.
+     * - **One write.** The list is applied and persisted once, not once per
+     *   origin. If that write throws, the live policy and the in-memory list
+     *   are rolled back before the error is rethrown
+     *   (`applyAndPersistFrameAncestors`), so a failed save leaves everything
+     *   as it was here too.
+     *
+     * An origin already allowed is a no-op, as in `addFrameAncestor`. An empty
+     * list is refused (false): the client never stages one, so it can only be
+     * a malformed request.
+     */
+    public addFrameAncestors(origins: readonly string[]): boolean {
+        if (origins.length === 0) return false;
+        const normalized: string[] = [];
+        for (const origin of origins) {
+            const parsed = parseFrameAncestorOrigin(origin);
+            if (parsed === null) return false;
+            normalized.push(parsed);
+        }
+
+        const previous = [...this._frameAncestors];
+        for (const origin of normalized) {
+            if (!this._frameAncestors.includes(origin)) {
+                this._frameAncestors.push(origin);
+            }
+        }
+        this.applyAndPersistFrameAncestors(previous);
         return true;
     }
 
@@ -1260,34 +1323,49 @@ export class Config {
         const index = this._frameAncestors.indexOf(normalized);
         if (index === -1) return false;
 
+        const previous = [...this._frameAncestors];
         this._frameAncestors.splice(index, 1);
-        this.applyAndPersistFrameAncestors();
+        this.applyAndPersistFrameAncestors(previous);
         return true;
     }
 
     /**
      * Apply the current list to the running server, then write it to config.json.
      *
-     * Apply first, deliberately: the live policy is what the user is waiting on, and a write
-     * failure should not leave them told "approved" (or "revoked") by a server still doing the
-     * opposite. The file is re-read and rewritten whole so every other key survives.
+     * Apply first, so the live policy changes the moment the change is accepted. The file is
+     * re-read and rewritten whole so every other key survives.
+     *
+     * If the write throws, the in-memory list and the live policy are put back to `previous` (the
+     * list as it was before the caller changed it) and the error is rethrown. Every caller -- the
+     * consent prompt's `addFrameAncestor`, the settings batch's `addFrameAncestors` and the revoke
+     * route's `removeFrameAncestor` -- reports a throw as a failure, so without the rollback a
+     * failed save would leave the running server doing what the user was just told did not happen,
+     * until a restart re-read the unchanged file and silently undid it. config.json itself is
+     * untouched by a failed write (`writeFileAtomicSync` writes a temporary file and renames it).
      */
-    private applyAndPersistFrameAncestors(): void {
+    private applyAndPersistFrameAncestors(previous: readonly string[]): void {
         setFrameAncestors(this._frameAncestors);
 
-        const existing: Record<string, unknown> = {};
         try {
-            Object.assign(existing, JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')));
-        } catch {
-            /* no existing file / unparseable — write a fresh one below */
-        }
-        existing['frameAncestors'] = this._frameAncestors;
+            const existing: Record<string, unknown> = {};
+            try {
+                Object.assign(existing, JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')));
+            } catch {
+                /* no existing file / unparseable — write a fresh one below */
+            }
+            existing['frameAncestors'] = this._frameAncestors;
 
-        const dir = path.dirname(this._configFilePath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+            const dir = path.dirname(this._configFilePath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
+        } catch (err) {
+            // In place: `_frameAncestors` is readonly and the getter hands out this same array.
+            this._frameAncestors.splice(0, this._frameAncestors.length, ...previous);
+            setFrameAncestors(this._frameAncestors);
+            throw err;
         }
-        writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
     }
 
     /**
