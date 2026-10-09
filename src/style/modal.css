@@ -778,6 +778,17 @@ dialog.settings-modal .settings-input:focus {
     border-color: rgba(0, 0, 0, 0.15);
 }
 
+/*
+ * A disabled field reads as unavailable at a glance (the Server tab's https
+ * port until mkcert and a certificate exist; the Local HTTPS subject controls
+ * until mkcert is installed), matching .settings-btn:disabled below. Without
+ * it the themed background above made a disabled box look editable.
+ */
+dialog.settings-modal .settings-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 dialog.modal .settings-btn {
     border: 0.5px solid var(--text-color, #ddd);
     border-radius: 6px;

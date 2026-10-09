@@ -18,12 +18,14 @@ import {
     applyLocalHttpsServiceStatus,
     applyLocalHttpsServiceStatusFailed,
     buildLocalHttpsTab,
+    TLS_CERT_CHANGED_EVENT,
 } from './settings/tabs/LocalHttpsTab';
 import {
     applyServerContainerMode,
     applyServerServiceStatus,
     buildServerTab,
     refreshServer,
+    refreshServerHttps,
 } from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
 import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
@@ -226,7 +228,7 @@ function labelFor(id: string, changes: Change[]): string {
  * ALREADY applied before it stopped.
  *
  * Named with the change's LABEL, not its wire id: the user has just confirmed a
- * summary reading "Web port: 8000 → 80", so answering with `webPort` makes them
+ * summary reading "HTTP port: 8000 → 80", so answering with `webPort` makes them
  * translate an internal identifier back to the row they touched. The id is the
  * fallback for a failure naming something that was not in this batch.
  *
@@ -554,8 +556,15 @@ export class SettingsModal extends Modal {
         // An install from the Dependencies tab bubbles up to here; the Local
         // HTTPS tab's panel re-checks mkcert so generate enables without a
         // reopen. On the dialog itself, so the listener goes with it.
+        // The Server tab's https port is gated on mkcert too, so it re-reads.
         this.dialog.addEventListener(DEPENDENCY_INSTALLED_EVENT, () => {
             if (this.localHttpsTabEl) void applyLocalHttpsDependencyInstalled(this.localHttpsTabEl);
+            if (this.serverTabEl && !this.docker) void refreshServerHttps(this.serverTabEl);
+        });
+        // A certificate generated or revoked on the Local HTTPS tab opens or
+        // closes the Server tab's https port.
+        this.dialog.addEventListener(TLS_CERT_CHANGED_EVENT, () => {
+            if (this.serverTabEl && !this.docker) void refreshServerHttps(this.serverTabEl);
         });
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
         // Resolve the current user's role first so admin-only sections can be gated.
@@ -638,6 +647,10 @@ export class SettingsModal extends Modal {
                     if (this.canUse('dependencies') && this.dependenciesTabEl) {
                         void refreshDependencies(this.dependenciesTabEl);
                     }
+                    // The Server tab's https port: held until here, past the
+                    // container branch, because it reads /api/tls/state, which a
+                    // container refuses (and its row is hidden there anyway).
+                    if (this.canUse('webPort') && this.serverTabEl) void refreshServerHttps(this.serverTabEl);
                     if (this.canUse('service') && this.serviceTabEl) {
                         void refreshService(this.serviceTabEl, {
                             // renderServiceState (inside ServiceTab.ts) learns the
@@ -826,7 +839,7 @@ export class SettingsModal extends Modal {
         save.className = 'settings-btn settings-btn-primary settings-save';
         save.textContent = 'save';
         // Starts disabled: a freshly opened dialog has staged nothing, and the
-        // tabs' baselines are not even known yet (the web port and the update
+        // tabs' baselines are not even known yet (the ports and the update
         // settings arrive on the refreshes the constructor drives).
         save.disabled = true;
         save.addEventListener('click', () => void this.onSaveClick());
@@ -1063,7 +1076,7 @@ export class SettingsModal extends Modal {
     // constructor's post-probe block, via `this.serviceTabEl`.
 
     // Server tab (the beta.62 consolidation of the old "App" section: reset,
-    // change password, log out, web port, install-for-all-users, stop & exit,
+    // change password, log out, the http and https ports, install-for-all-users, stop & exit,
     // uninstall) moved to settings/tabs/ServerTab.ts, along with the pure
     // helpers only it uses. `refreshServer()` is triggered right after
     // `fillBody`, and `applyServerServiceStatus()` from the Service tab's

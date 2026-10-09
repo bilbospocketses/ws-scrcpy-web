@@ -7,6 +7,7 @@ import { DEPENDENCY_INSTALLED_EVENT } from '../DependencyPanel';
 import * as ResetConfirmModalModule from '../ResetConfirmModal';
 import { SettingsModal } from '../SettingsModal';
 import * as SettingsServiceModule from '../SettingsService';
+import { TLS_CERT_CHANGED_EVENT } from '../settings/tabs/LocalHttpsTab';
 import {
     appSectionButtonsState,
     appUninstallStartedMessage,
@@ -929,6 +930,88 @@ describe('an mkcert install in Dependencies enables generate on the Local HTTPS 
         expect(document.querySelector<HTMLElement>('dialog.settings-modal [data-tls-mkcert-notice]')!.hidden).toBe(
             true,
         );
+    });
+});
+
+describe("the Server tab's https port follows mkcert and the certificate", () => {
+    beforeEach(() => {
+        document.body.replaceChildren();
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        stubMeAsAdmin();
+    });
+
+    it('opens once a certificate is generated and an mkcert install is announced, re-reading each time', async () => {
+        let mkcertVersion: string | null = null;
+        let certStatus: 'none' | 'ready' = 'none';
+        const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string) => {
+                if (url === '/api/config') {
+                    return json({
+                        config: { webPort: 8000 },
+                        runtime: { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000 },
+                    });
+                }
+                if (url === '/api/service/status') {
+                    return json({ supported: true, status: 'not-installed', platform: 'win32' });
+                }
+                if (url === '/api/tls/state') {
+                    return json({ status: certStatus, httpsPort: 9443, candidateIps: ['192.168.86.3'] });
+                }
+                if (url === '/api/dependencies') {
+                    return json([
+                        {
+                            name: 'mkcert',
+                            installedVersion: mkcertVersion,
+                            status: mkcertVersion === null ? 'not-installed' : 'up-to-date',
+                        },
+                    ]);
+                }
+                return new Promise(() => undefined);
+            }),
+        );
+
+        new SettingsModal();
+        for (let i = 0; i < 5; i++) await flush();
+
+        const serverSection = (): HTMLElement =>
+            Array.from(document.querySelectorAll<HTMLElement>('dialog.settings-modal section.settings-section')).find(
+                (s) => s.querySelector(':scope > h3')?.textContent === 'Server',
+            )!;
+        const https = (): HTMLInputElement => serverSection().querySelector<HTMLInputElement>('input[data-tls-port]')!;
+        const gateNote = (): HTMLElement =>
+            document.querySelector<HTMLElement>('dialog.settings-modal [data-https-port-gate-note]')!;
+        expect(https(), 'https port row missing').not.toBeNull();
+        expect(https().disabled).toBe(true);
+        expect(https().value).toBe('9443');
+        expect(gateNote().hidden).toBe(false);
+
+        // A certificate appears (generated on the Local HTTPS tab), but mkcert is
+        // still reported missing: the row stays shut.
+        certStatus = 'ready';
+        document
+            .querySelector('dialog.settings-modal [data-settings-tab="local-https"]')!
+            .dispatchEvent(new CustomEvent(TLS_CERT_CHANGED_EVENT, { bubbles: true }));
+        for (let i = 0; i < 3; i++) await flush();
+        expect(https().disabled).toBe(true);
+
+        // mkcert installed from the Dependencies tab: both conditions hold.
+        mkcertVersion = 'v1.4.4';
+        document
+            .querySelector('dialog.settings-modal [data-settings-tab="dependencies"]')!
+            .dispatchEvent(new CustomEvent(DEPENDENCY_INSTALLED_EVENT, { bubbles: true, detail: { name: 'mkcert' } }));
+        for (let i = 0; i < 3; i++) await flush();
+        expect(https().disabled).toBe(false);
+        expect(gateNote().hidden).toBe(true);
+
+        // Revoked: shut again.
+        certStatus = 'none';
+        document
+            .querySelector('dialog.settings-modal [data-settings-tab="local-https"]')!
+            .dispatchEvent(new CustomEvent(TLS_CERT_CHANGED_EVENT, { bubbles: true }));
+        for (let i = 0; i < 3; i++) await flush();
+        expect(https().disabled).toBe(true);
     });
 });
 

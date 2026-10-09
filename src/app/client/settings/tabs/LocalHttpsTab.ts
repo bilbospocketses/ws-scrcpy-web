@@ -368,6 +368,15 @@ export const MKCERT_MISSING_NOTICE =
     'install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.';
 
 /**
+ * Dispatched (bubbling) from the panel's section after a certificate is
+ * generated or revoked. The Settings dialog listens for it on itself and has
+ * the Server tab re-read /api/tls/state, whose https port is enabled only while
+ * a certificate exists -- the same shape as DependencyPanel.ts's
+ * DEPENDENCY_INSTALLED_EVENT.
+ */
+export const TLS_CERT_CHANGED_EVENT = 'ws-tls-cert-changed';
+
+/**
  * Per-panel re-entry for "mkcert may have just been installed", keyed by the
  * section `buildLocalHttpsPanel` returned -- the same WeakMap shape as the tab
  * modules' `refreshers`, so the function keeps returning a plain HTMLElement.
@@ -970,6 +979,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // doesn't discard fields it already has.
                 currentState = { ...currentState, ...data };
                 renderCertState(currentState);
+                section.dispatchEvent(new CustomEvent(TLS_CERT_CHANGED_EVENT, { bubbles: true }));
                 // Resolved Decision 2: state the allowedHosts edit plainly
                 // rather than mutate it silently. This is a one-time outcome
                 // of THIS generate, not a standing condition, so it belongs in
@@ -1076,6 +1086,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 } = currentState;
                 currentState = { ...preserved, status: 'none' };
                 renderCertState(currentState);
+                section.dispatchEvent(new CustomEvent(TLS_CERT_CHANGED_EVENT, { bubbles: true }));
                 showTransientAlert(
                     'success',
                     'certificate and ca revoked. restart the server to fully stop the https listener.',

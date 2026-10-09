@@ -10,6 +10,7 @@ import {
     recheckLocalHttpsMkcert,
     SUBJECT_HELP_HREF,
     subPrivilegedPortNotice,
+    TLS_CERT_CHANGED_EVENT,
     TRUST_HELP_HREF,
 } from '../tabs/LocalHttpsTab';
 
@@ -986,6 +987,50 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         expect(fetchFn).toHaveBeenCalledWith('/api/tls/revoke', expect.objectContaining({ method: 'POST' }));
         expect(el.querySelector('[data-tls-current-subject]')).toBeNull();
         expect(revokeBtn.disabled).toBe(true);
+    });
+
+    // The Server tab's https port opens only while a certificate exists, so the
+    // panel announces each change for the dialog to pass on (TLS_CERT_CHANGED_EVENT).
+    it('announces a revoke, bubbling, so the Server tab re-reads its https port', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/revoke') return new Response(JSON.stringify({ ok: true }));
+            return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        // Listened for on the panel itself rather than with the panel in the
+        // document: `modalButton('ok')` searches the whole document, and the
+        // panel has "ok" buttons of its own.
+        const announced = vi.fn((e: Event) => e.bubbles);
+        el.addEventListener(TLS_CERT_CHANGED_EVENT, announced);
+        el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        modalButton('ok').click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(announced).toHaveBeenCalledTimes(1);
+        expect(announced.mock.results[0]?.value, 'bubbles').toBe(true);
+    });
+
+    it('announces a generate, and stays quiet when the generate is refused', async () => {
+        let refuse = false;
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/generate') {
+                return refuse
+                    ? new Response(JSON.stringify({ error: 'nope' }), { status: 400 })
+                    : new Response(JSON.stringify({ status: 'ready', kind: 'ip', subject: '192.168.86.3' }));
+            }
+            return new Response(JSON.stringify(state()));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const announced = vi.fn();
+        el.addEventListener(TLS_CERT_CHANGED_EVENT, announced);
+        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(announced).toHaveBeenCalledTimes(1);
+
+        refuse = true;
+        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(announced).toHaveBeenCalledTimes(1);
     });
 
     it('a refused revoke shows the server-provided reason and keeps the certificate (item 153)', async () => {

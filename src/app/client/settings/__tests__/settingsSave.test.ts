@@ -1147,7 +1147,7 @@ describe('the dialog-level Save button', () => {
         expect(
             document.querySelector('dialog.settings-modal .settings-save-status')?.textContent,
             'the refusal, named and explained',
-        ).toBe("couldn't save Web port: port 9000 is in use");
+        ).toBe("couldn't save HTTP port: port 9000 is in use");
         expect(document.querySelector('dialog.settings-modal')?.hasAttribute('open'), 'the dialog').toBe(true);
         expect(saveButton()?.disabled, 'Save after a refusal').toBe(false);
 
