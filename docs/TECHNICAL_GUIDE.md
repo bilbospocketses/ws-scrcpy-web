@@ -2041,7 +2041,7 @@ The unit body (`renderUnitFile`) is `Type=simple`, `Restart=on-failure` / `Resta
 - `WsScrcpyWeb.AppImage` → labeled **`bin_t`** (persistent `semanage fcontext` + `restorecon`) so `init_t` may exec it. `dependencies/` beside it starts **empty and root-owned**, and the service provisions node, adb and scrcpy-server into it itself, as root, so it runs its **own** deps instead of reaching into a user's home (never a copy of the user's tree: D14, below).
 - **A root helper runs from `/opt`, never from `/var/lib` (FD1, FD2).** The launcher keeps its helper copy in `<dataRoot>/control/operation-server/`, which for the system service is under `/var/lib`, labeled `var_lib_t`. `init_t` may not *execute* `var_lib_t`, so a `systemd-run --system` unit started from that copy dies `status=203/EXEC` with the AVC `{ execute } … init_t … var_lib_t`. On stock Fedora 44 that broke the system-service uninstall (row 14.5) and the root self-update (row 6.6), and the failed update left the service stopped. The two root call sites (`UpdateService.applyUpdate`'s system-service branch and `ServiceApi.handleAppUninstall`) therefore pass the helper through `stageSystemHelper` (`src/server/service/systemHelper.ts`). It copies the helper to `/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher` (temp sibling + rename, mode 0755), which inherits the tree's `bin_t`, and runs `restorecon` where SELinux is present. It does nothing unless it is root on Linux, and if the copy fails it returns the old path with a warning. The `/opt` AppImage itself is not used for these helpers, as the service teardown uses it: the app uninstall kills the app's processes and removes `/opt`, and a helper served from the AppImage's FUSE mount could lose that mount mid-run. A plain ELF under `/opt` keeps running after it is deleted.
 - Config + logs live in **`/var/lib/ws-scrcpy-web`**, which the policy's built-in `/var/lib(/.*)?` rule labels **`var_lib_t`** automatically — **no custom rule** (a `restorecon` is belt-and-suspenders). `/var/opt` was impossible: Fedora's `file_contexts.subs_dist` aliases `/var/opt → /opt`, so semanage rejects a `var_lib_t` rule beneath it — the bug that broke the system install on every SELinux distro since beta.41.
-- The unit's `Environment=` sets `DATA_ROOT=/var/lib/ws-scrcpy-web` + `DEPS_PATH=/opt/ws-scrcpy-web/dependencies` (`buildServiceUnitEnv`), and a seeded `config.json` (`buildSystemSeedConfig`: `installMode=system-service`, `firstRunComplete=true`, the installing user's `webPort`) lands in `/var/lib/ws-scrcpy-web` so the service boots a correct, persistent config on the same port — no stray WelcomeModal, and it survives reboot. **The unit does not pin the port.** Until 2026-10-04 it also set `WS_SCRCPY_WEB_PORT=<install port>`, so a Settings port change (ConfigApi writes `config.json`, exits 75, and the launcher respawns Node with the unit's environment) came back on the install port and wrote it over the user's choice. Now `config.json`'s `webPort` is the only source, and a Linux system service treats it as **exact** (`reconcileWebPort.ts`; the instance is recognized by the unit's own `WS_SCRCPY_SERVICE=1` + `DATA_ROOT=/var/lib/ws-scrcpy-web`, `isLinuxSystemServiceInstance`): no walk forward. During the page's install the user's own copy still holds the port for a moment, so the service fails its bind, exits non-zero, and `Restart=on-failure` brings it back every 2 s (10 starts in 60 s) until the port is free — the job the pin did. The Windows service and the Linux user service still walk forward. Because an exact port held by another program would keep the service down, Settings refuses one before writing anything: on this instance `PATCH /api/config` and `POST /api/settings/batch` answer **409** `port N is in use; the system service binds its port exactly, so pick a free one` (the holder may be another copy of this app) (`api/systemServicePortGuard.ts`, probing with the reconcile's own `findAvailablePort(N, N)`; ports the process itself listens on are not probed). The batch refuses before its WAL row and before any sibling change, in the rejected-apply shape the dialog shows as "couldn't save Web port: …". A unit installed before the change still carries the pin; the system service **ignores** `WS_SCRCPY_WEB_PORT` (one info line), so such an install heals on its first update to this build. The line itself is removed by a later system-service self-update (`linux_apply.rs`, `unpin_system_unit`, then `daemon-reload`) or a reinstall. The whole label step is isolated with a trailing `|| true` so a non-SELinux host doesn't abort the install.
+- The unit's `Environment=` sets `DATA_ROOT=/var/lib/ws-scrcpy-web` + `DEPS_PATH=/opt/ws-scrcpy-web/dependencies` (`buildServiceUnitEnv`), and a seeded `config.json` (`buildSystemSeedConfig`: `installMode=system-service`, `firstRunComplete=true`, the installing user's `webPort`) lands in `/var/lib/ws-scrcpy-web` so the service boots a correct, persistent config on the same port — no stray WelcomeModal, and it survives reboot. **The unit does not pin the port.** Until 2026-10-04 it also set `WS_SCRCPY_WEB_PORT=<install port>`, so a Settings port change (ConfigApi writes `config.json`, exits 75, and the launcher respawns Node with the unit's environment) came back on the install port and wrote it over the user's choice. Now `config.json`'s `webPort` is the only source, and a Linux system service treats it as **exact** (`reconcileWebPort.ts`; the instance is recognized by the unit's own `WS_SCRCPY_SERVICE=1` + `DATA_ROOT=/var/lib/ws-scrcpy-web`, `isLinuxSystemServiceInstance`): no walk forward. During the page's install the user's own copy still holds the port for a moment, so the service fails its bind, exits non-zero, and `Restart=on-failure` brings it back every 2 s (10 starts in 60 s) until the port is free — the job the pin did. The Windows service and the Linux user service still walk forward. Because an exact port held by another program would keep the service down, Settings refuses one before writing anything: on this instance `PATCH /api/config` and `POST /api/settings/batch` answer **409** `port N is in use; the system service binds its port exactly, so pick a free one` (the holder may be another copy of this app) (`api/systemServicePortGuard.ts`, probing with the reconcile's own `findAvailablePort(N, N)`; ports the process itself listens on are not probed). The batch refuses before its WAL row and before any sibling change, in the rejected-apply shape the dialog shows as "couldn't save HTTP port: …". A unit installed before the change still carries the pin; the system service **ignores** `WS_SCRCPY_WEB_PORT` (one info line), so such an install heals on its first update to this build. The line itself is removed by a later system-service self-update (`linux_apply.rs`, `unpin_system_unit`, then `daemon-reload`) or a reinstall. The whole label step is isolated with a trailing `|| true` so a non-SELinux host doesn't abort the install.
 - **Modes never come from the caller's umask (D8).** pkexec keeps the desktop user's umask, which is `0002` on Ubuntu (user-private groups), so every root `mkdir` came out 775 and `assertSafeRootDir` then refused the install's own directories. The one-shot sets `process.umask(0o022)` before it runs (`index.ts`), each root directory is made with `mkdir -p -m 0755`, and the machine-wide install script starts with `umask 022` and `chmod 0755`s `/opt/ws-scrcpy-web`. `ensureSafeRootDir` repairs the one shape an older install left behind, a real `root:root` directory that is group- but not world-writable (`chmod g-w`), and then re-runs `assertSafeRootDir`; a symlink, a non-root owner, a non-root group or a world-writable directory is still refused. A refusal goes to **stderr**, which `ServiceApi` shows the user (it falls back to stdout for an older one-shot).
 - **`/var/lib/ws-scrcpy-web/logs` is created at install (D9).** The unit's `StandardOutput=`/`StandardError=append:` target lives there, and systemd does not create an `append:` target's parent: without it the unit failed at step STDOUT (status 209) on every clean host, while the CLI still exited 0.
 - **The install checks that the unit started (item 159).** `enable --now` returns once systemd queues the start, and `Type=simple` reads `active` the instant it forks, so the CLI used to exit 0 on a unit that could never run. `verifyServiceStarted` now polls `systemctl show` once a second. A systemd setup failure (the main process's last exit was status 200–245, systemd's own codes: 209/STDOUT was D9, 203/EXEC a binary it cannot run) or a `failed` unit fails the install at once. Whether "running" can be proved depends on the port. If the web port was **free** before the start (headless `sudo`), success needs the unit `active`/`running` **and** a TCP connect to `127.0.0.1:<port>`, within 120 s (the first start also provisions the service's dependencies). If it was **held** (the page's install: the user's own copy is still serving and exits 1.5 s after the one-shot returns), the service cannot bind yet and may retry on the busy port, so the install passes after 6 s without a setup failure, and the page's install poll (`classifyInstallPoll`) waits for the service to answer. A failure exits 1 with the reason, the unit's journal tail and the tail of `service.log` on stderr, which `ServiceApi` shows the user (D8). The unit is left installed so `systemctl status` can be read.
@@ -3214,20 +3214,32 @@ and Save sends it in the batch, where `SettingsBatchApi` validates it with
 it with `Config.setHttpsPort`, second to last, straight before `webPort`
 (`orderChanges`). It is not an `AppConfig` key, so like `frameAncestorsAdd` it has
 its own branch in the apply loop. Before the WAL row, a container refuses it with
-the `/api/tls/*` copy, and a batch whose resulting http port would equal its https
-port is refused with **409** (`portCollisionError`), whichever side moved; the tab
-refuses the same thing inline on the row being edited. **One restart covers
-either port moving**: a moved https port schedules the same exit-75 restart as a
-moved web port, `redirectPort` stays the web port's alone (the page follows the
-http port), and a web port refused after the https port was written still
-schedules the restart that port needs. The row is disabled until mkcert is
-installed AND `/api/tls/state` reports a certificate (`status: 'ready'`); it reads
-both on the dialog's non-container path (`refreshServerHttps`), and again after a
-dependency install and after Local HTTPS generates or revokes a certificate (the
-panel bubbles `ws-tls-cert-changed`, `TLS_CERT_CHANGED_EVENT`). An mkcert state
-the server cannot report does not hold the row shut on its own when a certificate
-exists. `POST /api/tls/https-port` stays for external callers; nothing in the UI
-calls it.
+the `/api/tls/*` copy, and **both ports are validated** -- the https port with
+`validateHttpsPortInput`, the web port with `validateWebPortInput` (the rule
+`updateAppConfig` applies) -- so the port changes in a batch land together or not
+at all, and a string `"8443"` cannot slip past the equal-ports check. A batch whose
+resulting http port would equal its https port is refused with **409**
+(`portCollision.ts`), whichever side moved, but **only while Local HTTPS has a
+certificate** (`CertService.getState()` reports `ready`): without one there is no
+https listener to collide with, and an http port of 8443 is accepted as it always
+was. `PATCH /api/config` applies the same rule to a `webPort`, through the same
+helper. The tab refuses the same thing inline on the row being edited, also only
+while a certificate exists, and fixing it from either row stages the other row's
+value. **One restart covers either port moving**: a moved https port schedules the
+same exit-75 restart as a moved web port, and the response names each moved port,
+`redirectPort` (http) and `redirectHttpsPort` (https). The page follows the
+listener it is served by (`restartRedirectUrl`, SettingsModal.ts): an http page to
+the new http port, an https page to the new https port, and a page whose own port
+did not move reloads on it once the server is back. The row is editable once
+`/api/tls/state` reports a certificate (`status: 'ready'`) and mkcert is installed
+or its state cannot be told; an mkcert state the server cannot report does not
+hold the row shut on its own. It reads both on the dialog's non-container path
+(`refreshServerHttps`), and again after a dependency install and after Local HTTPS
+generates or revokes a certificate (the panel bubbles `ws-tls-cert-changed`,
+`TLS_CERT_CHANGED_EVENT`); a staged value is dropped whenever the row closes. Both
+port rows are built hidden and shown by `applyServerHostMode` once the dialog knows
+it is on a host, so nothing of them flashes in a container.
+`POST /api/tls/https-port` stays for external callers; nothing in the UI calls it.
 
 Three things the allowlist implies, all easy to state wrongly:
 
@@ -3279,8 +3291,10 @@ Three things the allowlist implies, all easy to state wrongly:
   port 80 with it used to stage `https://host:80`. While it is chosen the port box
   is emptied and disabled, with a note under the row, and
   `embedderOriginsFromInput` refuses it with any port (`BOTH_SCHEMES_PORT_ERROR`).
-  The batch receives only the origins, so it cannot tell a `both` add from two
-  single ones and refuses no particular scheme/port pair on its own. A standing
+  That refusal is the form's alone (user decision after 0.5.3): the batch receives
+  only the origins, so it cannot tell a `both` add from two single ones and
+  refuses no scheme/port pair, and a hand-built request can still stage
+  `https://host:80`. A standing
   note under the add row says an https page can embed the app only when it is
   served over https too, naming local https or a reverse proxy on a host and the
   reverse proxy alone in a container (`applyEmbeddingContainerMode`).
@@ -3873,10 +3887,13 @@ generic "may require a restart":
 The two HTTP/HTTPS ports are independent, with independent defaults (the module-level `DEFAULT_HTTPS_PORT = 8443`
 in `Config.ts`): setting the HTTP port to `80` never moves HTTPS, and setting the HTTPS port never moves HTTP.
 If the two are ever set to the same value, `Config.buildServers` skips the HTTPS entry for that boot
-rather than erroring. Settings no longer lets them meet: the Server tab refuses either port on the
-other's value (`the http and https ports must differ.`), and `POST /api/settings/batch` refuses such a
-batch with 409 before anything is applied. A hand-edited `config.json`, or `POST /api/tls/https-port`,
-which does not check the http port, can still set them equal, and the boot-time skip covers that.
+rather than erroring. While a certificate exists, Settings no longer lets them meet: the Server tab
+refuses either port on the other's value (`the http and https ports must differ.`), and
+`POST /api/settings/batch` and `PATCH /api/config` refuse such a change with 409 before anything is
+applied (`portCollision.ts`). Without a certificate there is no https listener, so they are allowed to
+meet (an http port of 8443, the https default, is accepted). A hand-edited `config.json`, or
+`POST /api/tls/https-port`, which does not check the http port, can still set them equal, and the
+boot-time skip covers that.
 
 A present-but-broken certificate can never stop the app from booting. `Config.ts`'s
 `readCertMaterial` validates **content**, not just readability: `tls.createSecureContext({cert, key})`
