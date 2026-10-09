@@ -422,7 +422,12 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
 
     const scheme = document.createElement('select');
     scheme.className = 'settings-input';
-    scheme.style.maxWidth = '130px';
+    // Sized to its longest option ("http & https"), never squeezed below it:
+    // `.settings-input` is `width: 100%`, which let the flex row shrink the
+    // list until that option read "http & htt…".
+    scheme.style.width = 'auto';
+    scheme.style.maxWidth = 'none';
+    scheme.style.flexShrink = '0';
     scheme.setAttribute('aria-label', 'embedder scheme');
     scheme.setAttribute('data-embed-scheme', '');
     const schemeText: Record<EmbedderScheme, string> = { http: 'http', https: 'https', both: 'http & https' };
@@ -443,7 +448,12 @@ function buildAddRow(view: EmbeddingView): HTMLElement {
 
     const controls = document.createDocumentFragment();
     controls.append(address, port, scheme, addBtn);
-    wrap.appendChild(buildRow('add an embedder', controls));
+    const addRow = buildRow('add an embedder', controls);
+    // On a narrow dialog the controls wrap onto a second line rather than
+    // overflowing, now that the scheme list keeps its full width.
+    const addControls = addRow.querySelector<HTMLElement>('.settings-control');
+    if (addControls) addControls.style.flexWrap = 'wrap';
+    wrap.appendChild(addRow);
 
     const bothNote = document.createElement('p');
     bothNote.className = 'settings-status';

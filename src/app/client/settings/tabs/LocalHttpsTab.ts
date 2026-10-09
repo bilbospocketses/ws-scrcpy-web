@@ -139,13 +139,6 @@ export interface LocalHttpsPanelDeps {
      */
     candidateIps: string[];
     /**
-     * The server's platform, `undefined` when not known. Not read by the panel
-     * any more: its one platform-gated notice, notification 5's sub-1024
-     * warning, moved to the Server tab with the https port. Kept so existing
-     * callers compile; like `caTrusted` below, nothing here branches on it.
-     */
-    platform: NodeJS.Platform | undefined;
-    /**
      * Vestigial (I6): notification 3 no longer branches on this -- there is
      * no JS-observable signal for "does this browser actually trust the
      * served CA" (a click-through self-signed warning and a genuinely
@@ -275,7 +268,7 @@ export function listenerStatusNotice(state: TlsCertState): string | null {
         case 'config-override':
             return "this certificate exists, but an advanced server configuration in config.json is overriding it. https will not start until that configuration changes — regenerating won't help.";
         case 'port-collision':
-            return 'the https port is the same as the plain http port, so https could not start. change the https port on the server tab to a different value, then restart.';
+            return 'the https port is the same as the plain http port, so https could not start. change the https port on the server tab to a different value; saving it restarts the server.';
         case 'bind-failed':
             return 'the https listener failed to start, possibly because its port is already in use. check the server logs, free the port if needed, and restart.';
     }
@@ -1388,17 +1381,12 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
         root.replaceChildren(buildLocalHttpsContainerNote());
     }
 
-    function applyServiceStatus(resp: ServiceStatusResponse): void {
+    // The response itself is not read: its arrival is the signal (a host, not
+    // a container). Its platform fed the sub-1024 port notice, which left with
+    // the https port for the Server tab after 0.5.3.
+    function applyServiceStatus(_resp: ServiceStatusResponse): void {
         if (decided) return;
         decided = true;
-        // M2: no guessed fallback. `resp.platform` SHOULD be populated by a
-        // real /api/service/status response, but if it somehow isn't,
-        // `undefined` is passed straight through -- every platform-gated
-        // notice already treats "don't know" as "say nothing"
-        // (subPrivilegedPortNotice). A `?? 'linux'`
-        // fallback once fabricated a platform that was never observed, and
-        // fired notification 5's sub-1024 warning on Windows.
-        const platform = resp.platform as NodeJS.Platform | undefined;
         void buildLocalHttpsPanel({
             // C1: wrapped, not passed by reference -- an unbound `fetch` throws
             // "Illegal invocation" in Chrome (same precedent as
@@ -1408,7 +1396,6 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
             // real candidateIps (Task 5's amendment (b)), which
             // buildLocalHttpsPanel prefers over this fallback.
             candidateIps: [],
-            platform,
             askChild: ctx.askChild,
             // The mkcert callout's link to the Dependencies tab.
             ...(ctx.showTab ? { showTab: ctx.showTab } : {}),

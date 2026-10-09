@@ -7,6 +7,7 @@ import { StagedSettingsStore } from '../StagedSettingsStore';
 import { askUnbound } from '../tabs/EmbeddingTab';
 import {
     applyServerContainerMode,
+    applyServerHostMode,
     applyServerServiceStatus,
     buildServerTab,
     PORT_COLLISION_ERROR,
@@ -87,9 +88,12 @@ describe('ServerTab: container decisions for port, HTTPS and reset (row 20.19)',
         expect(webPortStatusOf(el).hidden).toBe(true);
     });
 
-    it('the desktop path leaves the web-port row visible', () => {
+    it('the desktop path shows the http port row once the host is known', () => {
         const el = buildServerTab(ctx, new StagedSettingsStore());
         vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        // Built hidden: until the probe answers, this could be a container (M6).
+        expect(rowOf(el, 'http port').style.display).toBe('none');
+        applyServerHostMode(el);
         applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
         expect(rowOf(el, 'http port').style.display).toBe('');
     });
@@ -328,6 +332,7 @@ describe('ServerTab: the https port row', () => {
         const fetchMock = stubReads(answers);
         const store = new StagedSettingsStore();
         const el = buildServerTab(ctx, store);
+        applyServerHostMode(el);
         await refreshServer(el);
         await refreshServerHttps(el);
         return { el, store, fetchMock, ...parts(el) };
@@ -355,8 +360,10 @@ describe('ServerTab: the https port row', () => {
         expect(p.httpsInput.style.maxWidth).toBe('120px');
     });
 
-    it('always shows the restart note, worded for both ports', () => {
-        const p = parts(buildServerTab(ctx, new StagedSettingsStore()));
+    it('shows the restart note on a host, worded for both ports', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerHostMode(el);
+        const p = parts(el);
         expect(p.restartNote.hidden).toBe(false);
         expect(p.restartNote.textContent).toBe(PORT_RESTART_NOTE);
         expect(PORT_RESTART_NOTE).toBe('changing either port restarts the server; any active streams will drop.');
@@ -365,7 +372,9 @@ describe('ServerTab: the https port row', () => {
     it('starts disabled with the note shown, and reads nothing on its own', () => {
         const fetchMock = vi.fn().mockReturnValue(new Promise(() => undefined));
         vi.stubGlobal('fetch', fetchMock);
-        const p = parts(buildServerTab(ctx, new StagedSettingsStore()));
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerHostMode(el);
+        const p = parts(el);
         expect(p.httpsInput.disabled).toBe(true);
         expect(p.gateNote.hidden).toBe(false);
         expect(p.gateNote.textContent).toBe(
@@ -455,13 +464,54 @@ describe('ServerTab: the https port row', () => {
         expect(httpStatus.textContent).toBe(PORT_COLLISION_ERROR);
         expect(httpStatus.classList.contains('settings-status-error')).toBe(true);
 
-        // Move the https port away first, and the same http port is fine.
+        // Move the https port away, and the http row's 8443 is staged without
+        // a re-edit, its refusal cleared (M9).
         change(httpsInput, '9443');
-        change(httpInput, '8443');
+        expect(httpStatus.hidden).toBe(true);
+        expect(httpInput.value).toBe('8443');
         expect(store.changes().map((c) => [c.id, c.to])).toEqual([
             ['webPort', 8443],
             ['httpsPort', 9443],
         ]);
+    });
+
+    it('fixing a collision from the http row stages the https row it blocked (M9)', async () => {
+        const { httpInput, httpsInput, httpsStatus, store } = await built({ webPort: 8000 });
+        change(httpsInput, '8000');
+        expect(httpsStatus.textContent).toBe(PORT_COLLISION_ERROR);
+        change(httpInput, '8010');
+        expect(httpsStatus.hidden).toBe(true);
+        expect(store.changes().map((c) => [c.id, c.to])).toEqual([
+            ['webPort', 8010],
+            ['httpsPort', 8000],
+        ]);
+    });
+
+    // User decision after 0.5.3: equal ports matter only while a certificate
+    // exists. Without one there is no https listener, and an http port of
+    // 8443 (the default https port) is staged as it always was.
+    it('stages an http port of 8443 when there is no certificate', async () => {
+        const { httpInput, httpStatus, store } = await built({ tls: { status: 'none', httpsPort: 8443 } });
+        change(httpInput, '8443');
+        expect(httpStatus.hidden).toBe(true);
+        expect(store.changes().map((c) => [c.id, c.to])).toEqual([['webPort', 8443]]);
+    });
+
+    it('stages an http port of 8443 when /api/tls/state cannot be read', async () => {
+        const { httpInput, store } = await built({ tls: 'fail' });
+        change(httpInput, '8443');
+        expect(store.changes().map((c) => [c.id, c.to])).toEqual([['webPort', 8443]]);
+    });
+
+    it('lifts the http row refusal when the certificate goes away, and stages its value', async () => {
+        const answers: Answers = { tls: { status: 'ready', httpsPort: 8443 } };
+        const { el, httpInput, httpStatus, store } = await built(answers);
+        change(httpInput, '8443');
+        expect(httpStatus.textContent).toBe(PORT_COLLISION_ERROR);
+        answers.tls = { status: 'none', httpsPort: 8443 };
+        await refreshServerHttps(el);
+        expect(httpStatus.hidden).toBe(true);
+        expect(store.changes().map((c) => [c.id, c.to])).toEqual([['webPort', 8443]]);
     });
 
     it('shows the sub-1024 notice for a privileged port on linux, never before the platform is known', async () => {
@@ -515,10 +565,57 @@ describe('ServerTab: the https port row', () => {
         expect(store.changes()).toEqual([]);
     });
 
+    it('drops a staged https port when a re-read fails and the row closes (M3)', async () => {
+        const answers: Answers = { tls: { status: 'ready', httpsPort: 8443 } };
+        const { el, httpsInput, store } = await built(answers);
+        change(httpsInput, '9443');
+        expect(store.changes().map((c) => c.id)).toEqual(['httpsPort']);
+
+        answers.tls = 'fail';
+        await refreshServerHttps(el);
+        expect(httpsInput.disabled).toBe(true);
+        expect(httpsInput.value).toBe('8443');
+        expect(store.changes()).toEqual([]);
+    });
+
+    it('builds both port rows and every note hidden until the probe answers (M6)', () => {
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        const p = parts(el);
+        expect(rowOf(el, 'http port').style.display).toBe('none');
+        expect(p.httpsRow.style.display).toBe('none');
+        for (const note of [p.httpStatus, p.httpsStatus, p.gateNote, p.privilegeNotice, p.restartNote]) {
+            expect(note.hidden).toBe(true);
+        }
+        applyServerHostMode(el);
+        expect(rowOf(el, 'http port').style.display).toBe('');
+        expect(p.httpsRow.style.display).toBe('');
+        expect(p.restartNote.hidden).toBe(false);
+        expect(p.gateNote.hidden).toBe(false);
+    });
+
+    it('names each port input after its row and describes it by the notes showing (M8)', async () => {
+        const { el, httpInput, httpsInput, httpStatus, gateNote, restartNote } = await built({
+            tls: { status: 'none', httpsPort: 8443 },
+        });
+        // The tab is not attached to the document, so the id is resolved within it.
+        const nameOf = (input: HTMLInputElement): string | null | undefined =>
+            el.querySelector(`#${input.getAttribute('aria-labelledby')}`)?.textContent;
+        expect(nameOf(httpInput)).toBe('http port');
+        expect(nameOf(httpsInput)).toBe('https port');
+        expect(httpsInput.getAttribute('aria-describedby')?.split(' ')).toEqual([gateNote.id, restartNote.id]);
+        expect(httpInput.getAttribute('aria-describedby')?.split(' ')).toEqual([restartNote.id]);
+
+        change(httpInput, '80');
+        expect(httpInput.getAttribute('aria-describedby')?.split(' ')).toEqual([httpStatus.id, restartNote.id]);
+    });
+
     it('container mode hides the https row and every note with the http row', async () => {
         const fetchMock = stubReads({});
         const el = buildServerTab(ctx, new StagedSettingsStore());
         applyServerContainerMode(el);
+        // A host decision arriving after the container one changes nothing.
+        applyServerHostMode(el);
         await refreshServerHttps(el);
         await flush();
         const p = parts(el);

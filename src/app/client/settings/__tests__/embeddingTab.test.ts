@@ -143,6 +143,12 @@ describe('the add row', () => {
             ['both', 'http & https'],
         ]);
         expect(ui.scheme.value).toBe('http');
+        // Sized to "http & https" and never squeezed below it (it used to read
+        // "http & htt…"); the row wraps on a narrow dialog instead.
+        expect(ui.scheme.style.width).toBe('auto');
+        expect(ui.scheme.style.maxWidth).toBe('none');
+        expect(ui.scheme.style.flexShrink).toBe('0');
+        expect(ui.scheme.closest<HTMLElement>('.settings-control')?.style.flexWrap).toBe('wrap');
         expect(ui.port.placeholder).toBe('80');
         // A text box: a number input would report "8e3" as '' and read it as blank.
         expect(ui.port.type).toBe('text');

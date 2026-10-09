@@ -16,6 +16,7 @@ import {
     performDirtyClose,
     performStagedSave,
     RESTART_REDIRECT_DELAY_MS,
+    restartRedirectUrl,
     type SaveDeps,
     SettingsDirtyCloseModal,
     SettingsModal,
@@ -435,13 +436,68 @@ describe('performStagedSave', () => {
         expect(url.hostname).toBe(window.location.hostname);
     });
 
-    it('does not redirect when a restart is required but no port came back', async () => {
+    // After 0.5.3: a restart that names none of the page's ports (an http page
+    // saving only the https port, say) reloads the page on its own port once
+    // the server is back, rather than leaving it on a connection the restart
+    // drops -- and never navigates to `:undefined` / `:NaN`.
+    it('reloads on its own port when a restart is required but its port did not move', async () => {
         const deps = mockDeps({
-            save: vi.fn(async () => ({ ok: true, applied: ['webPort'], restartRequired: true })),
+            save: vi.fn(async () => ({
+                ok: true,
+                applied: ['httpsPort'],
+                restartRequired: true,
+                redirectHttpsPort: 9443,
+            })),
         });
 
-        // Better to close than to navigate to `:undefined` / `:NaN`.
+        const action = await performStagedSave(stagedStore(), deps, 'http://192.168.1.5:8000/some/page?x=1');
+        expect(action).toEqual({ kind: 'redirect', url: 'http://192.168.1.5:8000/' });
+    });
+
+    it('closes when nothing restarts', async () => {
+        const deps = mockDeps({ save: vi.fn(async () => ({ ok: true, applied: ['webPort'] })) });
         expect(await performStagedSave(stagedStore(), deps)).toEqual({ kind: 'close' });
+    });
+});
+
+/**
+ * M5 (after 0.5.3): after a port save the page follows the listener it is
+ * served by, keeping its own scheme and host.
+ */
+describe('restartRedirectUrl', () => {
+    const both = {
+        ok: true,
+        applied: ['httpsPort', 'webPort'],
+        restartRequired: true,
+        redirectPort: 8010,
+        redirectHttpsPort: 9443,
+    };
+
+    it('sends an http page to the new http port', () => {
+        expect(restartRedirectUrl(both, 'http://lan-box:8000/x')).toBe('http://lan-box:8010/');
+    });
+
+    it('sends an https page to the new https port', () => {
+        expect(restartRedirectUrl(both, 'https://lan-box:8443/x')).toBe('https://lan-box:9443/');
+    });
+
+    it('keeps an https page on its port when only the http port moved, reloading it', () => {
+        const res = { ok: true, applied: ['webPort'], restartRequired: true, redirectPort: 8010 };
+        expect(restartRedirectUrl(res, 'https://lan-box:8443/x')).toBe('https://lan-box:8443/');
+    });
+
+    it('keeps an http page on its port when only the https port moved, reloading it', () => {
+        const res = { ok: true, applied: ['httpsPort'], restartRequired: true, redirectHttpsPort: 9443 };
+        expect(restartRedirectUrl(res, 'http://lan-box:8000/x')).toBe('http://lan-box:8000/');
+    });
+
+    it('reloads a page on a default port (a reverse proxy) without inventing a port', () => {
+        const res = { ok: true, applied: ['webPort'], restartRequired: true, redirectPort: 8010 };
+        expect(restartRedirectUrl(res, 'https://proxy.example/app')).toBe('https://proxy.example/');
+    });
+
+    it('is null when nothing restarts', () => {
+        expect(restartRedirectUrl({ ok: true, applied: ['webPort'], redirectPort: 8010 }, 'http://h:8000/')).toBeNull();
     });
 
     it('waits 4 seconds before following the restart', () => {

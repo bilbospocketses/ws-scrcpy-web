@@ -146,8 +146,10 @@ export function parseEmbedderPort(input: string): Parsed<number | null> {
  * The refusal for `both` with a port. One port cannot be both schemes' default:
  * port 80 with `both` used to stage `http://host` and `https://host:80`, an
  * https origin on the http port that no real embedder serves from. The add row
- * disables its port box for `both`, so only a value typed before switching, or
- * a hand-built call, meets this.
+ * disables its port box for `both`, so only a value that reaches this function
+ * anyway meets it. The refusal is the form's alone (user decision after 0.5.3):
+ * the settings batch receives origins, not a scheme and a port, and refuses no
+ * scheme/port pair, so a hand-built request can still stage `https://host:80`.
  */
 export const BOTH_SCHEMES_PORT_ERROR =
     'http & https uses 80 for http and 443 for https; for another port, add each scheme separately.';

@@ -22,6 +22,7 @@ import {
 } from './settings/tabs/LocalHttpsTab';
 import {
     applyServerContainerMode,
+    applyServerHostMode,
     applyServerServiceStatus,
     buildServerTab,
     refreshServer,
@@ -300,10 +301,14 @@ const COMMIT_WHEN_APPLIED: ReadonlySet<string> = new Set([FRAME_ANCESTORS_ADD_ID
  *    whatever this browser is already on (`sameOriginUrl`) — a literal
  *    localhost would send every off-box client to its own machine. Without this
  *    a port change restarts the server and leaves the browser on a dead port.
+ *    Which port, and whether the page only reloads, is `restartRedirectUrl`'s
+ *    call; `base` is the page's own address (a parameter so tests can be on
+ *    https).
  */
 export async function performStagedSave(
     store: StagedSettingsStore,
     deps: SaveDeps = liveSaveDeps,
+    base: string = window.location.href,
 ): Promise<SettingsAction> {
     const changes = store.changes();
     // Belt and braces — the Save button is disabled when nothing is staged. An
@@ -329,13 +334,30 @@ export async function performStagedSave(
     // and Save comes back to life offering to send it a second time.
     store.commit();
 
-    // Both halves required: a `redirectPort` without a restart is an echo, and
-    // a restart without a port has nowhere to send the browser — better to
-    // close than to navigate to `:undefined`.
-    if (res.restartRequired && typeof res.redirectPort === 'number') {
-        return { kind: 'redirect', url: sameOriginUrl(res.redirectPort) };
-    }
+    const url = restartRedirectUrl(res, base);
+    if (url !== null) return { kind: 'redirect', url };
     return { kind: 'close' };
+}
+
+/**
+ * Where the page goes after a save that restarts the server, or null when
+ * nothing restarts (a port named without a restart is an echo).
+ *
+ * The page follows the listener it is served by (M5, after 0.5.3): an http
+ * page follows a moved http port (`redirectPort`), an https page a moved https
+ * port (`redirectHttpsPort`). When its own port did not move -- an https page
+ * saving only the http port, an http page saving only the https port -- it
+ * stays on its own port but still reloads after the restart delay, rather
+ * than sitting on a connection the restart is about to drop.
+ */
+export function restartRedirectUrl(res: BatchResult, base: string = window.location.href): string | null {
+    if (!res.restartRequired) return null;
+    const current = new URL(base);
+    const port = current.protocol === 'https:' ? res.redirectHttpsPort : res.redirectPort;
+    if (typeof port === 'number') return sameOriginUrl(port, base);
+    // Its own port: the one in the URL, or the scheme's default when it has none.
+    const own = current.port ? Number(current.port) : current.protocol === 'https:' ? 443 : 80;
+    return sameOriginUrl(own, base);
 }
 
 /**
@@ -654,6 +676,9 @@ export class SettingsModal extends Modal {
                         if (this.embeddingTabEl) applyEmbeddingContainerMode(this.embeddingTabEl);
                         return;
                     }
+                    // A host: the Server tab's port rows, built hidden so none of
+                    // their copy flashes in a container, can show now.
+                    if (this.serverTabEl) applyServerHostMode(this.serverTabEl);
                     if (this.canUse('dependencies') && this.dependenciesTabEl) {
                         void refreshDependencies(this.dependenciesTabEl);
                     }

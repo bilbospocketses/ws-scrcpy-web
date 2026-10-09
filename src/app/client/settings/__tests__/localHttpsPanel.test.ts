@@ -21,7 +21,6 @@ describe('local https panel', () => {
         const elA = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elA.querySelector<HTMLInputElement>('[data-tls-subject]')!.value).toBe('192.168.86.3');
 
@@ -31,7 +30,6 @@ describe('local https panel', () => {
         const elB = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['10.0.0.5'],
-            platform: 'win32',
         });
         expect(elB.querySelector<HTMLInputElement>('[data-tls-subject]')!.value).toBe('10.0.0.5');
     });
@@ -42,7 +40,7 @@ describe('local https panel', () => {
     // here posts to the old route.
     it('carries no https port: no box, no ok button, no port notices', async () => {
         const fetchFn = vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready', httpsPort: 9443 }))));
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'linux' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         for (const hook of [
             '[data-tls-port]',
             '[data-tls-port-ok]',
@@ -69,7 +67,6 @@ describe('local https panel', () => {
                 async () => new Response(JSON.stringify(state({ status: 'ready', httpsListener: { bound: true } }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const lockout = el.querySelector<HTMLElement>('[data-exposure-lockout-notice]')!;
         // Element name predates the review addendum's correction: exposure
@@ -105,14 +102,12 @@ describe('local https panel', () => {
         const elNone = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elNone.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(true);
 
         const elReady = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready' })))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
             // Vestigial (I6) -- kept only so this call matches the brief's
             // fixed test shape; the notice no longer branches on it.
             caTrusted: false,
@@ -126,7 +121,6 @@ describe('local https panel', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready', caPresent: false })))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const trustNotice = el.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!;
         const restoreNotice = el.querySelector<HTMLElement>('[data-tls-ca-restore-notice]')!;
@@ -145,7 +139,6 @@ describe('local https panel', () => {
                     new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elIp.querySelector<HTMLElement>('[data-tls-hostname-notice]')!.hidden).toBe(true);
 
@@ -155,7 +148,6 @@ describe('local https panel', () => {
                     new Response(JSON.stringify(state({ status: 'ready', kind: 'hostname', subject: 'devices.lan' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const notice = elHost.querySelector<HTMLElement>('[data-tls-hostname-notice]')!;
         expect(notice.hidden).toBe(false);
@@ -173,7 +165,6 @@ describe('local https panel', () => {
                     new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elIp.querySelector<HTMLElement>('[data-tls-allowed-host-notice]')!.hidden).toBe(true);
 
@@ -184,7 +175,6 @@ describe('local https panel', () => {
                     new Response(JSON.stringify(state({ status: 'ready', kind: 'hostname', subject: payload }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const notice = elHost.querySelector<HTMLElement>('[data-tls-allowed-host-notice]')!;
         expect(notice.hidden).toBe(false);
@@ -203,7 +193,6 @@ describe('local https panel', () => {
                     new Response(JSON.stringify(state({ status: 'ready', subject: '<img src=x onerror=alert(1)>' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(el.querySelector('img')).toBeNull();
         // Proves the subject was actually RENDERED (as inert text), ruling
@@ -216,7 +205,6 @@ describe('local https panel', () => {
         const elIp = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const elHost = await buildLocalHttpsPanel({
             fetchFn: vi.fn(
@@ -224,7 +212,6 @@ describe('local https panel', () => {
                     new Response(JSON.stringify(state({ status: 'ready', kind: 'hostname', subject: 'devices.lan' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         // 0.5.3: one short line plus a link to the explainer page, replacing the
         // two-sentence "ip address: … hostname: …" summary.
@@ -258,7 +245,6 @@ describe('local https panel', () => {
         const elSoon = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready', notAfter: soon })))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const noticeSoon = elSoon.querySelector<HTMLElement>('[data-tls-expiry-notice]')!;
         expect(noticeSoon.hidden).toBe(false);
@@ -268,7 +254,6 @@ describe('local https panel', () => {
         const elFar = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready', notAfter: far })))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elFar.querySelector<HTMLElement>('[data-tls-expiry-notice]')!.hidden).toBe(true);
     });
@@ -278,7 +263,6 @@ describe('local https panel', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready', notAfter: past })))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const notice = el.querySelector<HTMLElement>('[data-tls-expiry-notice]')!;
         expect(notice.hidden).toBe(false);
@@ -293,7 +277,6 @@ describe('local https panel', () => {
                 async () => new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '10.0.0.9' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elRfc1918.querySelector<HTMLElement>('[data-tls-mismatch-notice]')!.hidden).toBe(false);
 
@@ -304,7 +287,6 @@ describe('local https panel', () => {
                 async () => new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '127.0.0.1' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elLoopback.querySelector<HTMLElement>('[data-tls-mismatch-notice]')!.hidden).toBe(true);
 
@@ -314,7 +296,6 @@ describe('local https panel', () => {
                 async () => new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '100.64.0.5' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elCgnat.querySelector<HTMLElement>('[data-tls-mismatch-notice]')!.hidden).toBe(true);
     });
@@ -325,7 +306,6 @@ describe('local https panel', () => {
                 async () => new Response(JSON.stringify(state({ status: 'ready', httpExposure: 'httpsOnly' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.checked).toBe(true);
         expect(el.querySelector<HTMLInputElement>('[data-exposure="open"]')!.checked).toBe(false);
@@ -335,7 +315,6 @@ describe('local https panel', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(el.querySelector<HTMLInputElement>('[data-exposure="open"]')!.checked).toBe(true);
     });
@@ -346,7 +325,6 @@ describe('local https panel', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3', '10.0.0.5'],
-            platform: 'win32',
         });
         const subjectRow = [...el.querySelectorAll<HTMLElement>('.settings-row')].find(
             (r) => r.querySelector('.settings-label')?.textContent === 'certificate subject',
@@ -400,7 +378,6 @@ describe('local https panel', () => {
                     ),
             ),
             candidateIps: [],
-            platform: 'win32',
         });
         const subject = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
         expect(subject.labels?.[0]?.textContent).toBe('hostname or domain name');
@@ -448,7 +425,6 @@ describe('local https panel: generate waits for mkcert', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: routedFetch(() => [mkcertRow(null)]),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const c = controls(el);
         expect(c.generate.disabled).toBe(true);
@@ -468,7 +444,6 @@ describe('local https panel: generate waits for mkcert', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: routedFetch(() => [mkcertRow(null)]),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const notice = controls(el).notice;
         expect(el.firstElementChild).toBe(notice);
@@ -487,7 +462,6 @@ describe('local https panel: generate waits for mkcert', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: routedFetch(() => [mkcertRow(null)]),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
             showTab,
         });
         const notice = controls(el).notice;
@@ -510,7 +484,6 @@ describe('local https panel: generate waits for mkcert', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: routedFetch(() => [mkcertRow(null)]),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(() => controls(el).notice.querySelector<HTMLButtonElement>('button')!.click()).not.toThrow();
     });
@@ -519,7 +492,6 @@ describe('local https panel: generate waits for mkcert', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: routedFetch(() => [mkcertRow(null)], state({ status: 'ready', subject: '192.168.86.3' })),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const c = controls(el);
         expect(c.generate.disabled).toBe(true);
@@ -530,7 +502,7 @@ describe('local https panel: generate waits for mkcert', () => {
 
     it('a click on the disabled generate sends nothing', async () => {
         const fetchFn = routedFetch(() => [mkcertRow(null)]);
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         // Bypass the disabled attribute: the handler's own guard is what is under test.
         controls(el).generate.dispatchEvent(new MouseEvent('click'));
         await new Promise((r) => setTimeout(r, 0));
@@ -541,7 +513,6 @@ describe('local https panel: generate waits for mkcert', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: routedFetch(() => [mkcertRow('v0.1.0')]),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const c = controls(el);
         expect(c.generate.disabled).toBe(false);
@@ -561,7 +532,7 @@ describe('local https panel: generate waits for mkcert', () => {
         const fetchFn = vi.fn(async (url: string) =>
             url === '/api/dependencies' ? answer() : new Response(JSON.stringify(state())),
         ) as unknown as typeof fetch;
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         expect(controls(el).generate.disabled).toBe(false);
         expect(controls(el).notice.hidden).toBe(true);
     });
@@ -575,7 +546,7 @@ describe('local https panel: generate waits for mkcert', () => {
                   })
                 : Promise.resolve(new Response(JSON.stringify(state()))),
         ) as unknown as typeof fetch;
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         expect(controls(el).generate.disabled).toBe(false);
 
         answer(new Response(JSON.stringify([mkcertRow(null)])));
@@ -589,7 +560,6 @@ describe('local https panel: generate waits for mkcert', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: routedFetch(() => [mkcertRow(installed)]),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(controls(el).generate.disabled).toBe(true);
 
@@ -632,7 +602,6 @@ describe('local https panel: generate waits for mkcert', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: routedFetch(() => [mkcertRow(null, 'unknown')]),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const c = controls(el);
         expect(c.generate.disabled).toBe(false);
@@ -679,7 +648,6 @@ describe('local https panel — transient alert convention', () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(el.querySelectorAll('[data-tls-alert]')).toHaveLength(1);
     });
@@ -693,7 +661,7 @@ describe('local https panel — transient alert convention', () => {
                 }
                 return new Response(JSON.stringify(state()));
             });
-            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
             el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
             await vi.advanceTimersByTimeAsync(0);
 
@@ -729,7 +697,7 @@ describe('local https panel — transient alert convention', () => {
             }
             return new Response(JSON.stringify(state()));
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
         await new Promise((r) => setTimeout(r, 0));
         const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
@@ -756,7 +724,7 @@ describe('local https panel — transient alert convention', () => {
                 }
                 return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
             });
-            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
             el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
             await vi.advanceTimersByTimeAsync(0);
 
@@ -784,7 +752,7 @@ describe('local https panel — transient alert convention', () => {
             }
             return new Response(JSON.stringify(state({ status: 'ready' })));
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         el.querySelector<HTMLButtonElement>('[data-exposure-ok]')!.click();
         await new Promise((r) => setTimeout(r, 0));
         // Scoped to the alert element and its visibility, not whole-panel
@@ -821,7 +789,6 @@ describe('local https panel — transient alert convention', () => {
                 fetchFn,
                 // Deliberately excludes 10.0.0.9, so the mismatch notice (4) fires.
                 candidateIps: ['192.168.86.3'],
-                platform: 'win32',
             });
             const mismatch = el.querySelector<HTMLElement>('[data-tls-mismatch-notice]')!;
             const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
@@ -867,7 +834,7 @@ describe('local https panel — transient alert convention', () => {
                 }
                 return new Response(JSON.stringify(state()));
             });
-            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
             const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
 
             // t=0: success alert, 5s window (would expire at t=5000 if
@@ -933,14 +900,12 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const elNone = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elNone.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.disabled).toBe(true);
 
         const elReady = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready' })))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elReady.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.disabled).toBe(false);
     });
@@ -958,7 +923,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
             if (url === '/api/tls/revoke') return new Response(JSON.stringify({ ok: true }));
             return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.click();
         await new Promise((r) => setTimeout(r, 0));
         modalButton('cancel').click();
@@ -972,7 +937,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
             if (url === '/api/tls/revoke') return new Response(JSON.stringify({ ok: true }));
             return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         const revokeBtn = el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!;
         revokeBtn.click();
         await new Promise((r) => setTimeout(r, 0));
@@ -990,7 +955,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
             if (url === '/api/tls/revoke') return new Response(JSON.stringify({ ok: true }));
             return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         // Listened for on the panel itself rather than with the panel in the
         // document: `modalButton('ok')` searches the whole document, and the
         // panel has "ok" buttons of its own.
@@ -1014,7 +979,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
             }
             return new Response(JSON.stringify(state()));
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         const announced = vi.fn();
         el.addEventListener(TLS_CERT_CHANGED_EVENT, announced);
         el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
@@ -1038,7 +1003,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
             }
             return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         const revokeBtn = el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!;
         revokeBtn.click();
         await new Promise((r) => setTimeout(r, 0));
@@ -1060,7 +1025,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
                 async () => new Response(JSON.stringify(state({ status: 'ready', subject: '192.168.86.3' }))),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'linux',
         });
         // The accordion and its per-OS steps are gone.
         expect(el.querySelector('details')).toBeNull();
@@ -1100,7 +1064,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
             names.push(this.download);
         });
         try {
-            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
             el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
             await vi.waitFor(() => expect(names).toEqual(['ws-scrcpy-web-local-ca.crt']));
             expect(created).toHaveBeenCalledTimes(1);
@@ -1117,7 +1081,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3', '10.0.0.5', '172.16.4.9'],
-            platform: 'win32',
         });
         const select = el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!;
         const optionValues = Array.from(select.options).map((o) => o.value);
@@ -1129,7 +1092,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3', '10.0.0.5'],
-            platform: 'win32',
         });
         const select = el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!;
         const subjectInput = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
@@ -1151,7 +1113,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const elNone = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elNone.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.disabled).toBe(true);
         expect(elNone.querySelector<HTMLInputElement>('[data-exposure="redirect"]')!.disabled).toBe(true);
@@ -1168,7 +1129,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
                     ),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(elReady.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.disabled).toBe(false);
         expect(elReady.querySelector<HTMLElement>('[data-exposure-unavailable-notice]')!.hidden).toBe(true);
@@ -1190,7 +1150,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
                     ),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.disabled).toBe(true);
         const notice = el.querySelector<HTMLElement>('[data-exposure-unavailable-notice]')!;
@@ -1216,7 +1175,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const stillNotBound = await buildLocalHttpsPanel({
             fetchFn: responseFor(undefined),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         stillNotBound.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
         await new Promise((r) => setTimeout(r, 0));
@@ -1225,7 +1183,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const nowBound = await buildLocalHttpsPanel({
             fetchFn: responseFor({ bound: true }),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         const httpsOnlyRadio = nowBound.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!;
         expect(httpsOnlyRadio.disabled).toBe(true);
@@ -1240,7 +1197,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready' })))),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(el.querySelector<HTMLElement>('[data-tls-listener-notice]')!.hidden).toBe(true);
         expect(el.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(false);
@@ -1255,7 +1211,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
                     ),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(el.querySelector<HTMLElement>('[data-tls-listener-notice]')!.hidden).toBe(true);
         expect(el.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(false);
@@ -1284,7 +1239,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
                         ),
                 ),
                 candidateIps: ['192.168.86.3'],
-                platform: 'win32',
             });
             const listenerNotice = el.querySelector<HTMLElement>('[data-tls-listener-notice]')!;
             expect(listenerNotice.hidden, reason).toBe(false);
@@ -1316,7 +1270,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const needsRestart = await buildLocalHttpsPanel({
             fetchFn: responseFor({ bound: false, reason: 'restart-required' }),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         needsRestart.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
         await new Promise((r) => setTimeout(r, 0));
@@ -1327,7 +1280,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const alreadyBound = await buildLocalHttpsPanel({
             fetchFn: responseFor({ bound: true }),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         alreadyBound.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
         await new Promise((r) => setTimeout(r, 0));
@@ -1382,7 +1334,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
                     ),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(stale.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(true);
         expect(stale.querySelector<HTMLElement>('[data-tls-listener-notice]')!.hidden).toBe(false);
@@ -1396,7 +1347,6 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
                     ),
             ),
             candidateIps: ['192.168.86.3'],
-            platform: 'win32',
         });
         expect(clean.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(false);
         expect(clean.querySelector<HTMLElement>('[data-tls-listener-notice]')!.hidden).toBe(true);
@@ -1417,7 +1367,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
             }
             return new Response(JSON.stringify(state()));
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
         await new Promise((r) => setTimeout(r, 0));
         const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
