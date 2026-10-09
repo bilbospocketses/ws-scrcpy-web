@@ -136,6 +136,12 @@
     color: var(--text-color-light);
 }
 
+/* A first-use dependency (mkcert) nothing has needed yet: neutral, like
+   Unknown, because nothing is wrong; the install button is the action. */
+.dep-not-installed {
+    color: var(--text-color-light);
+}
+
 /* Restart prompt bar */
 .dep-restart-prompt {
     display: flex;

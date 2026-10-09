@@ -238,6 +238,11 @@ export class DependencyManager {
         return this.state.get(name);
     }
 
+    /** Fetched on first use rather than at boot (`DependencyDefinition.deferInstall`). */
+    private isDeferred(name: string): boolean {
+        return this.definitions.find((d) => d.name === name)?.deferInstall === true;
+    }
+
     public async checkInstalled(name: string): Promise<void> {
         const def = this.definitions.find((d) => d.name === name);
         const info = this.state.get(name);
@@ -286,7 +291,20 @@ export class DependencyManager {
             // was faulty. `resolveStatus` reports Unknown for a null
             // latestVersion, which is the honest state.
             info.latestVersion = null;
-            if (info.installedVersion === null) {
+            if (info.installedVersion === null && this.isDeferred(name)) {
+                // Not installed, and not needed until someone asks for it: the
+                // same reasoning as an installed dependency below. Nothing is
+                // broken yet, so it reads NotInstalled with its install button,
+                // and the Latest cell names a refused lookup from
+                // `latestLookup`. An install retries the lookup itself and
+                // reports its own failure (performUpdate). Marking it Error here
+                // showed a red badge, and no install button, for a dependency
+                // nobody had asked for, whenever api.github.com rate-limited
+                // the boot check.
+                this.resolveStatus(info);
+                info.errorMessage = undefined;
+                log.info(`Latest-version check failed for ${name} (not installed, installs on first use): ${message}`);
+            } else if (info.installedVersion === null) {
                 info.status = DependencyStatus.Error;
                 info.errorMessage = message;
                 log.warn(`Latest-version check failed for ${name} (not installed): ${message}`);
@@ -551,7 +569,8 @@ export class DependencyManager {
             const def = this.definitions.find((d) => d.name === info.name);
             // M2: mkcert opts out of the boot-time download entirely (see
             // `deferInstall`'s own doc comment on the definition) -- it is
-            // fetched on first use instead, from `createCertService.ts`'s
+            // fetched when the user presses **install** in the Dependencies
+            // panel (0.5.1), or, as a backstop, by `createCertService.ts`'s
             // lazy-install wrapper around `run`. checkInstalled/checkLatest
             // above already ran for it, so the panel still shows accurate
             // status; only the network fetch of the ~4.5 MB binary is skipped
@@ -811,7 +830,11 @@ export class DependencyManager {
 
     private resolveStatus(info: DependencyInfo): void {
         if (info.installedVersion === null) {
-            info.status = DependencyStatus.Unknown;
+            // A first-use dependency (mkcert) that nothing has needed yet is
+            // not in an unknown state: it is not installed, and the panel offers
+            // to install it. Every other missing dependency keeps `Unknown`,
+            // which the first-run banner reads as setup still incomplete.
+            info.status = this.isDeferred(info.name) ? DependencyStatus.NotInstalled : DependencyStatus.Unknown;
             return;
         }
         if (info.latestVersion === null) {

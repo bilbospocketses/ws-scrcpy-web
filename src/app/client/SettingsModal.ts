@@ -3,6 +3,7 @@ import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { authClient, type Role } from './AuthClient';
 import { adminApiReachable, canSeeSection } from './adminGate';
+import { DEPENDENCY_INSTALLED_EVENT } from './DependencyPanel';
 import { closeIntent } from './settings/closeIntent';
 import { type BatchResult, runSave } from './settings/SaveRunner';
 import { SettingsSummaryModal } from './settings/SettingsSummaryModal';
@@ -12,6 +13,7 @@ import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } fro
 import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
 import {
     applyServerContainerMode,
+    applyServerDependencyInstalled,
     applyServerServiceStatus,
     buildServerTab,
     refreshServer,
@@ -506,6 +508,12 @@ export class SettingsModal extends Modal {
         // deferred to a microtask, so it reads this safely.
         this.initialTab = options?.initialTab ?? null;
         this.dialog.classList.add('settings-modal');
+        // An install from the Dependencies tab bubbles up to here; the Server
+        // tab's Local HTTPS panel re-checks mkcert so generate enables without
+        // a reopen. On the dialog itself, so the listener goes with it.
+        this.dialog.addEventListener(DEPENDENCY_INSTALLED_EVENT, () => {
+            if (this.serverTabEl) void applyServerDependencyInstalled(this.serverTabEl);
+        });
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
         // Resolve the current user's role first so admin-only sections can be gated.
         // Fail-open: on a me() error treat as admin (preserves today's full view;

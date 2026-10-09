@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as AdminConfirmModalModule from '../AdminConfirmModal';
 import { authClient } from '../AuthClient';
+import { DEPENDENCY_INSTALLED_EVENT } from '../DependencyPanel';
 import * as ResetConfirmModalModule from '../ResetConfirmModal';
 import { SettingsModal } from '../SettingsModal';
 import * as SettingsServiceModule from '../SettingsService';
@@ -819,6 +820,70 @@ describe('the running version in the dialog footer', () => {
         const { version } = footerParts();
         expect(version!.hidden).toBe(false);
         expect(version!.textContent).toBe('v0.5.1');
+    });
+});
+
+describe('an mkcert install in Dependencies enables generate on the Server tab', () => {
+    beforeEach(() => {
+        document.body.replaceChildren();
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        stubMeAsAdmin();
+    });
+
+    it('re-checks mkcert when the Dependencies panel announces an install', async () => {
+        let mkcertVersion: string | null = null;
+        const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string) => {
+                if (url === '/api/config') {
+                    return json({
+                        config: { webPort: 8000 },
+                        runtime: { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000 },
+                    });
+                }
+                if (url === '/api/service/status') {
+                    return json({ supported: true, status: 'not-installed', platform: 'win32' });
+                }
+                if (url === '/api/tls/state') return json({ status: 'none', candidateIps: ['192.168.86.3'] });
+                if (url === '/api/dependencies') {
+                    return json([
+                        {
+                            name: 'mkcert',
+                            displayName: 'mkcert',
+                            installedVersion: mkcertVersion,
+                            latestVersion: 'v0.1.0',
+                            status: mkcertVersion === null ? 'not-installed' : 'up-to-date',
+                            description: 'd',
+                            requiresRestart: false,
+                            canUpdate: true,
+                            deferInstall: true,
+                        },
+                    ]);
+                }
+                return new Promise(() => undefined);
+            }),
+        );
+
+        new SettingsModal();
+        for (let i = 0; i < 5; i++) await flush();
+
+        const generate = (): HTMLButtonElement | null =>
+            document.querySelector<HTMLButtonElement>('dialog.settings-modal [data-tls-generate]');
+        expect(generate(), 'Local HTTPS panel not built').not.toBeNull();
+        expect(generate()!.disabled).toBe(true);
+
+        // What the panel sends after a successful install, from inside the dialog.
+        mkcertVersion = 'v0.1.0';
+        document
+            .querySelector('dialog.settings-modal [data-settings-tab="dependencies"]')!
+            .dispatchEvent(new CustomEvent(DEPENDENCY_INSTALLED_EVENT, { bubbles: true, detail: { name: 'mkcert' } }));
+        for (let i = 0; i < 3; i++) await flush();
+
+        expect(generate()!.disabled).toBe(false);
+        expect(document.querySelector<HTMLElement>('dialog.settings-modal [data-tls-mkcert-notice]')!.hidden).toBe(
+            true,
+        );
     });
 });
 

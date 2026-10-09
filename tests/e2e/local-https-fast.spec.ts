@@ -68,6 +68,7 @@ const LISTENER_NOT_STARTED =
 const LISTENER_STALE =
     'the https listener is running, but it is still serving the certificate from before your last regenerate — including a ca that no longer exists. restart the server so it serves the new one; until then, a device using the new ca will not match what is actually being served.';
 const CA_RESTORE = 'regenerate to restore the ca download.';
+const MKCERT_MISSING = 'install mkcert in the dependencies tab to generate a certificate.';
 const EXPIRY_SOON_RE =
     /^this certificate expires on .+\. regenerate before then, or streaming stops working from other machines\.$/;
 // The row says "on this device"; the panel's own words are "on your device".
@@ -230,6 +231,62 @@ async function seedPrivateUser(baseURL: string): Promise<void> {
 // ===========================================================================
 
 test.describe('local https fast tier: the panel against stubbed state (smoke §21)', () => {
+    test('21.1 generate and the subject controls wait for mkcert, with the line pointing at Dependencies (0.5.1)', async ({
+        page,
+    }) => {
+        // Both reads stubbed: the shared server's mkcert state is not this
+        // row's to decide, and nothing here may install it.
+        const writes = await guardTlsWrites(page);
+        await stubTlsState(page, NONE_STATE);
+        let mkcertVersion: string | null = null;
+        await page.route(
+            (url) => url.pathname === '/api/dependencies',
+            (route) =>
+                route.request().method() === 'GET'
+                    ? route.fulfill({
+                          status: 200,
+                          contentType: 'application/json',
+                          body: JSON.stringify([
+                              {
+                                  name: 'mkcert',
+                                  displayName: 'mkcert',
+                                  description: 'stubbed',
+                                  installedVersion: mkcertVersion,
+                                  latestVersion: 'v0.1.0',
+                                  status: mkcertVersion === null ? 'not-installed' : 'up-to-date',
+                                  requiresRestart: false,
+                                  canUpdate: true,
+                                  deferInstall: true,
+                              },
+                          ]),
+                      })
+                    : route.fallback(),
+        );
+        await page.goto('/');
+
+        let panel = await openLocalHttpsPanel(page);
+        const notice = panel.locator('[data-tls-mkcert-notice]');
+        await expect(panel.locator('[data-tls-generate]')).toBeDisabled();
+        await expect(panel.locator('[data-tls-subject]')).toBeDisabled();
+        await expect(panel.locator('input[name="tls-subject-kind"]')).toHaveCount(2);
+        for (const radio of await panel.locator('input[name="tls-subject-kind"]').all()) {
+            await expect(radio).toBeDisabled();
+        }
+        await expect(notice).toBeVisible();
+        await expect(notice).toHaveText(MKCERT_MISSING);
+        // What needs no mkcert stays usable.
+        await expect(panelParts(panel).port).toBeEnabled();
+        await expect(panelParts(panel).portOk).toBeEnabled();
+
+        mkcertVersion = 'v0.1.0';
+        await page.reload();
+        panel = await openLocalHttpsPanel(page);
+        await expect(panel.locator('[data-tls-generate]')).toBeEnabled();
+        await expect(panel.locator('[data-tls-subject]')).toBeEnabled();
+        await expect(panel.locator('[data-tls-mkcert-notice]')).toBeHidden();
+        expect(writes.writes).toEqual([]);
+    });
+
     test('21.6 the panel refuses https port 0 and 70000 before any request; 9443 is sent (the sub-1024 advisory shows on Linux only)', async ({
         page,
     }) => {

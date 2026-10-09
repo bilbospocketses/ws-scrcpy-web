@@ -5,8 +5,10 @@ import {
     buildLocalHttpsPanel,
     certExpiryNotice,
     certSubjectMismatchNotice,
+    fetchMkcertInstalled,
     firefoxTrustNote,
     listenerStatusNotice,
+    recheckLocalHttpsMkcert,
     subPrivilegedPortNotice,
     trustInstructionsFor,
 } from '../tabs/ServerTab';
@@ -346,6 +348,156 @@ describe('local https panel', () => {
         port.value = '443';
         port.dispatchEvent(new Event('input'));
         expect(el.querySelector<HTMLElement>('[data-tls-port-notice]')!.hidden).toBe(true);
+    });
+});
+
+// 0.5.1: generate needs mkcert, which is installed from the Dependencies tab.
+// While the server says it is not installed, generate and the subject controls
+// that only feed it are disabled, with a line pointing at the Dependencies tab.
+describe('local https panel: generate waits for mkcert', () => {
+    const mkcertRow = (installedVersion: string | null) => ({
+        name: 'mkcert',
+        displayName: 'mkcert',
+        installedVersion,
+        status: installedVersion === null ? 'not-installed' : 'up-to-date',
+    });
+
+    /** Answers /api/dependencies from `deps()` (re-read every call), everything else with the TLS state. */
+    function routedFetch(deps: () => unknown, tls: unknown = state()) {
+        return vi.fn(async (url: string) =>
+            url === '/api/dependencies' ? new Response(JSON.stringify(deps())) : new Response(JSON.stringify(tls)),
+        ) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+    }
+
+    function controls(el: HTMLElement) {
+        return {
+            generate: el.querySelector<HTMLButtonElement>('[data-tls-generate]')!,
+            subject: el.querySelector<HTMLInputElement>('[data-tls-subject]')!,
+            candidates: el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!,
+            radios: [...el.querySelectorAll<HTMLInputElement>('input[name="tls-subject-kind"]')],
+            notice: el.querySelector<HTMLElement>('[data-tls-mkcert-notice]')!,
+            revoke: el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!,
+            download: el.querySelector<HTMLButtonElement>('[data-tls-download]')!,
+            port: el.querySelector<HTMLInputElement>('[data-tls-port]')!,
+            portOk: el.querySelector<HTMLButtonElement>('[data-tls-port-ok]')!,
+            exposureOk: el.querySelector<HTMLButtonElement>('[data-exposure-ok]')!,
+        };
+    }
+
+    it('disables generate and the subject controls, and says to install mkcert, while it is not installed', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(null)]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(true);
+        expect(c.subject.disabled).toBe(true);
+        expect(c.candidates.disabled).toBe(true);
+        expect(c.radios).toHaveLength(2);
+        for (const r of c.radios) expect(r.disabled).toBe(true);
+        expect(c.notice.hidden).toBe(false);
+        expect(c.notice.textContent).toBe('install mkcert in the dependencies tab to generate a certificate.');
+    });
+
+    it('leaves what needs no mkcert alone: the https port, the exposure ok, and revoke / download for a certificate that exists', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(null)], state({ status: 'ready', subject: '192.168.86.3' })),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(true);
+        expect(c.revoke.disabled).toBe(false);
+        expect(c.download.disabled).toBe(false);
+        expect(c.port.disabled).toBe(false);
+        expect(c.portOk.disabled).toBe(false);
+        expect(c.exposureOk.disabled).toBe(false);
+    });
+
+    it('a click on the disabled generate sends nothing', async () => {
+        const fetchFn = routedFetch(() => [mkcertRow(null)]);
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        // Bypass the disabled attribute: the handler's own guard is what is under test.
+        controls(el).generate.dispatchEvent(new MouseEvent('click'));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(fetchFn.mock.calls.map((c) => c[0])).not.toContain('/api/tls/generate');
+    });
+
+    it('enables everything, with no notice, when mkcert is installed', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow('v0.1.0')]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(false);
+        expect(c.subject.disabled).toBe(false);
+        for (const r of c.radios) expect(r.disabled).toBe(false);
+        expect(c.notice.hidden).toBe(true);
+    });
+
+    it.each([
+        ['the read is refused', () => new Response('{"error":"forbidden"}', { status: 403 })],
+        [
+            'the list does not name mkcert',
+            () => new Response(JSON.stringify([{ name: 'adb', installedVersion: null }])),
+        ],
+        ['the read fails', () => Promise.reject(new TypeError('Failed to fetch'))],
+    ])('fails open, generate enabled, when %s', async (_label, answer) => {
+        const fetchFn = vi.fn(async (url: string) =>
+            url === '/api/dependencies' ? answer() : new Response(JSON.stringify(state())),
+        ) as unknown as typeof fetch;
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        expect(controls(el).generate.disabled).toBe(false);
+        expect(controls(el).notice.hidden).toBe(true);
+    });
+
+    it('does not hold the panel back while /api/dependencies hangs, and gates once it answers', async () => {
+        let answer: (r: Response) => void = () => undefined;
+        const fetchFn = vi.fn((url: string) =>
+            url === '/api/dependencies'
+                ? new Promise<Response>((r) => {
+                      answer = r;
+                  })
+                : Promise.resolve(new Response(JSON.stringify(state()))),
+        ) as unknown as typeof fetch;
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        expect(controls(el).generate.disabled).toBe(false);
+
+        answer(new Response(JSON.stringify([mkcertRow(null)])));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(controls(el).generate.disabled).toBe(true);
+        expect(controls(el).notice.hidden).toBe(false);
+    });
+
+    it('a re-check after mkcert is installed enables generate and withdraws the notice', async () => {
+        let installed: string | null = null;
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(installed)]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(controls(el).generate.disabled).toBe(true);
+
+        installed = 'v0.1.0';
+        await recheckLocalHttpsMkcert(el);
+
+        const c = controls(el);
+        expect(c.generate.disabled).toBe(false);
+        expect(c.subject.disabled).toBe(false);
+        for (const r of c.radios) expect(r.disabled).toBe(false);
+        expect(c.notice.hidden).toBe(true);
+    });
+
+    it('fetchMkcertInstalled reads installedVersion, and answers null when it cannot tell', async () => {
+        const answer = (body: unknown, status = 200) =>
+            vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+        expect(await fetchMkcertInstalled(answer([mkcertRow('v0.1.0')]))).toBe(true);
+        expect(await fetchMkcertInstalled(answer([mkcertRow(null)]))).toBe(false);
+        expect(await fetchMkcertInstalled(answer({ status: 'none' }))).toBeNull();
+        expect(await fetchMkcertInstalled(answer([], 403))).toBeNull();
+        expect(await fetchMkcertInstalled(answer([]))).toBeNull();
     });
 });
 

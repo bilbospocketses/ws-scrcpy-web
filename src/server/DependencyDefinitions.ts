@@ -206,9 +206,13 @@ export interface DependencyDefinition {
      * downloads it" — a ~4.5 MB fetch on every fresh boot for a feature the
      * user may never turn on is a cost with no consent. `checkInstalled` /
      * `checkLatest` still run at boot (so the dependency panel shows accurate
-     * status); only the DOWNLOAD is deferred. `update(name)` remains directly
-     * callable on demand — see `createCertService.ts`'s lazy-install wrapper
-     * around `run`, which is what actually triggers it on first use.
+     * status); only the DOWNLOAD is deferred. While it is missing the manager
+     * reports `DependencyStatus.NotInstalled` for it (not `Unknown`), and the
+     * Dependencies panel offers an **install** button that calls `update(name)`
+     * through the same `POST /api/dependencies/:name/update` the update button
+     * uses (0.5.1). `createCertService.ts`'s lazy-install wrapper around `run`
+     * still calls `update(name)` too, as the server-side backstop for a
+     * generate that arrives with the binary missing (see its doc comment).
      */
     deferInstall?: boolean;
     /**
