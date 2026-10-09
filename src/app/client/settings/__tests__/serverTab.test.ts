@@ -51,6 +51,88 @@ function rowOf(el: HTMLElement, label: string): HTMLElement {
     return row;
 }
 
+// 0.5.5: three cards under their own headings, the tab title hidden.
+describe('ServerTab: Settings, Ports and Application cards', () => {
+    const cardsOf = (el: HTMLElement) =>
+        [...el.querySelectorAll<HTMLElement>(':scope > h4.settings-card-heading')].map((h) => ({
+            heading: h,
+            card: h.nextElementSibling as HTMLElement,
+        }));
+    const labelsIn = (card: HTMLElement) =>
+        [...card.querySelectorAll(':scope > .settings-item')].map(
+            (item) => item.querySelector('.settings-label')?.textContent,
+        );
+
+    it('splits the tab into Settings / Ports / Application, each item one setting', () => {
+        const el = buildServerTab({ ...ctx, authEnabled: true }, new StagedSettingsStore());
+        const title = el.querySelector<HTMLElement>(':scope > h3.settings-section-heading')!;
+        expect(title.textContent).toBe('Server');
+        expect(title.classList.contains('visually-hidden')).toBe(true);
+        const cards = cardsOf(el);
+        expect(cards.map((c) => c.heading.textContent)).toEqual(['Settings', 'Ports', 'Application']);
+        expect(labelsIn(cards[0]!.card)).toEqual(['reset all my settings', 'password', 'session']);
+        // The http and https ports are separate items.
+        expect(labelsIn(cards[1]!.card)).toEqual(['http port', 'https port']);
+        expect(labelsIn(cards[2]!.card)).toEqual([
+            'install for all users',
+            'stop the server and close the app',
+            'uninstall ws-scrcpy-web',
+        ]);
+    });
+
+    it('puts every https-port note, and the restart note both ports share, under the https port', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        const httpsItem = rowOf(el, 'https port').parentElement!;
+        expect(httpsItem.classList.contains('settings-item')).toBe(true);
+        for (const hook of [
+            'data-https-port-status',
+            'data-https-port-gate-note',
+            'data-tls-port-notice',
+            'data-port-restart-note',
+        ]) {
+            expect(el.querySelector(`[${hook}]`)?.parentElement, hook).toBe(httpsItem);
+        }
+        // The http port's item holds its own status line and nothing else.
+        const httpItem = rowOf(el, 'http port').parentElement!;
+        expect([...httpItem.children]).toEqual([rowOf(el, 'http port'), webPortStatusOf(el)]);
+    });
+
+    it('hides the Ports card, heading and all, until the host is known, and for good in a container', () => {
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        const onHost = buildServerTab(ctx, new StagedSettingsStore());
+        const ports = cardsOf(onHost)[1]!;
+        expect(ports.card.hidden).toBe(true);
+        expect(ports.heading.hidden).toBe(true);
+        applyServerHostMode(onHost);
+        expect(ports.card.hidden).toBe(false);
+        expect(ports.heading.hidden).toBe(false);
+
+        const inContainer = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerContainerMode(inContainer);
+        applyServerHostMode(inContainer);
+        const containerPorts = cardsOf(inContainer)[1]!;
+        expect(containerPorts.card.hidden).toBe(true);
+        expect(containerPorts.heading.hidden).toBe(true);
+    });
+
+    it('marks hidden rows with the hidden attribute too, which is how a card knows an item has nothing showing', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        for (const label of ['install for all users', 'uninstall ws-scrcpy-web', 'http port', 'https port']) {
+            expect(rowOf(el, label).hidden, label).toBe(true);
+        }
+        applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
+        expect(rowOf(el, 'install for all users').hidden).toBe(false);
+        expect(rowOf(el, 'uninstall ws-scrcpy-web').hidden).toBe(false);
+    });
+
+    it('gives a user without admin rights the Settings card alone', () => {
+        const el = buildServerTab({ ...ctx, role: 'user' as const }, new StagedSettingsStore());
+        const cards = cardsOf(el);
+        expect(cards.map((c) => c.heading.textContent)).toEqual(['Settings']);
+        expect(labelsIn(cards[0]!.card)).toEqual(['reset all my settings']);
+    });
+});
+
 describe('ServerTab: the install-lifecycle rows are a DECISION, never the default (findings 20.4, 20.5)', () => {
     const APP_ROWS = ['install for all users', 'uninstall ws-scrcpy-web'];
 

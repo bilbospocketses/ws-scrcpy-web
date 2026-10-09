@@ -9,6 +9,7 @@ import { closeIntent } from './settings/closeIntent';
 import { type BatchResult, runSave } from './settings/SaveRunner';
 import { SettingsSummaryModal } from './settings/SettingsSummaryModal';
 import { type Change, StagedSettingsStore } from './settings/StagedSettingsStore';
+import { buildItem, buildSection } from './settings/settingsLayout';
 import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
 import { applyEmbeddingContainerMode, buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
@@ -33,29 +34,22 @@ import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
 import { buildUsersTab } from './settings/tabs/UsersTab';
 
 /**
- * Settings modal — unified two-column grid layout.
+ * Settings modal — every tab in a card, each setting in a two-column grid.
  *
- * Every section is built from the same primitive:
- *   <div class="settings-section-body">       <-- grid container
- *     <div class="settings-row">              <-- display: contents
- *       <label class="settings-label">...     <-- grid-column: labels
- *       <div   class="settings-control">...   <-- grid-column: controls
- *     </div>
- *     <div class="settings-section-footer">   <-- spans both columns,
- *       <p class="settings-status">...        <-- right-aligned content
- *       <button class="settings-btn ...">...
- *     </div>
- *   </div>
+ * Every tab but Dependencies is built from the same primitives, in
+ * settings/settingsLayout.ts (which draws the full shape): a section holding a
+ * card (or, on a split tab, several cards under their own headings), the card
+ * holding items, and each item one setting's row plus the notes under it, laid
+ * out on a grid whose labels column is the same width everywhere.
  *
  * Inputs are siblings of labels (NOT nested inside them — the previous
  * pattern broke vertical alignment because input position drifted with
- * label-text length). Buttons live in section footers, never inline
- * with the inputs they affect, so the right column stays a clean
- * "value column" across all rows.
+ * label-text length), so the right column stays a clean "value column"
+ * across all rows.
  *
- * The `buildSection` / `buildRow` / `buildDynamicLabelRow` helpers that produce
- * that shape now live in each tab module under settings/tabs/ — this file owns
- * no section of its own any more, only the tab strip and the container notes.
+ * This file owns no section of its own, only the tab strip and the container
+ * notes (which are built with the same helpers, so they look like the tabs
+ * they replace).
  */
 /**
  * The container replacements for the Service, Updates and Dependencies sections
@@ -70,29 +64,21 @@ import { buildUsersTab } from './settings/tabs/UsersTab';
  * casually; the container smoke asserts on them.
  *
  * `.settings-status` is the shared Settings-note convention (modal.css: indented
- * 1.25rem, italic, weight 600), so these read as sub-notes rather than as
- * settings — which is what the SP4 branch's 730e521 exists to specify.
+ * 1.25rem, italic), so these read as sub-notes rather than as settings — which
+ * is what the SP4 branch's 730e521 exists to specify.
  */
 function buildDockerNoteSection(
     title: string,
     kind: 'service' | 'updates' | 'dependencies',
     text: string,
 ): HTMLElement {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
+    const { section, card } = buildSection(title);
     section.dataset['dockerNote'] = kind; // stable hook for the container smoke
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
     const note = document.createElement('p');
     note.className = 'settings-status';
     note.style.gridColumn = '1 / -1';
     note.textContent = text;
-    body.appendChild(note);
-    section.appendChild(body);
+    card.appendChild(buildItem(note));
     return section;
 }
 

@@ -245,3 +245,33 @@ describe('ws-scrcpy.css is self-contained (embed.html loads it without app.css)'
         expect(shared, 'the overlay tokens should be shared in both themes').toBeGreaterThanOrEqual(12);
     });
 });
+
+// 0.5.5: Settings cards. Their background is a token in both themes, and the
+// cards, the Dependencies card and the Local HTTPS callout all read it inside
+// the dialog, so the three match in light mode (the dialog's light glass made
+// the old solid white stand out, and a translucent one let the page through).
+describe('settings card tokens', () => {
+    it('defines --settings-card-bg and --settings-popup-shadow in both themes, the card solid in each', () => {
+        const appCss = readStyle('app.css');
+        expect(darkBlock(appCss)).toMatch(/--settings-card-bg:\s*#252525;/);
+        expect(lightBlock(appCss)).toMatch(/--settings-card-bg:\s*#e9edf2;/);
+        expect(darkBlock(appCss)).toMatch(/--settings-popup-shadow\s*:/);
+        expect(lightBlock(appCss)).toMatch(/--settings-popup-shadow\s*:/);
+    });
+
+    it('paints the cards, the Dependencies card and the callout in the dialog from the token', () => {
+        const modal = readStyle('modal.css');
+        for (const selector of [
+            'dialog.settings-modal .settings-card {',
+            'dialog.settings-modal .section-card {',
+            'dialog.settings-modal .settings-callout {',
+        ]) {
+            const at = modal.indexOf(selector);
+            expect(at, selector).toBeGreaterThan(-1);
+            const rule = modal.slice(at, modal.indexOf('}', at));
+            expect(rule, selector).toContain('background: var(--settings-card-bg);');
+        }
+        // No literal background for a card in a theme override.
+        expect(modal).not.toMatch(/\[data-theme="light"\][^{]*\.(settings-card|section-card|settings-callout)\b/);
+    });
+});

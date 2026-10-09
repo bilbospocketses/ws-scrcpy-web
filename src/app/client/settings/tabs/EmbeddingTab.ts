@@ -8,6 +8,7 @@ import {
 import type { Role } from '../../AuthClient';
 import { ConfirmModal } from '../../ConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
+import { buildItem, buildRow, buildSection } from '../settingsLayout';
 
 /**
  * What every tab builder gets, regardless of whether it uses it.
@@ -52,52 +53,6 @@ export type AskChild = <T>(ask: () => Promise<T>, unanswered: T) => Promise<T>;
  * tests): the confirm opens unbound, exactly as it did before `askChild`.
  */
 export const askUnbound: AskChild = (ask) => ask();
-
-/**
- * Build a section shell. Returns { section, body } — body is the grid
- * container into which rows go.
- *
- * A local copy, duplicated here and in every other extracted tab rather than
- * shared. There is nothing left to share it WITH: Task 9 moved the last section
- * (Updates) out of `SettingsModal.ts` and deleted the private `buildSection` /
- * `buildRow` / `buildDynamicLabelRow` these were copied from, so the modal now
- * owns no section of its own. No shared layout module is part of this move
- * either — one small duplicated helper per tab is what the plan sanctions.
- * Introducing one is a deliberate change, not a tidy-up.
- */
-function buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
-    section.appendChild(body);
-    return { section, body };
-}
-
-/**
- * Build a single grid row: description label on the left, control(s) on the
- * right. See `buildSection` for why this is a local copy.
- */
-function buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-
-    const label = document.createElement('span');
-    label.className = 'settings-label';
-    label.textContent = labelText;
-    row.appendChild(label);
-
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-
-    return row;
-}
 
 /** The staged field's summary label: `Allowed embedders: none added → add http://…`. */
 export const EMBED_ADD_LABEL = 'Allowed embedders';
@@ -181,9 +136,9 @@ export function pendingEmbedOrigins(store: StagedSettingsStore): string[] {
 interface EmbeddingView {
     askChild: AskChild;
     store: StagedSettingsStore;
-    /** The approved and pending rows (`display: contents`, so they stay grid rows). */
+    /** The approved and pending rows: one item of the tab's card, with no lines between its rows. */
     list: HTMLElement;
-    /** The add row and its error line; hidden until the approved list has loaded. */
+    /** The add row and its notes, the card's other item; hidden until the approved list has loaded. */
     adder: HTMLElement;
     /** As the server last listed them; `null` while the first read is in flight. */
     approved: string[] | null;
@@ -212,11 +167,13 @@ interface EmbeddingView {
  *   dialog's ordinary unsaved-changes prompt.
  */
 export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
-    const { section, body } = buildSection('Embedding');
+    const { section, card } = buildSection('Embedding');
     registerEmbedAddField(store);
 
-    const list = document.createElement('div');
-    list.style.display = 'contents';
+    // One item for the whole list, as the add row below is another: the
+    // origins are one setting, read as one block, and the card's dividing
+    // line runs between the list and the add row, not between every origin.
+    const list = buildItem();
     list.setAttribute('data-embed-list', '');
 
     const view: EmbeddingView = {
@@ -228,7 +185,7 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
         error: null,
     };
     view.adder = buildAddRow(view);
-    body.append(list, view.adder);
+    card.append(list, view.adder);
     renderEmbedOrigins(view);
 
     store.subscribe(() => {
@@ -284,13 +241,14 @@ function renderEmbedOrigins(view: EmbeddingView): void {
     // On a read error the approved list is unknown, but anything already
     // pending is still staged and Save would still send it, so it stays listed.
     let approved: string[] = [];
+    // Lines of text with no control: `null` lets each span both columns.
     if (view.error) {
-        list.appendChild(buildRow(view.error, document.createElement('span')));
+        list.appendChild(buildRow(view.error, null));
     } else if (view.approved === null) {
-        list.appendChild(buildRow('loading…', document.createElement('span')));
+        list.appendChild(buildRow('loading…', null));
         return;
     } else if (view.approved.length === 0 && pending.length === 0) {
-        list.appendChild(buildRow('No other origins may embed this app.', document.createElement('span')));
+        list.appendChild(buildRow('No other origins may embed this app.', null));
         return;
     } else {
         approved = view.approved;
@@ -369,10 +327,9 @@ function renderEmbedOrigins(view: EmbeddingView): void {
     }
 }
 
-/** Show or hide the add row. Inline `display`, which `hidden` alone would lose to (`display: contents`). */
+/** Show or hide the add row's item (modal.css's `.settings-item[hidden]` takes it out of the layout). */
 function setAdderVisible(adder: HTMLElement, visible: boolean): void {
     adder.hidden = !visible;
-    adder.style.display = visible ? 'contents' : 'none';
 }
 
 /**
@@ -396,7 +353,8 @@ function setAdderVisible(adder: HTMLElement, visible: boolean): void {
  * standing note that an https embedder needs this app on https too.
  */
 function buildAddRow(view: EmbeddingView): HTMLElement {
-    const wrap = document.createElement('div');
+    // The row and every note under it are one item.
+    const wrap = buildItem();
     wrap.setAttribute('data-embed-add', '');
 
     const address = document.createElement('input');

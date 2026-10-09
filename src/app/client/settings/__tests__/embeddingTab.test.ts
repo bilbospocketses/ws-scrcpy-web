@@ -117,15 +117,40 @@ describe('the add row', () => {
         const section = buildEmbeddingTab(ctx(), new StagedSettingsStore());
         await flush();
         const adder = section.querySelector<HTMLElement>('[data-embed-add]');
+        // An item of the card since 0.5.5; modal.css's `.settings-item[hidden]`
+        // takes it out of the layout, so `hidden` alone is the switch.
+        expect(adder?.classList.contains('settings-item')).toBe(true);
         expect(adder?.hidden).toBe(true);
-        // Inline, because the row's `display: contents` would otherwise beat `hidden`.
-        expect(adder?.style.display).toBe('none');
         expect(section.textContent).toContain('loading…');
 
         hangList = false;
         const ui = await buildTab();
         expect(ui.adder.hidden).toBe(false);
-        expect(ui.adder.style.display).toBe('contents');
+        expect(ui.adder.style.display).toBe('');
+    });
+
+    it('lays the tab out as one card: the list one item, the add row with all its notes another (0.5.5)', async () => {
+        approved = ['http://a.lan'];
+        const ui = await buildTab();
+        const cards = ui.section.querySelectorAll(':scope > .settings-card');
+        expect(cards).toHaveLength(1);
+        const items = [...cards[0]!.children];
+        expect(items.map((i) => i.className)).toEqual(['settings-item', 'settings-item']);
+        expect(items[0]!.hasAttribute('data-embed-list')).toBe(true);
+        expect(items[1]).toBe(ui.adder);
+        // Every note under the add row belongs to its item, so no line can fall
+        // between the row and them.
+        for (const hook of ['data-embed-both-note', 'data-embed-add-message', 'data-embed-https-note']) {
+            expect(ui.section.querySelector(`[${hook}]`)?.parentElement, hook).toBe(ui.adder);
+        }
+    });
+
+    it('lets the empty-list line span both columns: it is a line of text, with no control beside it', async () => {
+        const ui = await buildTab();
+        const row = ui.section.querySelector<HTMLElement>('[data-embed-list] .settings-row')!;
+        expect(row.textContent).toBe('No other origins may embed this app.');
+        expect(row.querySelector('.settings-label')?.classList.contains('settings-label-wide')).toBe(true);
+        expect(row.querySelector('.settings-control')).toBeNull();
     });
 
     it('stays hidden when the list cannot be read (another machine is refused), with the reason shown', async () => {

@@ -15,6 +15,7 @@ import { ServiceOperationModal } from '../../ServiceOperationModal';
 import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { isStaleTokenRefusal } from '../../staleToken';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
+import { buildDynamicLabelRow, buildItem, buildRow, buildSection } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /**
@@ -145,61 +146,6 @@ export function buildServiceInfoRow(message: string): HTMLElement {
     return p;
 }
 
-/** Local copy — see EmbeddingTab.ts's `buildSection` for why it isn't shared. */
-function buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
-    section.appendChild(body);
-    return { section, body };
-}
-
-/** Local copy — see EmbeddingTab.ts's `buildRow` for why it isn't shared. */
-function buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-
-    const label = document.createElement('span');
-    label.className = 'settings-label';
-    label.textContent = labelText;
-    row.appendChild(label);
-
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-
-    return row;
-}
-
-/**
- * Local copy — same shape as `buildRow` but exposes the label element for live
- * updates (status text that changes underneath a retry button). See
- * EmbeddingTab.ts's `buildSection` for why these are not shared; `UpdatesTab`
- * carries the only other copy of this one.
- */
-function buildDynamicLabelRow(
-    labelText: string,
-    control: HTMLElement | DocumentFragment,
-): { row: HTMLElement; labelEl: HTMLSpanElement } {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-    const labelEl = document.createElement('span');
-    labelEl.className = 'settings-label';
-    labelEl.textContent = labelText;
-    row.appendChild(labelEl);
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-    return { row, labelEl };
-}
-
 /**
  * The Service tab's hooks back into `SettingsModal` — the one seam this move
  * couldn't close. `renderServiceState` (below) is the single place that learns
@@ -249,7 +195,8 @@ const refreshers = new WeakMap<HTMLElement, (callbacks: ServiceTabCallbacks) => 
  * WHEN to call it) keep working unchanged.
  */
 export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
-    const { section, body } = buildSection('Service');
+    // `body` is the tab's card: everything below renders into it, one item per setting.
+    const { section, card: body } = buildSection('Service');
     const placeholder = document.createElement('p');
     placeholder.className = 'settings-status';
     placeholder.style.gridColumn = '1 / -1';
@@ -259,7 +206,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
     // now entirely external/gated (see the class doc above) and this placeholder
     // is genuinely the only thing `buildServiceTab` can render synchronously.
     placeholder.textContent = 'loading install/uninstall status…';
-    body.appendChild(placeholder);
+    body.appendChild(buildItem(placeholder));
 
     // Replaces the instance fields `this.servicePlatform` / `this.serviceScopeSystemRadio`
     // used to hold. Set by renderServiceState, read by onInstallService/onUninstallService —
@@ -276,7 +223,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         retryBtn.addEventListener('click', onRetry);
         const { row, labelEl } = buildDynamicLabelRow(msg, retryBtn);
         labelEl.classList.add('settings-status-error');
-        body.appendChild(row);
+        body.appendChild(buildItem(row));
     }
 
     /**
@@ -286,7 +233,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
      */
     function renderServiceInfo(msg: string): void {
         body.replaceChildren();
-        body.appendChild(buildServiceInfoRow(msg));
+        body.appendChild(buildItem(buildServiceInfoRow(msg)));
     }
 
     function renderServiceState(resp: ServiceStatusResponse, callbacks: ServiceTabCallbacks): void {
@@ -303,7 +250,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             notice.style.gridColumn = '1 / -1';
             notice.textContent =
                 resp.unsupportedReason || 'service mode is currently windows-only. linux support arrives later in SP3.';
-            body.appendChild(notice);
+            body.appendChild(buildItem(notice));
             return;
         }
 
@@ -356,7 +303,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             if (st.locked) lockScopeRadioControl(sysLabel, sysRadio);
             scopeFrag.appendChild(sysLabel);
 
-            body.appendChild(buildRow('service scope', scopeFrag));
+            body.appendChild(buildItem(buildRow('service scope', scopeFrag)));
             // serviceScopeSystemRadio feeds the install request body; null it
             // out when locked so the install handler (unreachable in that state
             // anyway) can't accidentally consume a stale value.
@@ -384,7 +331,9 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                 void onUninstallService(btn, callbacks);
             });
         }
-        body.appendChild(buildRow('installs/uninstalls server service', btn));
+        // The install row's item; the system-scope gate note below joins it.
+        const installItem = buildItem(buildRow('installs/uninstalls server service', btn));
+        body.appendChild(installItem);
 
         // Linux: gate the system-scope install button on a prior machine-wide
         // (/opt) install — the root service execs the shared /opt binary, which
@@ -399,7 +348,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             gateNote.className = 'settings-status';
             gateNote.style.gridColumn = '1 / -1';
             gateNote.hidden = true;
-            body.appendChild(gateNote);
+            installItem.appendChild(gateNote);
             const applyGate = (): void =>
                 applySystemInstallGate(btn, gateNote, systemRadio.checked, machineWideInstalled);
             systemRadio.addEventListener('change', applyGate);
@@ -415,7 +364,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         loading.style.gridColumn = '1 / -1';
         // Matches the build-time placeholder's wording — see the comment there.
         loading.textContent = 'loading install/uninstall status…';
-        body.appendChild(loading);
+        body.appendChild(buildItem(loading));
 
         const retry = (): void => void runRefresh(callbacks);
         let resp: ServiceStatusResponse | null = null;

@@ -1,39 +1,8 @@
 import { authClient } from '../../AuthClient';
 import { UsersModal } from '../../UsersModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
+import { buildItem, buildRow, buildSection } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
-
-/** Local copy — see EmbeddingTab.ts's `buildSection` for why it isn't shared. */
-function buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
-    section.appendChild(body);
-    return { section, body };
-}
-
-/** Local copy — see EmbeddingTab.ts's `buildRow` for why it isn't shared. */
-function buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-
-    const label = document.createElement('span');
-    label.className = 'settings-label';
-    label.textContent = labelText;
-    row.appendChild(label);
-
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-
-    return row;
-}
 
 /**
  * The Users tab (admin-only) — manage-users entry point plus the auth on/off
@@ -44,7 +13,7 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
  * respectively), not values to stage and save later.
  */
 export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
-    const { section, body } = buildSection('Users');
+    const { section, card } = buildSection('Users');
 
     // 1. Manage users button — opens UsersModal (admin-only action).
     const manageBtn = document.createElement('button');
@@ -55,7 +24,7 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
         // A child of Settings: it closes if Settings does.
         ctx.openChild(() => new UsersModal());
     });
-    body.appendChild(buildRow('user accounts', manageBtn));
+    card.appendChild(buildItem(buildRow('user accounts', manageBtn)));
 
     // 2. Auth toggle — disable login (authEnabled=true) or enable login
     //    (authEnabled=false). ctx.reload() on success (SettingsModal wires this
@@ -84,7 +53,7 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
                 }
             })();
         });
-        body.appendChild(buildRow('login', disableBtn));
+        card.appendChild(buildItem(buildRow('login', disableBtn), toggleStatus));
     } else {
         const enableBtn = document.createElement('button');
         enableBtn.type = 'button';
@@ -113,9 +82,9 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
                 }
             })();
         });
-        body.appendChild(buildRow('login', enableBtn));
+        // The status line belongs to the login row: it reports that row's toggle.
+        card.appendChild(buildItem(buildRow('login', enableBtn), toggleStatus));
     }
 
-    body.appendChild(toggleStatus);
     return section;
 }

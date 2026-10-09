@@ -617,48 +617,124 @@ dialog.settings-modal .settings-tab-panel {
     display: block;
 }
 
+/* No divider of its own: since 0.5.5 the tab's card is the separator. */
 dialog.settings-modal .settings-section {
     padding: 0.75rem 0;
-    border-bottom: 1px solid var(--modal-divider);
 }
 
-dialog.settings-modal .settings-section:last-child {
-    border-bottom: none;
-}
-
+/* The Dependencies panel's own h2 (home.css .home-section h2), so every tab's
+   title reads the same as that one's. */
 dialog.settings-modal .settings-section-heading {
-    font-size: 14px;
+    font-size: 18px;
     font-weight: 600;
-    margin: 0 0 0.5rem;
+    margin: 0 0 0.75rem;
 }
 
 /*
- * v0.1.23-stable Settings layout: two-column CSS grid mirroring
- * .modal-controls in ConfigureScrcpy. Labels live on the left, every
- * control sits on the right at the same x-coordinate across all rows
- * and all sections. Section action buttons (save / check now / install)
- * live in .settings-section-footer which spans both columns.
+ * A Settings card (0.5.5, settingsLayout.ts): the Dependencies tab's card look
+ * (home.css .section-card) around every tab's settings. The background is a
+ * token, declared in both theme blocks (app.css), and solid: a translucent card
+ * let the page behind the dialog show through. The Dependencies panel's own
+ * card and the Local HTTPS callout use the same token inside the dialog (below),
+ * so all three match in either theme.
  */
-dialog.settings-modal .settings-section-body {
+dialog.settings-modal .settings-card {
+    border: 1px solid var(--device-border-color);
+    border-radius: 8px;
+    padding: 4px 16px;
+    background: var(--settings-card-bg);
+}
+
+dialog.settings-modal .settings-card[hidden] {
+    display: none;
+}
+
+/* The Dependencies panel's own card (home.css .section-card), inside the dialog. */
+dialog.settings-modal .section-card {
+    background: var(--settings-card-bg);
+}
+
+/*
+ * A card's heading on a tab split into several cards (Server, Local HTTPS):
+ * the size and spacing of the tab title it stands in for, with room above it
+ * to set it off from the card before. The first one sits where the title
+ * would have (the title is visually hidden on a split tab).
+ */
+dialog.settings-modal .settings-card-heading {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-color);
+    margin: 1.25rem 0 0.75rem;
+}
+
+dialog.settings-modal .settings-card-heading:first-of-type {
+    margin-top: 0;
+}
+
+/*
+ * A Settings item: one setting and the notes under it (settingsLayout.ts's
+ * buildItem). Each item is a two-column CSS grid mirroring .modal-controls in
+ * ConfigureScrcpy: labels on the left, every control on the right at the same
+ * x-coordinate across all items, cards and tabs. Notes span both columns.
+ */
+dialog.settings-modal .settings-item {
     display: grid;
-    /* Labels fixed at 20rem so the controls boundary doesn't shift when
-       dynamic label text changes (status messages, version strings) or
-       when button text changes (install/uninstall states). Controls
-       take 1fr (was 16rem + [end] 1fr buffer pre-2026-05-28). The fixed
-       16rem controls column was sized against Windows font rendering
-       ("not installed — install?" ≈ 231px at 13px monospace, fit) but
-       wrapped on Linux 1920x1080 unscaled where the same monospace
-       string renders ~10% wider. Flexing controls to 1fr gives Linux
-       the breathing room without affecting Windows (controls hug left
-       via .settings-control justify-content: flex-start, so the extra
-       width on Windows is just empty space to the right of each control). */
-    grid-template-columns: [labels] 20rem [controls] 1fr;
+    /* Labels fixed so the controls boundary doesn't shift when dynamic label
+       text changes (status messages, version strings) or when button text
+       changes (install/uninstall states). 18rem, not the 20rem it was before
+       the cards: the card's padding takes ~2rem, and the Embedding add row
+       must still fit on one line at 1280px. Every tab is in a card, so the
+       controls still line up across tabs. Controls take 1fr: a fixed controls
+       column sized against Windows font rendering ("not installed —
+       install?" ≈ 231px at 13px monospace) wrapped on Linux, where the same
+       monospace string renders ~10% wider. Flexing it gives Linux the room
+       without affecting Windows (controls hug left via .settings-control's
+       flex-start, so the extra width is empty space to their right). */
+    grid-template-columns: [labels] 18rem [controls] 1fr;
     align-items: center;
-    gap: 0.5rem 1rem;
+    gap: 0.25rem 1rem;
+    padding: 0.6rem 0;
+}
+
+/*
+ * An item with nothing showing takes no space: every child hidden (a row the
+ * tab has not revealed yet, a status line with nothing to say), or the item
+ * itself hidden. Keyed on the `hidden` attribute, which is why rows are hidden
+ * through settingsLayout.ts's setRowShown (the attribute as well as the inline
+ * display their `display: contents` needs).
+ */
+dialog.settings-modal .settings-item[hidden],
+dialog.settings-modal .settings-item:not(:has(> :not([hidden]))) {
+    display: none;
+}
+
+/*
+ * The dividing line, the Dependencies table's row line, drawn ABOVE every
+ * showing item that has a showing item before it: so there is a line between
+ * any two items on screen, and none after the last one, however many items
+ * after it are hidden. (A line BELOW each item, cleared on the last one
+ * showing, would need a `:has()` inside a `:has()`, which CSS does not allow.)
+ */
+dialog.settings-modal
+    .settings-item:not([hidden]):has(> :not([hidden]))
+    ~ .settings-item:not([hidden]):has(> :not([hidden])) {
+    border-top: 1px solid var(--button-border-color);
 }
 
 dialog.settings-modal .settings-row {
     display: contents;
+}
+
+/*
+ * The Dependencies tab's body: a two-column grid whose children all span both
+ * columns (its placeholder, then the dependency panel). Every other tab uses
+ * .settings-card and .settings-item above.
+ */
+dialog.settings-modal .settings-section-body {
+    display: grid;
+    grid-template-columns: [labels] 20rem [controls] 1fr;
+    align-items: center;
+    gap: 0.5rem 1rem;
 }
 
 /*
@@ -690,6 +766,13 @@ dialog.settings-modal .settings-label {
     line-height: 1.4;
     word-break: break-word;
     padding-right: 0.75rem;
+}
+
+/* A row with no control (settingsLayout.ts's buildRow(label, null)): a line of
+   text, like a note, so it spans both columns instead of wrapping in the
+   labels one beside an empty controls cell. */
+dialog.settings-modal .settings-label.settings-label-wide {
+    grid-column: 1 / -1;
 }
 
 /*
@@ -823,14 +906,16 @@ dialog.modal .settings-btn-danger-outline {
 dialog.settings-modal .settings-status {
     margin: 0.25rem 0 0;
     /* Notes + status read as sub-text of the setting they annotate: indented +
-       bold-italic to set them apart. Errors add red via .settings-status-error
-       (layered on top, so they inherit this indent/weight/style). */
+       italic to set them apart. Plain help reads as a muted aside, so it is not
+       bold (0.5.5); errors and warnings add their color AND the weight
+       (.settings-status-error / -warning, layered on top, so they inherit this
+       indent and style). */
     padding-left: 1.25rem;
     color: var(--text-color-light, #888);
     font-size: 13px;
     min-height: 1em;
     font-style: italic;
-    font-weight: 600;
+    font-weight: 400;
 }
 
 dialog.settings-modal .settings-status-error {
@@ -858,6 +943,17 @@ dialog.settings-modal .settings-status-ready {
  */
 dialog.settings-modal .settings-status-warning {
     color: var(--warning-color);
+}
+
+/*
+ * A note that is an error or a warning keeps the bold the plain notes lost in
+ * 0.5.5, so it still stands out from the help around it. On the note only: an
+ * error shown on a row's LABEL (an update or service failure) keeps the
+ * label's own weight, as it always has.
+ */
+dialog.settings-modal .settings-status.settings-status-error,
+dialog.settings-modal .settings-status.settings-status-warning {
+    font-weight: 600;
 }
 
 /*
@@ -894,13 +990,14 @@ dialog.settings-modal .settings-help-link {
  * classes inside the dialog, in the warning tone so it stands out from the
  * tab. No `display` of its own, so `hidden` keeps working (see
  * .settings-status-warning above); the [hidden] rule below re-asserts it.
+ * The cards' background token, so it matches them in either theme.
  */
 dialog.settings-modal .settings-callout {
     margin: 0 0 0.75rem;
     border: 1px solid var(--device-border-color);
     border-radius: 8px;
     padding: 16px;
-    background: var(--device-list-default-color);
+    background: var(--settings-card-bg);
     color: var(--warning-color);
     font-size: 13px;
     line-height: 1.5;
@@ -935,23 +1032,91 @@ dialog.settings-modal .settings-inline-link:focus-visible {
 }
 
 /*
- * A field with a small label above it (the Local HTTPS certificate subject's
- * second line). The label is muted and upright, unlike the italic notes.
+ * A combobox (0.5.5, Combobox.ts): a text box with a ▾ button attached to its
+ * right edge that opens a list of suggestions under it -- the Local HTTPS
+ * certificate subject, where the list is this computer's addresses. The button
+ * borrows .settings-input's look (it carries that class too), so the two read
+ * as one control in both themes.
  */
-dialog.settings-modal .settings-field {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+dialog.settings-modal .settings-combo {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
 }
 
-dialog.settings-modal .settings-field[hidden] {
+dialog.settings-modal .settings-combo .settings-combo-input {
+    width: 15.5rem;
+    max-width: none;
+}
+
+dialog.settings-modal .settings-combo:has(.settings-combo-button:not([hidden])) .settings-combo-input {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+dialog.settings-modal .settings-combo .settings-combo-button {
+    width: auto;
+    max-width: none;
+    border-left: none;
+    border-radius: 0 6px 6px 0;
+    padding: 0 8px;
+    color: var(--text-color-light);
+    cursor: pointer;
+}
+
+dialog.settings-modal .settings-combo .settings-combo-button:disabled {
+    cursor: not-allowed;
+}
+
+dialog.settings-modal .settings-combo .settings-combo-button[hidden] {
     display: none;
 }
 
-dialog.settings-modal .settings-field-label {
-    font-size: 12px;
-    color: var(--text-color-light);
-    font-style: normal;
+dialog.settings-modal .settings-combo-list {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    margin: 0;
+    padding: 4px 0;
+    list-style: none;
+    max-height: 12rem;
+    overflow-y: auto;
+    background: var(--stream-bg-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 6px;
+    box-shadow: var(--settings-popup-shadow);
+}
+
+/* The same white as the box it drops from (.settings-input's light override). */
+[data-theme="light"] dialog.settings-modal .settings-combo-list {
+    background: #fff;
+}
+
+dialog.settings-modal .settings-combo-list[hidden] {
+    display: none;
+}
+
+dialog.settings-modal .settings-combo-option {
+    position: relative;
+    padding: 4px 10px 4px 26px;
+    color: var(--text-color);
+    cursor: pointer;
+}
+
+/* The option the pointer or the arrow keys are on. */
+dialog.settings-modal .settings-combo-option:hover,
+dialog.settings-modal .settings-combo-option.settings-combo-option-active {
+    background: var(--device-list-hover-color);
+}
+
+/* The value the box holds now, ticked. */
+dialog.settings-modal .settings-combo-option[aria-selected="true"]::before {
+    content: "✓";
+    position: absolute;
+    left: 9px;
+    color: var(--accent-color);
 }
 
 /*
@@ -966,18 +1131,19 @@ dialog.settings-modal .settings-pending-tag {
     font-weight: 600;
 }
 
+/* Plain help, like a .settings-status note: italic, not bold (0.5.5). */
 dialog.settings-modal .settings-stub-note {
     margin: 0;
     padding-left: 1.25rem;
     color: var(--text-color-light, #888);
     font-size: 13px;
     font-style: italic;
-    font-weight: 600;
+    font-weight: 400;
 }
 
 /*
  * v0.1.23-stable: per-section legacy layout overrides removed.
- * All sections now use the unified .settings-section-body grid above.
+ * All sections now use the unified .settings-item grid above.
  * Section-specific input widths handled inline (max-width on the
  * .settings-input itself).
  */

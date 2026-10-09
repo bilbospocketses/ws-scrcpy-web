@@ -4,62 +4,8 @@ import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { runUpgradingHandoff } from '../../UpgradingOverlay';
 import { classifyFailedApply, LostApplyWatch } from '../../updateApplyOutcome';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
+import { buildDynamicLabelRow, buildItem, buildRow, buildSection } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
-
-/** Local copy — see EmbeddingTab.ts's `buildSection` for why it isn't shared. */
-function buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
-    section.appendChild(body);
-    return { section, body };
-}
-
-/** Local copy — see EmbeddingTab.ts's `buildRow` for why it isn't shared. */
-function buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-
-    const label = document.createElement('span');
-    label.className = 'settings-label';
-    label.textContent = labelText;
-    row.appendChild(label);
-
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-
-    return row;
-}
-
-/**
- * A row whose LABEL is returned alongside it, so the caller can keep mutating
- * the text on the left while the control on the right stays put. This section
- * uses it twice: for the error + retry row, and for the action row whose label
- * IS the live update-status line.
- */
-function buildDynamicLabelRow(
-    labelText: string,
-    control: HTMLElement | DocumentFragment,
-): { row: HTMLElement; labelEl: HTMLSpanElement } {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-    const labelEl = document.createElement('span');
-    labelEl.className = 'settings-label';
-    labelEl.textContent = labelText;
-    row.appendChild(labelEl);
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-    return { row, labelEl };
-}
 
 /** The staged-field ids, as `SettingsBatchApi.STAGEABLE_IDS` spells them. */
 const CHANNEL_ID = 'channel';
@@ -162,12 +108,13 @@ const refreshers = new WeakMap<HTMLElement, () => Promise<void>>();
  * response.
  */
 export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
-    const { section, body } = buildSection('Updates');
+    // `body` is the tab's card: everything below renders into it, one item per setting.
+    const { section, card: body } = buildSection('Updates');
     const placeholder = document.createElement('p');
     placeholder.className = 'settings-status';
     placeholder.style.gridColumn = '1 / -1';
     placeholder.textContent = 'loading…';
-    body.appendChild(placeholder);
+    body.appendChild(buildItem(placeholder));
 
     // Registered with null baselines because the real values are not knowable
     // synchronously — every tab is built before the read that learns them.
@@ -255,7 +202,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         });
         const { row, labelEl } = buildDynamicLabelRow(msg, retryBtn);
         labelEl.classList.add('settings-status-error');
-        body.appendChild(row);
+        body.appendChild(buildItem(row));
     }
 
     function renderSection(s: UpdatesStatusResponse): void {
@@ -269,7 +216,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             devNote.style.gridColumn = '1 / -1';
             const versionStr = s.currentVersion ? `current: v${s.currentVersion} — ` : '';
             devNote.textContent = `${versionStr}dev mode — packaging features disabled`;
-            body.appendChild(devNote);
+            body.appendChild(buildItem(devNote));
             return;
         }
 
@@ -280,7 +227,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         auto.addEventListener('change', () => {
             store.set(AUTO_UPDATE_ID, auto.checked);
         });
-        body.appendChild(buildRow('automatically download updates', auto));
+        body.appendChild(buildItem(buildRow('automatically download updates', auto)));
 
         // Row 2: check interval. STAGED, behind the range guard below.
         const interval = document.createElement('input');
@@ -306,7 +253,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             }
             commitIntervalChange(interval);
         });
-        body.appendChild(buildRow('check interval (minutes)', interval));
+        body.appendChild(buildItem(buildRow('check interval (minutes)', interval)));
 
         // Row 3: channel radios. STAGED.
         const channelFrag = document.createDocumentFragment();
@@ -342,7 +289,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         betaLabel.appendChild(document.createTextNode('beta'));
         channelFrag.appendChild(betaLabel);
 
-        body.appendChild(buildRow('update channel', channelFrag));
+        body.appendChild(buildItem(buildRow('update channel', channelFrag)));
 
         // Row 4: github owner. STAGED, behind the non-empty guard below.
         const owner = document.createElement('input');
@@ -352,7 +299,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         owner.addEventListener('blur', () => {
             commitOwnerChange(owner);
         });
-        body.appendChild(buildRow('github owner', owner));
+        body.appendChild(buildItem(buildRow('github owner', owner)));
 
         // Action row: label = live status text (idle: "up to date (vX)", ready:
         // "vX ready to apply", checking/downloading: progress, error: failure
@@ -375,7 +322,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             }
         });
         const { row: actionRow, labelEl: actionLabelEl } = buildDynamicLabelRow('', action);
-        body.appendChild(actionRow);
+        body.appendChild(buildItem(actionRow));
         actionBtn = action;
         // The action row's label doubles as this section's status line, so
         // applyStatusText can mutate it.

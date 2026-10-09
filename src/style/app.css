@@ -37,6 +37,12 @@
     --success-rgb: 74, 222, 128;
     --modal-divider: rgba(255, 255, 255, 0.08);
     --border-muted: rgba(255, 255, 255, 0.2);
+    /* Settings cards (modal.css .settings-card), the Dependencies card and the
+     * Local HTTPS callout inside the dialog: the device list's own card color. */
+    --settings-card-bg: #252525;
+    /* A list that drops from a Settings control (the certificate subject's
+     * address list, modal.css .settings-combo-list). */
+    --settings-popup-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
 }
 
 /* Light theme */
@@ -73,6 +79,10 @@
     --success-rgb: 21, 128, 61;
     --modal-divider: rgba(0, 0, 0, 0.08);
     --border-muted: rgba(0, 0, 0, 0.2);
+    /* A shade above the dialog's light glass. Solid white stood out too much
+     * against it, and a translucent white let the page behind show through. */
+    --settings-card-bg: #e9edf2;
+    --settings-popup-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
 }
 
 html {
