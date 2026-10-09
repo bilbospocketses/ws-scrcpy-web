@@ -220,7 +220,7 @@ describe('local https panel', () => {
         expect(subjectEl.textContent).toBe('<img src=x onerror=alert(1)>');
     });
 
-    it('always shows the allowedHosts note (notification 2), for both ip and hostname subjects', async () => {
+    it('always shows the subject guide (notification 2), for both ip and hostname subjects', async () => {
         const elIp = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
@@ -234,8 +234,19 @@ describe('local https panel', () => {
             candidateIps: ['192.168.86.3'],
             platform: 'win32',
         });
-        expect(elIp.textContent).toMatch(/allowedHosts takes domain names only/i);
-        expect(elHost.textContent).toMatch(/allowedHosts takes domain names only/i);
+        const guide =
+            'ip address: other devices reach this computer by its address on your network. ' +
+            'hostname: use a name your network or dns resolves to this computer.';
+        for (const el of [elIp, elHost]) {
+            const note = el.querySelector<HTMLElement>('[data-tls-subject-guide]');
+            expect(note).not.toBeNull();
+            expect(note!.hidden).toBe(false);
+            expect(note!.textContent).toBe(guide);
+        }
+        // The old note named `allowedHosts`, a config.json key no control here
+        // is labelled with (0.5.1). It must not come back in another wording.
+        expect(elIp.textContent).not.toMatch(/allowedHosts takes domain names only/i);
+        expect(elIp.querySelector('[data-tls-subject-guide]')!.textContent).not.toMatch(/allowedHosts/i);
     });
 
     it('warns inside 30 days of expiry (notification 9), silent well outside it', async () => {

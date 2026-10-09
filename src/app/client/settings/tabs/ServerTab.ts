@@ -685,15 +685,20 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     subjectFrag.appendChild(candidateSelect);
     body.appendChild(buildRow('certificate subject', subjectFrag));
 
-    // Notification 2 — ALWAYS shown, beside the subject controls (not
-    // conditional on anything: it is a standing fact about allowedHosts, not
-    // a mistake state).
-    const allowedHostsNotice = document.createElement('p');
-    allowedHostsNotice.className = 'settings-status';
-    allowedHostsNotice.style.gridColumn = '1 / -1';
-    allowedHostsNotice.textContent =
-        'allowedHosts takes domain names only. raw ip addresses already work, and it does not affect streaming.';
-    body.appendChild(allowedHostsNotice);
+    // Notification 2 — ALWAYS shown, beside the subject controls: what each
+    // subject choice means, in the terms of the two radios just above. Until
+    // 0.5.1 this was a sentence about `allowedHosts`, a config.json key no
+    // control in this dialog is labelled with, so it explained nothing to
+    // anyone choosing between the radios. Not conditional on anything: it is
+    // guidance for the choice, not a mistake state.
+    const subjectGuideNotice = document.createElement('p');
+    subjectGuideNotice.className = 'settings-status';
+    subjectGuideNotice.style.gridColumn = '1 / -1';
+    subjectGuideNotice.setAttribute('data-tls-subject-guide', '');
+    subjectGuideNotice.textContent =
+        'ip address: other devices reach this computer by its address on your network. ' +
+        'hostname: use a name your network or dns resolves to this computer.';
+    body.appendChild(subjectGuideNotice);
 
     // ---- port -- POSTs to POST /api/tls/https-port (task 11); see the class
     //      doc's port-field paragraph for why this is its own route rather
