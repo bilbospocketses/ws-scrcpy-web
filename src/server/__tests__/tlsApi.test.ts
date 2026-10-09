@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildHttpsListenerField, refusedSubjectMessage, TlsApi } from '../api/TlsApi';
+import { refusedSubjectMessage } from '../../common/refusedSubject';
+import { buildHttpsListenerField, TlsApi } from '../api/TlsApi';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
@@ -1103,8 +1104,8 @@ describe('TlsApi', () => {
 
     describe('the 400 for a refused subject follows the kind (0.5.5)', () => {
         it.each([
-            ['hostname', 'com', 'that name could not be used for a certificate'],
-            ['ip', '10.0.0.999', 'that address could not be used for a certificate'],
+            ['hostname', 'com', 'that name could not be used for a certificate.'],
+            ['ip', '10.0.0.999', 'that address could not be used for a certificate.'],
         ] as const)('kind %s refused: %j', async (kind, value, error) => {
             const generate = vi
                 .fn()
@@ -1117,9 +1118,10 @@ describe('TlsApi', () => {
             expect(r.getJson()).toEqual({ error });
         });
 
+        // The same function the Local HTTPS tab falls back to, so the two read alike, period and all.
         it('refusedSubjectMessage is the same copy the route sends', () => {
-            expect(refusedSubjectMessage('hostname')).toBe('that name could not be used for a certificate');
-            expect(refusedSubjectMessage('ip')).toBe('that address could not be used for a certificate');
+            expect(refusedSubjectMessage('hostname')).toBe('that name could not be used for a certificate.');
+            expect(refusedSubjectMessage('ip')).toBe('that address could not be used for a certificate.');
         });
     });
 
