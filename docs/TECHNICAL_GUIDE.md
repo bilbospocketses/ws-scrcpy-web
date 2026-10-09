@@ -1177,7 +1177,7 @@ Tests: `verifyOpenPgp.test.ts` (each refusal with a throwaway key, the renewal p
 | POST | `/api/dependencies/check` | Check all dependencies for updates |
 | POST | `/api/dependencies/:name/update` | Download and install update for named dependency |
 | POST | `/api/dependencies/restart` | Restart the server (via launcher script) |
-| POST | `/api/dependencies/retry-install` | Re-run `checkAll` + `autoInstallMissing`; returns `{ success, installed, stillMissing, errors }`. Used by `FirstRunBanner`'s Retry button. Always responds 200 regardless of `success` value — client reads banner state by re-fetching `/api/dependencies`. |
+| POST | `/api/dependencies/retry-install` | Re-run `checkAll` + `autoInstallMissing`; returns `{ success, installed, stillMissing, errors }`. Used by `FirstRunBanner`'s Retry button. A first-use (`deferInstall`) dependency that is not installed (mkcert) is not in `stillMissing` and earns no "no install was attempted" error: the retry never installs it, and the banner does not count it; an `error` status from the checks still lands in `errors`. Always responds 200 regardless of `success` value — client reads banner state by re-fetching `/api/dependencies`. |
 
 In a container, `POST /api/dependencies/check` and `POST /api/dependencies/:name/update` answer 409 `reason: unsupported` (`refuseInContainer`, §26.5): the image owns the dependency set, and a newer one arrives by pulling a newer image. `GET /api/dependencies` and `retry-install` stay open, because the first boot on a fresh volume still has to hydrate it.
 

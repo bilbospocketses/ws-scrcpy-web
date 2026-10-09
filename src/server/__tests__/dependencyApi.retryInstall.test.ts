@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DependencyStatus } from '../../common/DependencyTypes';
+import { type DependencyInfo, DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyApi } from '../api/DependencyApi';
 import { Config } from '../Config';
 import { DependencyManager } from '../DependencyManager';
@@ -182,6 +182,91 @@ describe('DependencyApi retry-install endpoint', () => {
         await api.handle(req, res);
 
         expect(JSON.parse(res.body!).errors.adb).toBeUndefined();
+    });
+
+    // mkcert installs on first use (deferInstall). Not being installed is its
+    // normal state, and autoInstallMissing never downloads it, so the retry of
+    // the first-run bootstrap must not count it as missing: it did, and every
+    // host without mkcert got success:false.
+    describe('an install-on-first-use dependency (mkcert)', () => {
+        /** Every boot-installed dependency present; mkcert as the boot left it. */
+        async function managerWithMkcert(mkcert: Partial<DependencyInfo>): Promise<DependencyManager> {
+            const mgr = new DependencyManager('/tmp/test');
+            for (const dep of await mgr.getAll()) {
+                dep.installedVersion = '1.0.0';
+                dep.latestVersion = '1.0.0';
+                dep.status = DependencyStatus.UpToDate;
+                dep.errorMessage = undefined;
+            }
+            Object.assign(mgr.getByName('mkcert')!, mkcert);
+            vi.spyOn(mgr, 'checkAll').mockResolvedValue();
+            vi.spyOn(mgr, 'autoInstallMissing').mockResolvedValue();
+            return mgr;
+        }
+
+        async function retry(mgr: DependencyManager) {
+            const res = makeMockRes();
+            await new DependencyApi(mgr).handle(makeReq('POST', '/api/dependencies/retry-install'), res);
+            return JSON.parse(res.body!) as {
+                success: boolean;
+                installed: string[];
+                stillMissing: string[];
+                errors: Record<string, string>;
+            };
+        }
+
+        it('is definitely deferred in the real definitions (the premise of these tests)', () => {
+            expect(new DependencyManager('/tmp/test').getByName('mkcert')?.deferInstall).toBe(true);
+        });
+
+        it('not installed is not "still missing", and the retry succeeds', async () => {
+            const body = await retry(
+                await managerWithMkcert({
+                    installedVersion: null,
+                    latestVersion: '1.6.0',
+                    status: DependencyStatus.NotInstalled,
+                }),
+            );
+            expect(body).toEqual({ success: true, installed: [], stillMissing: [], errors: {} });
+        });
+
+        it('not installed with its latest version unknown earns no "no install was attempted" error', async () => {
+            // The retry never attempts it, unknown latest or not.
+            const body = await retry(
+                await managerWithMkcert({
+                    installedVersion: null,
+                    latestVersion: null,
+                    status: DependencyStatus.NotInstalled,
+                }),
+            );
+            expect(body).toEqual({ success: true, installed: [], stillMissing: [], errors: {} });
+        });
+
+        it('a check that leaves it in Error still counts, like any other dependency', async () => {
+            const body = await retry(
+                await managerWithMkcert({
+                    installedVersion: null,
+                    latestVersion: '1.6.0',
+                    status: DependencyStatus.Error,
+                    errorMessage: 'EACCES reading mkcert.exe',
+                }),
+            );
+            expect(body.success).toBe(false);
+            expect(body.stillMissing).toEqual([]);
+            expect(body.errors).toEqual({ mkcert: 'EACCES reading mkcert.exe' });
+        });
+
+        it('a boot-installed dependency left uninstalled is still missing beside it', async () => {
+            const mgr = await managerWithMkcert({
+                installedVersion: null,
+                latestVersion: '1.6.0',
+                status: DependencyStatus.NotInstalled,
+            });
+            Object.assign(mgr.getByName('adb')!, { installedVersion: null, status: DependencyStatus.Unknown });
+            const body = await retry(mgr);
+            expect(body.success).toBe(false);
+            expect(body.stillMissing).toEqual(['adb']);
+        });
     });
 
     it('returns 200 even when success is false', async () => {
