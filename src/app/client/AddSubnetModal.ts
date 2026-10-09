@@ -1,5 +1,6 @@
 import { parseSubnetInput } from '../../common/SubnetParser';
 import { Modal } from '../ui/Modal';
+import { SUBNETS_HELP_HREF, themeHelpLink } from './helpLink';
 
 export type AddSubnetMode = 'add' | 'edit';
 
@@ -125,7 +126,8 @@ export class AddSubnetModal extends Modal {
         if (before) this.status.appendChild(document.createTextNode(before));
         this.status.appendChild(document.createTextNode('See the '));
         const link = document.createElement('a');
-        link.href = 'help/subnets.html';
+        // The cheat sheet opens in the app's current theme (helpLink.ts).
+        themeHelpLink(link, SUBNETS_HELP_HREF);
         link.target = '_blank';
         link.rel = 'noopener';
         link.textContent = 'subnet cheat sheet';

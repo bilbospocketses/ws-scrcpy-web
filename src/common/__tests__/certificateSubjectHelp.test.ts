@@ -24,15 +24,20 @@ describe('public/help/certificate-subject.html', () => {
         expect(existsSync(SUBNETS)).toBe(true);
     });
 
-    it("applies the app's stored theme before paint, exactly as subnets.html does", () => {
+    it("applies the theme the app's link names before paint, exactly as subnets.html does", () => {
         const { html, doc } = load(PAGE);
         const bootstrap = doc.head.querySelector('script');
         expect(bootstrap, 'a script in <head>').not.toBeNull();
-        expect(bootstrap!.textContent).toContain("localStorage.getItem('ws-scrcpy-web-theme')");
+        // 0.5.5: from `?theme=` (src/app/client/helpLink.ts), else the OS. Not
+        // from localStorage: nothing writes that key since the app moved its
+        // theme to the server's settings, which is why every guide opened dark.
+        expect(bootstrap!.textContent).toContain("new URLSearchParams(location.search).get('theme')");
+        expect(bootstrap!.textContent).toContain("matchMedia('(prefers-color-scheme: light)')");
+        expect(bootstrap!.textContent).not.toContain('localStorage');
         expect(bootstrap!.textContent).toContain("setAttribute('data-theme'");
         // Before the stylesheet and the body, so the first paint is already themed.
-        expect(html.indexOf("localStorage.getItem('ws-scrcpy-web-theme')")).toBeLessThan(html.indexOf('<style>'));
-        expect(html.indexOf("localStorage.getItem('ws-scrcpy-web-theme')")).toBeLessThan(html.indexOf('<body>'));
+        expect(html.indexOf('location.search')).toBeLessThan(html.indexOf('<style>'));
+        expect(html.indexOf('location.search')).toBeLessThan(html.indexOf('<body>'));
         // The same bootstrap, byte for byte, as the page it is modeled on.
         const subnetsBootstrap = load(SUBNETS).doc.head.querySelector('script')!.textContent;
         expect(bootstrap!.textContent).toBe(subnetsBootstrap);
@@ -40,6 +45,54 @@ describe('public/help/certificate-subject.html', () => {
         const css = doc.head.querySelector('style')!.textContent ?? '';
         expect(css).toContain('[data-theme="dark"]');
         expect(css).toContain('[data-theme="light"]');
+    });
+
+    // The head script, run against a stand-in page for each way it can be opened.
+    describe.each([
+        ['certificate-subject.html', PAGE],
+        ['subnets.html', SUBNETS],
+    ])('%s picks its theme', (_name, path) => {
+        function themeFor(search: string, osLight: boolean): string | null {
+            const script = load(path).doc.head.querySelector('script')!.textContent ?? '';
+            const root = document.createElement('html');
+            const fakeDocument = { documentElement: root };
+            const fakeMatchMedia = (query: string) => ({
+                matches: query === '(prefers-color-scheme: light)' && osLight,
+            });
+            new Function('document', 'location', 'matchMedia', 'localStorage', script)(
+                fakeDocument,
+                { search },
+                fakeMatchMedia,
+                // A stored theme that the page must ignore: nothing writes the key any more.
+                { getItem: () => 'light' },
+            );
+            return root.getAttribute('data-theme');
+        }
+
+        it.each([
+            ['?theme=light', false, 'light'],
+            ['?theme=dark', true, 'dark'],
+        ])('from the link (%s, OS light: %s): %s', (search, osLight, expected) => {
+            expect(themeFor(search, osLight)).toBe(expected);
+        });
+
+        it.each([
+            ['', true, 'light'],
+            ['', false, 'dark'],
+            ['?theme=purple', true, 'light'],
+        ])('from the OS without a usable ?theme= (%j, OS light: %s): %s', (search, osLight, expected) => {
+            expect(themeFor(search, osLight)).toBe(expected);
+        });
+    });
+
+    it.each([
+        ['certificate-subject.html', PAGE],
+        ['subnets.html', SUBNETS],
+    ])("%s links the app's favicon", (_name, path) => {
+        const icon = load(path).doc.head.querySelector('link[rel="icon"]');
+        expect(icon?.getAttribute('type')).toBe('image/png');
+        // The page is served from /help/, the favicon from the root beside index.html.
+        expect(icon?.getAttribute('href')).toBe('../favicon.png');
     });
 
     it('puts a stable id on every h2', () => {
@@ -97,7 +150,10 @@ describe('public/help/certificate-subject.html', () => {
             const ref = el.getAttribute('src') ?? el.getAttribute('href') ?? '';
             expect(ref, ref).not.toMatch(/^(https?:)?\/\//i);
         }
-        expect(doc.querySelectorAll('link, img, iframe, object, embed')).toHaveLength(0);
+        // The one <link> is the app's own favicon, from this server (0.5.5).
+        const links = [...doc.querySelectorAll('link')].map((l) => `${l.rel} ${l.getAttribute('href')}`);
+        expect(links).toEqual(['icon ../favicon.png']);
+        expect(doc.querySelectorAll('img, iframe, object, embed')).toHaveLength(0);
         expect(html).not.toMatch(/@import|url\(/i);
         // Example addresses (https://bank.example.com) are prose inside <code>, never a link or resource.
         for (const a of doc.querySelectorAll('a')) expect(a.getAttribute('href') ?? '').not.toMatch(/:\/\//);
