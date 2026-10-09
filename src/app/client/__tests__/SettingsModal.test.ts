@@ -931,6 +931,49 @@ describe('an mkcert install in Dependencies enables generate on the Local HTTPS 
             true,
         );
     });
+
+    it('the callout\'s "dependencies tab" link switches the dialog to Dependencies and focuses its tab', async () => {
+        const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string) => {
+                if (url === '/api/config') {
+                    return json({
+                        config: { webPort: 8000 },
+                        runtime: { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000 },
+                    });
+                }
+                if (url === '/api/service/status') {
+                    return json({ supported: true, status: 'not-installed', platform: 'win32' });
+                }
+                if (url === '/api/tls/state') return json({ status: 'none', candidateIps: ['192.168.86.3'] });
+                if (url === '/api/dependencies') {
+                    return json([{ name: 'mkcert', installedVersion: null, status: 'not-installed' }]);
+                }
+                return new Promise(() => undefined);
+            }),
+        );
+
+        new SettingsModal({ initialTab: 'local-https' });
+        for (let i = 0; i < 5; i++) await flush();
+
+        const tabButton = (label: string): HTMLElement =>
+            Array.from(document.querySelectorAll<HTMLElement>('dialog.settings-modal [role="tab"]')).find(
+                (b) => b.textContent === label,
+            )!;
+        expect(tabButton('Local HTTPS').getAttribute('aria-selected')).toBe('true');
+        const link = document.querySelector<HTMLButtonElement>(
+            'dialog.settings-modal [data-tls-mkcert-notice] .settings-inline-link',
+        )!;
+        expect(link).not.toBeNull();
+        link.click();
+
+        expect(tabButton('Dependencies').getAttribute('aria-selected')).toBe('true');
+        expect(tabButton('Local HTTPS').getAttribute('aria-selected')).toBe('false');
+        expect(document.querySelector<HTMLElement>('[data-settings-tab="dependencies"]')!.hidden).toBe(false);
+        expect(document.querySelector<HTMLElement>('[data-settings-tab="local-https"]')!.hidden).toBe(true);
+        expect(document.activeElement).toBe(tabButton('Dependencies'));
+    });
 });
 
 describe("the Server tab's https port follows mkcert and the certificate", () => {

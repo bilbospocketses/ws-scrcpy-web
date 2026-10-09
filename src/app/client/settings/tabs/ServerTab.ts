@@ -9,7 +9,7 @@ import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMe
 import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
-import { fetchMkcertInstalled, subPrivilegedPortNotice } from './LocalHttpsTab';
+import { fetchMkcertInstalled } from './LocalHttpsTab';
 // Type-only, so it is erased at build time and adds no runtime dependency on the
 // sibling tab. `ScopeRadioInputs` is the three-field subset of
 // /api/service/status that BOTH tabs derive state from (Service: the scope
@@ -71,6 +71,23 @@ export const PORT_RESTART_NOTE = 'changing either port restarts the server; any 
 
 /** The inline refusal on whichever port row was just edited onto the other's value. */
 export const PORT_COLLISION_ERROR = 'the http and https ports must differ.';
+
+/**
+ * Notification 5: a sub-1024 port needs elevated privileges outside win32.
+ * It moved here from the Local HTTPS tab with the https port it is about.
+ *
+ * M2: an ALLOWLIST (only linux/darwin fire), not a win32-denylist -- an
+ * unknown/undefined platform (this tab hasn't learned it yet, or it is
+ * genuinely unrecognized) must not fire this. The previous denylist shape
+ * fired for anything that WASN'T literally `'win32'`, which included
+ * `undefined` -- exactly what a hardcoded `?? 'linux'` fallback once
+ * manufactured before the real platform had arrived.
+ */
+export function subPrivilegedPortNotice(port: number, platform: NodeJS.Platform | string | undefined): string | null {
+    if (platform !== 'linux' && platform !== 'darwin') return null;
+    if (!Number.isFinite(port) || port <= 0 || port >= 1024) return null;
+    return 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
+}
 
 /**
  * What the https port row needs from `GET /api/tls/state` (admin-only, like

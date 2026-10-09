@@ -36,6 +36,13 @@ export interface TabContext {
     askChild: AskChild;
     /** Open a non-question dialog (Users) as a child of Settings (`Modal.openChild`). */
     openChild<T>(open: () => T): T;
+    /**
+     * Switch the Settings dialog to the tab with this id (`TabStrip.activate`;
+     * a no-op for an id that was never built). The Local HTTPS tab's mkcert
+     * callout uses it to send the user to `dependencies`. Optional, so a tab
+     * built on its own (its unit tests) needs no dialog behind it.
+     */
+    showTab?: (id: string) => void;
 }
 
 export type AskChild = <T>(ask: () => Promise<T>, unanswered: T) => Promise<T>;

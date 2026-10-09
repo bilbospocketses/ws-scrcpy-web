@@ -709,6 +709,15 @@ export class SettingsModal extends Modal {
             // Settings closes, and its answer then reads as cancel.
             askChild: (ask, unanswered) => this.askChild(ask, unanswered),
             openChild: (open) => this.openChild(open),
+            // Read at click time: the strip is built just below, after ctx.
+            // Focus follows to the newly selected tab's button, so a keyboard
+            // user whose link just vanished with its tab is not dropped on <body>.
+            showTab: (id) => {
+                const strip = this.tabStrip;
+                if (!strip) return;
+                strip.activate(id);
+                strip.getElement().querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+            },
         };
         const tabs: TabDef[] = [];
         if (canSeeSection(this.role, 'users')) {

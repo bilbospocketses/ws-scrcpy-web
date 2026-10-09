@@ -13,6 +13,7 @@ import {
     PORT_RESTART_NOTE,
     refreshServer,
     refreshServerHttps,
+    subPrivilegedPortNotice,
 } from '../tabs/ServerTab';
 
 afterEach(() => {
@@ -527,6 +528,15 @@ describe('ServerTab: the https port row', () => {
         }
         // And nothing in a container reads the Local HTTPS state.
         expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain('/api/tls/state');
+    });
+
+    it('subPrivilegedPortNotice fires only on linux/darwin for a sub-1024 port', () => {
+        expect(subPrivilegedPortNotice(443, 'linux')).toMatch(/elevated privileges/i);
+        expect(subPrivilegedPortNotice(443, 'darwin')).toMatch(/elevated privileges/i);
+        expect(subPrivilegedPortNotice(443, 'win32')).toBeNull();
+        // M2: an unknown platform claims nothing.
+        expect(subPrivilegedPortNotice(443, undefined)).toBeNull();
+        expect(subPrivilegedPortNotice(8443, 'linux')).toBeNull();
     });
 
     it('is not built for a role that cannot see the http port', () => {
