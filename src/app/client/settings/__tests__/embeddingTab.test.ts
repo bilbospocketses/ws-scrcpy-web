@@ -558,7 +558,7 @@ describe('Save, Cancel and discard go through the dialog', () => {
     // them as pending, and missing from the allowed list.
     it('a batch that applies the origins and then fails on another change drops them from pending and re-reads the list', async () => {
         const ui = await buildTab();
-        ui.store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
+        ui.store.register({ id: 'webPort', label: 'HTTP port', initial: 8000 });
         ui.store.set('webPort', 80);
         ui.add('localhost', '5159');
         // What the server holds once frameAncestorsAdd has been applied.
@@ -574,7 +574,7 @@ describe('Save, Cancel and discard go through the dialog', () => {
 
         expect(await performStagedSave(ui.store, d)).toEqual({
             kind: 'failed',
-            message: "applied Allowed embedders; couldn't save Web port: port 80 is in use",
+            message: "applied Allowed embedders; couldn't save HTTP port: port 80 is in use",
         });
         await flush();
 

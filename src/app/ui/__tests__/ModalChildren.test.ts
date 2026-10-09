@@ -131,7 +131,7 @@ describe('promise-answering children settle when closed without an answer', () =
     it('SettingsSummaryModal resolves false', async () => {
         const parent = new Parent();
         const answer = parent.open(() =>
-            SettingsSummaryModal.confirm([{ id: 'webPort', label: 'Web port', from: 1, to: 2 }]),
+            SettingsSummaryModal.confirm([{ id: 'webPort', label: 'HTTP port', from: 1, to: 2 }]),
         );
         parent.close();
         await expect(answer).resolves.toBe(false);

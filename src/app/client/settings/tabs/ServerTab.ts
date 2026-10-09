@@ -815,7 +815,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         body.appendChild(privilegeNotice);
 
         // Below both rows: either port's save restarts the server
-        // (SettingsBatchApi schedules one restart for a moved web port, a moved
+        // (SettingsBatchApi schedules one restart for a moved http port, a moved
         // https port, or both). Shown whenever the rows are.
         const restartNote = document.createElement('p');
         restartNote.className = 'settings-status';
@@ -884,7 +884,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
     function setServerStatus(msg: string, isError = false): void {
         const el = webPortStatus;
-        if (!el) return; // web port row not built (non-admin)
+        if (!el) return; // http port row not built (non-admin)
         el.textContent = msg;
         // The status line lives BELOW the http port row and is empty at rest —
         // hide it when there is no message so it doesn't reserve a blank row.
@@ -1065,7 +1065,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
     async function runRefresh(): Promise<void> {
         const input = webPortInput;
-        if (!input) return; // web port row not built (non-admin)
+        if (!input) return; // http port row not built (non-admin)
         try {
             const r = await fetch('/api/config');
             if (!r.ok) {
@@ -1079,7 +1079,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
             // permanently dirty and push a webPort write into every batch save.
             store.register({ id: WEB_PORT_ID, label: WEB_PORT_LABEL, initial: env.config.webPort });
             input.value = String(env.config.webPort);
-            // No at-rest hint: the status line below the web-port row stays empty
+            // No at-rest hint: the status line below the http port row stays empty
             // unless the read itself fails.
         } catch {
             setServerStatus("couldn't reach server", true);
@@ -1186,7 +1186,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
 /**
  * Externally trigger the /api/config read for a Server tab `buildServerTab`
- * already built — it fills the web-port input and baselines the staged field.
+ * already built — it fills the http port input and baselines the staged field.
  * A no-op if `section` was never built through `buildServerTab`.
  */
 export async function refreshServer(section: HTMLElement): Promise<void> {

@@ -21,7 +21,7 @@ afterEach(() => {
 
 const CHANGES = [
     { id: 'channel', label: 'Update channel', from: 'stable', to: 'beta' },
-    { id: 'webPort', label: 'Web port', from: 8000, to: 8010 },
+    { id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 },
 ];
 
 function button(label: string): HTMLButtonElement {
@@ -58,8 +58,8 @@ describe('SettingsSummaryModal', () => {
     });
 
     it('falls back to the raw value when a change carries no display text', () => {
-        void SettingsSummaryModal.confirm([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
-        expect(document.querySelector('dialog')?.textContent).toContain('Web port: 8000 → 8010');
+        void SettingsSummaryModal.confirm([{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }]);
+        expect(document.querySelector('dialog')?.textContent).toContain('HTTP port: 8000 → 8010');
     });
 
     /**

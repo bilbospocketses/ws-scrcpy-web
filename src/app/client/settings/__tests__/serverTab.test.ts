@@ -81,7 +81,7 @@ describe('ServerTab: the install-lifecycle rows are a DECISION, never the defaul
 describe('ServerTab: container decisions for port, HTTPS and reset (row 20.19)', () => {
     const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-    it('container mode hides the web-port row and its status line', () => {
+    it('container mode hides the http port row and its status line', () => {
         const el = buildServerTab(ctx, new StagedSettingsStore());
         applyServerContainerMode(el);
         expect(rowOf(el, 'http port').style.display).toBe('none');

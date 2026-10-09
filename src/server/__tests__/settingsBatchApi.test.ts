@@ -58,7 +58,7 @@ const LOOPBACK = { remoteAddress: '127.0.0.1' };
 describe('orderChanges', () => {
     it('puts webPort last — it is the only change that ends the process', () => {
         const ordered = orderChanges([
-            { id: 'webPort', label: 'Web port', from: 8000, to: 8010 },
+            { id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 },
             { id: 'channel', label: 'Channel', from: 'stable', to: 'beta' },
         ]);
         expect(ordered.map((c) => c.id)).toEqual(['channel', 'webPort']);
@@ -220,7 +220,7 @@ describe('POST /api/settings/batch — webPort restart', () => {
         const r = makeReqRes(
             'POST',
             '/api/settings/batch',
-            { changes: [{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }] },
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }] },
             {},
             LOOPBACK,
         );
@@ -279,7 +279,7 @@ describe('POST /api/settings/batch — webPort restart', () => {
         const r = makeReqRes(
             'POST',
             '/api/settings/batch',
-            { changes: [{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }] },
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }] },
             {},
             LOOPBACK,
         );
@@ -308,7 +308,7 @@ describe('POST /api/settings/batch — webPort restart', () => {
         const r = makeReqRes(
             'POST',
             '/api/settings/batch',
-            { changes: [{ id: 'webPort', label: 'Web port', from: 8000, to: 0 }] },
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 0 }] },
             {},
             LOOPBACK,
         );
@@ -348,7 +348,7 @@ describe('POST /api/settings/batch — webPort restart', () => {
             {
                 changes: [
                     { id: 'channel', label: 'Channel', from: 'stable', to: 'not-a-channel' },
-                    { id: 'webPort', label: 'Web port', from: 8000, to: 8010 },
+                    { id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 },
                 ],
             },
             {},
@@ -803,7 +803,7 @@ describe('staged changes cross the wire intact', () => {
         // against an enum, `autoUpdate` against a type, the interval against a
         // range — none of them can be broken by a value arriving as `''`.
         store.register({ id: 'githubOwner', label: 'GitHub owner', initial: cfg.githubOwner });
-        store.register({ id: 'webPort', label: 'Web port', initial: cfg.webPort });
+        store.register({ id: 'webPort', label: 'HTTP port', initial: cfg.webPort });
 
         store.set('channel', cfg.channel === 'beta' ? 'stable' : 'beta');
         store.set('autoUpdate', !cfg.autoUpdate);
@@ -873,7 +873,7 @@ describe('the server response parses into the BatchResult the client expects', (
 
     it('shape 1b — a webPort batch carries the restart and the port the client redirects to', async () => {
         setup();
-        const result = await throughRunSave([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }], {
+        const result = await throughRunSave([{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }], {
             schedule: vi.fn(),
             exit: vi.fn(),
         });
@@ -1128,7 +1128,7 @@ describe('POST /api/settings/batch — the running update service hears the save
                     from: before.updateCheckIntervalMinutes,
                     to: otherInterval(),
                 },
-                { id: 'webPort', label: 'Web port', from: 8000, to: 8010 },
+                { id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 },
             ],
             updater,
         );
@@ -1145,7 +1145,7 @@ describe('reconcilePendingSettings', () => {
     it('abandons a pending row rather than re-applying it', () => {
         setup();
         const db = Config.getInstance().db;
-        db.pendingSettings.create(1, [{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
+        db.pendingSettings.create(1, [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }]);
 
         const result = reconcilePendingSettings(db);
 
