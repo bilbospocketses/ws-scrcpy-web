@@ -108,12 +108,16 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
             const warns = configWarnings(paths, 'frameAncestors');
             expect(warns, warns.join('\n')).toHaveLength(3);
             expect(warns[0]).toContain('frameAncestors "*" would allow any site to frame the app; skipping');
-            expect(warns[1]).toContain(
-                'frameAncestors entry "http://a.test/x" must be an http(s) origin only (no path); skipping',
-            );
-            expect(warns[2]).toContain(
-                'frameAncestors entry "ftp://b.test" must be an http(s) origin only (no path); skipping',
-            );
+            for (const [i, entry] of [
+                [1, 'http://a.test/x'],
+                [2, 'ftp://b.test'],
+            ] as const) {
+                expect(warns[i]).toContain(
+                    `frameAncestors entry "${entry}" must be an http(s) origin only (no path, no wildcard; ` +
+                        'a host of letters, digits, dots and hyphens). Skipping; it is removed from config.json ' +
+                        'the next time the list of allowed embedders changes',
+                );
+            }
             expect(warns.join('\n')).not.toContain('localhost:5159');
             expect((await envelope(paths.port)).runtime.frameAncestors).toEqual(['http://localhost:5159']);
         });

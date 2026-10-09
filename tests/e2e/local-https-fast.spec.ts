@@ -485,7 +485,14 @@ test.describe('local https fast tier: the help page (smoke §21.16)', () => {
         const popup = await popupPromise;
         await popup.waitForLoadState();
         const closed = popup.waitForEvent('close');
-        await popup.locator('a.back').click();
+        // The click handler closes the page it runs in, so the click can still be
+        // settling when the page goes away; that one error means it worked.
+        await popup
+            .locator('a.back')
+            .click({ noWaitAfter: true })
+            .catch((err: unknown) => {
+                if (!/has been closed/.test(String(err))) throw err;
+            });
         await closed;
         expect(popup.isClosed()).toBe(true);
     });
