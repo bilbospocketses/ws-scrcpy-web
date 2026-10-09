@@ -1419,8 +1419,10 @@ Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancell
 | `src/app/client/AddSubnetModal.ts` | Add-or-edit dialog. Accepts `{ onSubmit, mode?: 'add' \| 'edit', initialValue?: string }`. Edit mode re-titles to "Edit Subnet", switches the button to "save", pre-fills the input, and re-runs validation so a valid pre-filled value leaves save enabled immediately. Live validation via `parseSubnetInput`; error messages embed a clickable link to the subnet cheat sheet when relevant. |
 | `src/app/client/LargeSubnetWarningModal.ts` | Fires when combined scan size > 2,048 hosts. Shows total host count + per-subnet breakdown, user confirms or cancels. Nested-modal readability handled by a CSS `:has()` rule in `src/style/modal.css` that makes the topmost stacked dialog use a fully opaque frame (instead of compounding the glassmorphism of both layers). |
 | `src/app/client/ScanProgressChip.ts` | Lifecycle chip with four states: `scanning`, `draining`, `complete`, `cancelled`. Full-width inside its slot with `min-height: 32px` so all three label states occupy the same footprint regardless of which child button (cancel / × / none) is visible. `setScanning` is a no-op after the chip leaves `scanning` state — prevents stale `scan.progress` messages arriving during drain from resurrecting the scanning label. Drain label holds for a minimum 1200 ms before transitioning to `cancelled` (the real drain can complete in ~300 ms, which is too fast to read). Auto-dismisses 5 s after `complete` / 10 s after `cancelled`, via the `onDismiss?` callback restoring the panel's default info text. |
-| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate subject links to the top (its `click here for help on how this works` link, after 0.5.3), the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust`. Same back-link as the cheat sheet. |
+| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate subject links to the top (its `how this works ↗` link since 0.5.5), the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust` (`install guide ↗`). Same back-link and theme bootstrap as the cheat sheet. |
 | `public/help/subnets.html` | Subnet/CIDR cheat sheet. Opens in a new tab from `ScanNetworkModal` (the "New to CIDR?" link) and from `AddSubnetModal` validation-error messages. Back-link uses `window.close()` so the tab actually closes instead of navigating the new tab back to the app (which would accumulate stale tabs on repeat cheat-sheet visits). |
+
+Both help pages theme themselves before paint from `?theme=light|dark` in their own URL, falling back to the OS's `prefers-color-scheme`; both link the app's `../favicon.png`. They are static files with no access to the server's settings DB, where the app has kept its theme since it stopped using `localStorage` (`ThemeToggle.ts`), so the app's links pass the theme along: every link to a help page goes through `src/app/client/helpLink.ts` (`themeHelpLink`), which writes the current `data-theme` into the query ahead of any `#hash` and rewrites it again on `click`, `auxclick` and `contextmenu`, because the theme can change while a dialog holding the link stays open. Until 0.5.5 the pages read a `ws-scrcpy-web-theme` localStorage key nothing wrote any more, and so always opened dark.
 
 #### 14.2.5 Config Tuning Knobs
 
@@ -3189,6 +3191,33 @@ my settings" stops sending the first-run reset (§26.5). The Local HTTPS tab sta
 `applyLocalHttpsContainerMode()` (`LocalHttpsTab.ts`) shows only a note naming the
 reverse proxy, and a later service status never builds the panel over it.
 
+**Layout (0.5.5).** Every tab but Dependencies builds its DOM through
+`src/app/client/settings/settingsLayout.ts`, which replaced six identical private
+`buildSection` / `buildRow` copies (and two of `buildDynamicLabelRow`): a `section`
+holding its `h3` title and a `.settings-card` (the Dependencies card's border, radius
+and `--settings-card-bg` background, declared in both theme blocks of `app.css`), the
+card holding `.settings-item`s, each one setting's `display: contents` row plus the
+notes under it, laid out on a two-column grid whose labels column is 18rem everywhere
+(20rem before the cards; the card's padding took the difference). The items are made
+when the tab builds its rows, not inferred afterwards, because only the builder knows
+which notes belong to which row, and the tabs show and hide both long after. The
+dividing line is a `border-top` on every showing item that follows a showing item
+(`modal.css`): a `border-bottom` cleared on the last one showing would need a `:has()`
+inside a `:has()`, which CSS does not allow. "Showing" is read off the `hidden`
+attribute, so an item whose children are all hidden takes no space, and rows are hidden
+through `setRowShown`, which sets the attribute as well as the inline `display` their
+`display: contents` needs. A row with no control (`buildRow(label, null)`) lets its label
+span both columns. Server and Local HTTPS are split tabs (`buildSplitSection` +
+`addCard`): the title stays in the DOM, `visually-hidden`, so a screen reader and the
+e2e suite still find the tab by it, and each card has an `h4` heading at the title's
+size. Server's **Ports** card is hidden with its heading (`setCardShown`) until the
+dialog knows it is on a host, and stays hidden in a container. The Local HTTPS subject
+box is an editable combobox (`src/app/client/settings/Combobox.ts`, the APG pattern:
+`role="combobox"`, `aria-autocomplete="none"`, a `listbox` that always lists every
+candidate, keyboard and Escape handling) rather than a native `<datalist>`, which filters
+its options by the box's value. The tab's one transient alert moves into the item of the
+action that raised it (`showTransientAlert(item, …)`).
+
 ### 27.4 What stages, and what still writes immediately
 
 `SettingsBatchApi.STAGEABLE_IDS` is an **allowlist** — an id absent from it is
@@ -3470,6 +3499,8 @@ stays bounded; `pending` rows are never pruned.
 | `src/app/client/settings/closeIntent.ts` | `prompt` vs `close`, as a pure function of the store |
 | `src/app/client/settings/SaveRunner.ts` | `runSave()` and the `res.ok` normalization of a refused batch |
 | `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server, Local HTTPS |
+| `src/app/client/settings/settingsLayout.ts` | The shared section / card / item / row builders every tab but Dependencies uses (§27.3, Layout) |
+| `src/app/client/settings/Combobox.ts` | The editable combobox the Local HTTPS certificate subject uses |
 | `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save, `performStagedSave`, `performDirtyClose`, the dirty-close prompt |
 | `src/app/client/DependencyAlertCard.ts` | The top-bar dependency-update indicator (§14.3) |
 | `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, `frameAncestorsAddRefusal()`, the apply loop and the WAL marks |
@@ -3526,7 +3557,7 @@ implicit admin, a bare link, a QR code or `curl -k https://<LAN IP>:<https port>
 the panel's save uses too. Every platform the install guide covers, and Firefox, accepts a PEM
 certificate under `.crt`, and Linux's `update-ca-certificates` reads only `*.crt`. The per-OS install
 steps are not in the panel any more: one line links to section 4 of `public/help/certificate-subject.html`,
-opening in a new tab. It does not bypass sign-in: in locked mode `AuthGate` answers a
+opening in a new tab, in the app's theme (`helpLink.ts`). It does not bypass sign-in: in locked mode `AuthGate` answers a
 caller with no session 401 before this handler runs, and the admin gate answers a signed-in non-admin
 403. The rate limit and the per-download log line are unchanged.
 
@@ -3544,13 +3575,20 @@ test suite is a fake.
   connect-address callers) and cross-checked against `kind` with `isIP` — a caller-supplied `kind`
   that doesn't match the value's actual shape would otherwise mint a certificate whose real SAN type
   falls outside the constraints built for the other type, failing silently in a browser with nothing
-  in this stack having reported a problem. A hostname subject additionally needs at least two labels
-  and must miss a small explicit denylist of common public suffixes (`co.uk`, `com`, `gov`, …) —
-  **not a Public Suffix List implementation, and not claimed to be complete.** It exists because
-  mkcert's own name-constraint code (`cert.go:512`) appends the subject **and its entire subtree**
-  unconditionally: a CA constrained to `com` would let a stolen CA key mint a certificate for
-  `google.com`. The constraint permits the subject and everything beneath it — never the subject
-  alone — so the subject must be a name only the requester could plausibly own.
+  in this stack having reported a problem. A hostname subject additionally must miss a small
+  explicit denylist of common public suffixes (`com`, `net`, `org`, `co.uk`, `gov`, …;
+  `src/common/publicSuffix.ts`) — **not a Public Suffix List implementation, and not claimed to be
+  complete.** It exists because mkcert's own name-constraint code (`cert.go:512`) appends the subject
+  **and its entire subtree** unconditionally: a CA constrained to `com` would let a stolen CA key mint
+  a certificate for `google.com`, trusted by every device that installed it. The constraint permits
+  the subject and everything beneath it — never the subject alone. A one-word LAN name (`nas`,
+  `media`, a hosts-file name) has no such reach, so since 0.5.5 it is allowed (user decision
+  2026-10-09); until then a hostname needed two labels, with `localhost` the one exception, and the
+  list also held `dev`, `app`, `me`, `io` and `co`, which are believable machine names. The same list
+  drives the Local HTTPS tab's warning while a public suffix is typed in hostname mode, where it holds
+  **generate** back. A refused subject answers 400 with fixed copy that follows `kind`
+  (`refusedSubjectMessage`: `that name could not be used for a certificate` for a hostname, `… address …`
+  for an ip), never the value itself.
 - **`nameConstraintsFor(kind, value)` constrains both name types on every call**, because mkcert
   warns (and this code treats it as a failure — see below) when a name-constrained CA ends up
   covering only one type: a half-constrained CA "looks protected" while not being. An IPv4 subject
@@ -3738,7 +3776,7 @@ above all an answer the definition refuses such as an unexpected mkcert release 
 the same `POST /api/dependencies/mkcert/update` the update button uses. A failed install reads `Error`, with
 the button kept as the retry. The Local HTTPS panel reads `GET /api/dependencies` beside `/api/tls/state`:
 while mkcert is not installed, **generate** and the subject controls (the ip/hostname radios, the subject
-field and the address picker) are disabled, and the very first element of the Local HTTPS tab, above its heading, is an orange boxed callout (`.settings-callout`: the Dependencies card's border, radius, padding and background, in `--warning-color`): `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (a callout above the heading since after 0.5.3; in 0.5.3 a line under the heading; until then a line under the certificate controls). Its **dependencies tab** is a `<button>` styled as a link (`.settings-inline-link`: bold, underlined, a focus ring), which switches the dialog to the Dependencies tab through the optional `TabContext.showTab`. The note names only the certificate controls because they are all mkcert gates. The exposure modes, revoke and the CA download need no mkcert and are left
+box and its **▾** address list) are disabled, and the very first element of the Local HTTPS tab, above its (visually hidden, since 0.5.5) heading and its three boxes, is an orange boxed callout (`.settings-callout`: the Dependencies card's border, radius, padding and background, the last from `--settings-card-bg` since 0.5.5, in `--warning-color`): `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (a callout above the heading since after 0.5.3; in 0.5.3 a line under the heading; until then a line under the certificate controls). Its **dependencies tab** is a `<button>` styled as a link (`.settings-inline-link`: bold, underlined, a focus ring), which switches the dialog to the Dependencies tab through the optional `TabContext.showTab`. The note names only the certificate controls because they are all mkcert gates. The exposure modes, revoke and the CA download need no mkcert and are left
 alone; the https port is on the Server tab since after 0.5.3, gated on mkcert AND a certificate (§27.4). A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
 the Local HTTPS tab re-read mkcert, so generate enables without a reopen, and the Server tab re-read its https port's gate. When the panel cannot tell (the read
 failed, was refused, or does not name mkcert) it fails open: generate stays enabled.
