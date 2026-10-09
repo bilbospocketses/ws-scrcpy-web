@@ -133,7 +133,7 @@ export function buildCombobox(opts: ComboboxOptions): Combobox {
                 li.setAttribute('role', 'option');
                 li.setAttribute('aria-selected', String(value === input.value));
                 li.textContent = value;
-                // mousedown, not click, is cancelled: it is what would move focus
+                // mousedown, not click, is canceled: it is what would move focus
                 // out of the box, and the box keeps focus throughout.
                 li.addEventListener('mousedown', (e) => e.preventDefault());
                 li.addEventListener('click', () => pick(value));
