@@ -9,6 +9,7 @@ import type { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import Util from '../Util';
 import { html } from '../ui/HtmlTag';
 import { ManagerClient } from './ManagerClient';
+import { probeStaleToken, reloadForStaleToken } from './staleTokenReload';
 import type { Tool } from './Tool';
 
 const TAG = '[BaseDeviceTracker]';
@@ -329,8 +330,40 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
             if (this.destroyed) {
                 return;
             }
-            this.openNewConnection();
+            void this.reconnect();
         }, 2000);
+    }
+
+    /**
+     * Item 174: before each retry, ask whether this page's token is stale. A
+     * refused handshake reaches the page only as a 1006 close, the same as
+     * "server down", so a tab left open across a restart used to retry every
+     * 2 s forever, each attempt logged by the server. On a stale token the loop
+     * stops and the page reloads for the new token (or, if this tab already
+     * reloaded for that within the guard window, just stops).
+     */
+    private async reconnect(): Promise<void> {
+        if (await this.isTokenStale()) {
+            if (this.destroyed) {
+                return;
+            }
+            if (!reloadForStaleToken()) {
+                console.warn(
+                    TAG,
+                    'websocket refused: this page holds a stale token and a reload did not fix it; not retrying',
+                );
+            }
+            return;
+        }
+        if (this.destroyed) {
+            return;
+        }
+        this.openNewConnection();
+    }
+
+    /** Seam for tests; the real probe is `probeStaleToken`. */
+    protected isTokenStale(): Promise<boolean> {
+        return probeStaleToken();
     }
 
     protected onSocketMessage(event: MessageEvent): void {

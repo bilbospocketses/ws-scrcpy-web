@@ -8,6 +8,7 @@ import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import type { Db } from '../db/Db';
 import { Logger } from '../Logger';
 import type { MwFactory } from '../mw/Mw';
+import { RejectionLogLimiter } from '../security/rejectionLogLimiter';
 import { evaluateWsConnection } from '../security/requestGate';
 import { closeReason } from '../util/closeReason';
 import { HttpServer, type ServerAndPort } from './HttpServer';
@@ -55,6 +56,36 @@ export function wsSession(db: Db, cookieHeader: string | undefined): { userId: n
 
 export function wsSessionUserId(db: Db, cookieHeader: string | undefined): number | undefined {
     return wsSession(db, cookieHeader)?.userId;
+}
+
+/**
+ * One limiter for every listener: the same tab retrying over HTTP and HTTPS is
+ * still one caller. Exported for tests.
+ */
+export const wsRejectionLog = new RejectionLogLimiter();
+
+/**
+ * The log line for a refused handshake, or `null` when `wsRejectionLog` says
+ * this one is a repeat to leave out (item 174: a tab still holding the previous
+ * process's token retried every 2 s and logged every refusal). The text up to
+ * the reason is unchanged, so anything matching on it still does; the remote
+ * address, and on a summary the count left out, are appended.
+ */
+export function wsRejectionLogLine(
+    origin: string | undefined,
+    host: string | undefined,
+    remoteAddress: string | undefined,
+    reason: string | undefined,
+    now: number,
+    limiter: RejectionLogLimiter = wsRejectionLog,
+): string | null {
+    const remote = remoteAddress ?? 'unknown';
+    const skipped = limiter.note(`${remote}\u0000${reason ?? ''}`, now);
+    if (skipped === null) return null;
+    const base = `rejected WS connection (origin="${origin ?? ''}" host="${host ?? ''}"): ${reason}`;
+    if (skipped === 0) return `${base} [from ${remote}]`;
+    const seconds = Math.round(limiter.windowMs / 1000);
+    return `${base} [from ${remote}; ${skipped} more like it in the last ${seconds}s not logged]`;
 }
 
 export class WebSocketServer implements Service {
@@ -105,11 +136,14 @@ export class WebSocketServer implements Service {
             verifyClient: (info, cb) => {
                 const decision = evaluateWsConnection(info.origin, info.req.headers.host, info.req.headers.cookie);
                 if (!decision.allowed) {
-                    log.info(
-                        `rejected WS connection (origin="${info.origin ?? ''}" host="${
-                            info.req.headers.host ?? ''
-                        }"): ${decision.reason}`,
+                    const line = wsRejectionLogLine(
+                        info.origin,
+                        info.req.headers.host,
+                        info.req.socket?.remoteAddress,
+                        decision.reason,
+                        Date.now(),
                     );
+                    if (line !== null) log.info(line);
                     cb(false, 403, 'Forbidden');
                     return;
                 }

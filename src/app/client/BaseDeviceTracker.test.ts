@@ -15,6 +15,9 @@ import { BaseDeviceTracker } from './BaseDeviceTracker';
 class TestTracker extends BaseDeviceTracker<BaseDeviceDescriptor, never> {
     public openCount = 0;
     public buildRowCount = 0;
+    /** What the stale-token probe answers (item 174); counted per call. */
+    public tokenStale = false;
+    public probeCount = 0;
 
     public static override readonly ACTION = 'test-tracker';
 
@@ -52,6 +55,11 @@ class TestTracker extends BaseDeviceTracker<BaseDeviceDescriptor, never> {
         return undefined as never;
     }
 
+    protected override isTokenStale(): Promise<boolean> {
+        this.probeCount++;
+        return Promise.resolve(this.tokenStale);
+    }
+
     public callOnSocketClose(): void {
         this.onSocketClose({ reason: 'test' } as CloseEvent);
     }
@@ -80,20 +88,93 @@ describe('BaseDeviceTracker reconnect timer lifecycle (#35)', () => {
         document.body.innerHTML = '';
     });
 
-    it('does NOT reconnect after destroy() even once the 2s timer would fire', () => {
+    it('does NOT reconnect after destroy() even once the 2s timer would fire', async () => {
         const tracker = new TestTracker();
         tracker.callOnSocketClose();
         tracker.destroy();
-        vi.advanceTimersByTime(5000);
+        await vi.advanceTimersByTimeAsync(5000);
         expect(tracker.openCount).toBe(0);
     });
 
-    it('reconnects after 2s when NOT destroyed', () => {
+    it('reconnects after 2s when NOT destroyed', async () => {
         const tracker = new TestTracker();
         tracker.callOnSocketClose();
-        vi.advanceTimersByTime(2000);
+        await vi.advanceTimersByTimeAsync(2000);
         expect(tracker.openCount).toBe(1);
         tracker.destroy();
+    });
+});
+
+// Item 174: a tab left open across a restart holds the old process's token, and
+// its refused handshake looks to the page exactly like "server down".
+describe('BaseDeviceTracker stops retrying on a stale token (item 174)', () => {
+    let reload: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        reload = vi.fn();
+        vi.stubGlobal('location', { ...window.location, reload });
+        window.sessionStorage.clear();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        window.sessionStorage.clear();
+        document.body.innerHTML = '';
+    });
+
+    it('asks before each retry, and reconnects when the token is still good', async () => {
+        const tracker = new TestTracker();
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(tracker.probeCount).toBe(1);
+        expect(tracker.openCount).toBe(1);
+        expect(reload).not.toHaveBeenCalled();
+        tracker.destroy();
+    });
+
+    it('a stale token reloads the page instead of retrying, and the loop stops', async () => {
+        const tracker = new TestTracker();
+        tracker.tokenStale = true;
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(tracker.openCount).toBe(0);
+        // Nothing is scheduled any more: no further probe, no reconnect.
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(tracker.probeCount).toBe(1);
+        expect(tracker.openCount).toBe(0);
+        tracker.destroy();
+    });
+
+    it('a stale token right after such a reload stops without reloading again', async () => {
+        // The reload did not get this tab a working token: looping would be worse.
+        const tracker = new TestTracker();
+        tracker.tokenStale = true;
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).toHaveBeenCalledTimes(1);
+
+        const again = new TestTracker();
+        again.tokenStale = true;
+        again.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(again.openCount).toBe(0);
+        tracker.destroy();
+        again.destroy();
+    });
+
+    it('a tracker destroyed while the probe is out neither reloads nor reconnects', async () => {
+        const tracker = new TestTracker();
+        tracker.tokenStale = true;
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(1999);
+        tracker.destroy();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reload).not.toHaveBeenCalled();
+        expect(tracker.openCount).toBe(0);
     });
 });
 
