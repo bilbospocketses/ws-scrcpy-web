@@ -121,13 +121,13 @@ export class StreamDiagnostics {
         if (this.counts.config === 0) {
             return (
                 `NO CONFIG PACKET after ${afterMs}ms, but media packets ARE arriving (${seen}). Without SPS/PPS the ` +
-                'browser cannot initialise a decoder, so the picture stays black while data flows. This is a device/' +
-                'encoder behaviour, not a dropped connection.'
+                'browser cannot initialize a decoder, so the picture stays black while data flows. This is a device/' +
+                'encoder behavior, not a dropped connection.'
             );
         }
         return (
             `CONFIG PACKET BUT NO FRAMES after ${afterMs}ms (${seen}). The encoder described a stream and then ` +
-            'produced none of it; the decoder is initialised and starved.'
+            'produced none of it; the decoder is initialized and starved.'
         );
     }
 

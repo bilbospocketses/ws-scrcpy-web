@@ -596,7 +596,7 @@ export class ServiceApi {
                 if (pkexecDeclined(r.code, r.stderr)) {
                     const body: ServiceActionFailure = {
                         ok: false,
-                        error: 'install was cancelled or not authorized at the authentication prompt',
+                        error: 'install was canceled or not authorized at the authentication prompt',
                         reason: 'uac-declined',
                     };
                     res.writeHead(403);
@@ -876,7 +876,7 @@ export class ServiceApi {
                         if (pkexecDeclined(r.code, r.stderr)) {
                             const body: ServiceActionFailure = {
                                 ok: false,
-                                error: 'uninstall was cancelled or not authorized at the authentication prompt',
+                                error: 'uninstall was canceled or not authorized at the authentication prompt',
                                 reason: 'uac-declined',
                             };
                             res.writeHead(403);

@@ -490,7 +490,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             return;
         }
         session.cancelled = true;
-        setStatus('Pairing cancelled.');
+        setStatus('Pairing canceled.');
         void deps
             .fetchFn('/api/devices/pair/cancel', {
                 method: 'POST',

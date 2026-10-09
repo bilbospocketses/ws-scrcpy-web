@@ -468,7 +468,7 @@ describe('UpdatesTab', () => {
                     json: () =>
                         Promise.resolve({
                             ok: false,
-                            error: 'authentication was dismissed or not authorized. machine-wide-update cancelled.',
+                            error: 'authentication was dismissed or not authorized. machine-wide-update canceled.',
                             reason: 'uac-declined',
                         }),
                 }),

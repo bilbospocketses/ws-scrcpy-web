@@ -85,7 +85,7 @@ export class ScanProgressChip {
 
     private applyCancelled(found: number): void {
         this.setState('cancelled');
-        this.label.textContent = `Scan cancelled · ${found} device${found === 1 ? '' : 's'} found`;
+        this.label.textContent = `Scan canceled · ${found} device${found === 1 ? '' : 's'} found`;
         this.scheduleAutoHide(10000);
     }
 

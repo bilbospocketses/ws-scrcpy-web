@@ -68,7 +68,7 @@ describe('WelcomeModal install: a declined elevation prompt (smoke 14.10 sweep)'
             jsonResponse(
                 {
                     ok: false,
-                    error: 'install was cancelled or not authorized at the authentication prompt',
+                    error: 'install was canceled or not authorized at the authentication prompt',
                     reason: 'uac-declined',
                 },
                 403,

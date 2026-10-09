@@ -72,7 +72,7 @@ describe('StreamDiagnostics', () => {
         d.noteFrame('config', 37);
         const line = d.stallReport(8000);
         expect(line).toContain('CONFIG PACKET BUT NO FRAMES after 8000ms');
-        expect(line).toContain('initialised and starved');
+        expect(line).toContain('initialized and starved');
     });
 
     it('stays SILENT when the stream is healthy', () => {

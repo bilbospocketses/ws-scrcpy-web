@@ -448,7 +448,7 @@ describe('runPkexec', () => {
         const err = await runPkexec('true', 'machine-wide-update').catch((e: unknown) => e);
         expect(err).toBeInstanceOf(PkexecDeclinedError);
         expect((err as Error).message).toBe(
-            'authentication was dismissed or not authorized. machine-wide-update cancelled.',
+            'authentication was dismissed or not authorized. machine-wide-update canceled.',
         );
     });
 

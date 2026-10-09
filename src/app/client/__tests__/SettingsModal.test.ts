@@ -468,7 +468,7 @@ describe('buildInstallAllUsersControl', () => {
             json: () =>
                 Promise.resolve({
                     ok: false,
-                    error: 'authentication was dismissed or not authorized. install-system-wide cancelled.',
+                    error: 'authentication was dismissed or not authorized. install-system-wide canceled.',
                     reason: 'uac-declined',
                 }),
         });

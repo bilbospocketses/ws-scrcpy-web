@@ -63,7 +63,7 @@ describe('UpdateButton apply: a declined elevation prompt (smoke 14.10 sweep)', 
             status: 403,
             body: {
                 ok: false,
-                error: 'authentication was dismissed or not authorized. machine-wide-update cancelled.',
+                error: 'authentication was dismissed or not authorized. machine-wide-update canceled.',
                 reason: 'uac-declined',
             },
         });

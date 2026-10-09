@@ -178,7 +178,7 @@ export function pkexecDeclined(code: number | undefined, stderr: string): boolea
  */
 export class PkexecDeclinedError extends Error {
     constructor(label: string) {
-        super(`authentication was dismissed or not authorized. ${label} cancelled.`);
+        super(`authentication was dismissed or not authorized. ${label} canceled.`);
         this.name = 'PkexecDeclinedError';
     }
 }
