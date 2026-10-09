@@ -112,7 +112,7 @@ pub(crate) fn decide_crash_restart(
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LogLevel {
     Info,
     Warn,
@@ -225,36 +225,78 @@ fn log_at(level: LogLevel, line: &str) {
     }
 }
 
+/// Pure: the log line for how the background retry ended.
+pub(crate) fn describe_helper_retry(
+    outcome: &HelperRetryOutcome,
+    budget: Duration,
+) -> (LogLevel, String) {
+    match outcome {
+        HelperRetryOutcome::Refreshed { after } => (
+            LogLevel::Info,
+            format!(
+                "supervisor: refreshed operation-server helper after {}s, once it was free",
+                after.as_secs()
+            ),
+        ),
+        HelperRetryOutcome::Failed(e) => (
+            LogLevel::Error,
+            format!(
+                "supervisor: could not refresh operation-server helper (operation-server spawn will use stale binary or fail): {e}"
+            ),
+        ),
+        HelperRetryOutcome::GaveUp => (
+            LogLevel::Error,
+            format!(
+                "supervisor: operation-server helper still in use after {}s; the next update or uninstall runs the previous build's helper until the launcher restarts",
+                budget.as_secs()
+            ),
+        ),
+    }
+}
+
 /// Refresh the operation-server helper at startup, log what happened, and on
 /// Windows start the bounded background retry if it is busy and immovable.
 fn refresh_operation_server_helper(data_root: &Path) {
-    let result = crate::operation_server::refresh_helper_binary(data_root);
-    let (level, line, retry) = describe_helper_refresh(&result, cfg!(windows));
-    log_at(level, &line);
-    if !retry {
-        return;
-    }
     let data_root = data_root.to_path_buf();
-    thread::spawn(move || {
-        match retry_helper_refresh(
-            || crate::operation_server::refresh_helper_binary(&data_root),
-            thread::sleep,
-            HELPER_REFRESH_RETRY_INTERVAL,
-            HELPER_REFRESH_RETRY_BUDGET,
-        ) {
-            HelperRetryOutcome::Refreshed { after } => log::info(&format!(
-                "supervisor: refreshed operation-server helper after {}s, once it was free",
-                after.as_secs()
-            )),
-            HelperRetryOutcome::Failed(e) => log::error(&format!(
-                "supervisor: could not refresh operation-server helper (operation-server spawn will use stale binary or fail): {e}"
-            )),
-            HelperRetryOutcome::GaveUp => log::error(&format!(
-                "supervisor: operation-server helper still in use after {}s; the next update or uninstall runs the previous build's helper until the launcher restarts",
-                HELPER_REFRESH_RETRY_BUDGET.as_secs()
-            )),
-        }
-    });
+    let _ = start_helper_refresh(
+        move || crate::operation_server::refresh_helper_binary(&data_root),
+        cfg!(windows),
+        thread::sleep,
+        HELPER_REFRESH_RETRY_INTERVAL,
+        HELPER_REFRESH_RETRY_BUDGET,
+        log_at,
+    );
+}
+
+/// The glue of `refresh_operation_server_helper`, with every outside effect as
+/// a parameter: one refresh now, its line logged, and -- only when
+/// `describe_helper_refresh` asks for it -- the retry on a background thread,
+/// whose handle is returned so a test can join it. Every retry goes through the
+/// same `refresh`, so it stages and renames exactly as the first one does and
+/// never leaves a half-written helper for a spawn to catch.
+pub(crate) fn start_helper_refresh<R, S, L>(
+    mut refresh: R,
+    windows: bool,
+    sleep: S,
+    interval: Duration,
+    budget: Duration,
+    log: L,
+) -> Option<thread::JoinHandle<()>>
+where
+    R: FnMut() -> std::io::Result<crate::operation_server::HelperRefresh> + Send + 'static,
+    S: FnMut(Duration) + Send + 'static,
+    L: Fn(LogLevel, &str) + Send + 'static,
+{
+    let (level, line, retry) = describe_helper_refresh(&refresh(), windows);
+    log(level, &line);
+    if !retry {
+        return None;
+    }
+    Some(thread::spawn(move || {
+        let outcome = retry_helper_refresh(refresh, sleep, interval, budget);
+        let (level, line) = describe_helper_retry(&outcome, budget);
+        log(level, &line);
+    }))
 }
 
 /// Main supervisor entry. Returns the final exit code alongside the tray-supervisor
@@ -379,7 +421,7 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
         //
         // Item 173: after an update the previous operation-server is still
         // running from the helper here. On Windows it is moved aside and the
-        // new build copied in its place, so the helper matches `current/`
+        // new build renamed into its place, so the helper matches `current/`
         // BEFORE Node is spawned below -- and Node (UpdateService,
         // ServiceApi) or the post-stop bat it arms are the only things that
         // spawn the helper. So the next update or uninstall never runs the
@@ -1046,6 +1088,110 @@ mod tests {
             "{outcome:?}"
         );
         assert_eq!(attempts, 2);
+    }
+
+    // ---- M8: the glue in refresh_operation_server_helper ----
+
+    type Logged = std::sync::Arc<std::sync::Mutex<Vec<(LogLevel, String)>>>;
+
+    fn recorder() -> (Logged, impl Fn(LogLevel, &str) + Send + 'static) {
+        let logged: Logged = Default::default();
+        let sink = logged.clone();
+        (logged, move |level, line: &str| {
+            sink.lock().unwrap().push((level, line.to_string()))
+        })
+    }
+
+    #[test]
+    fn helper_glue_starts_no_thread_when_the_refresh_worked() {
+        let (logged, log) = recorder();
+        let handle = start_helper_refresh(
+            || Ok(HelperRefresh::Copied("h.exe".into())),
+            cfg!(windows),
+            |_| panic!("no retry, no sleep"),
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+            log,
+        );
+        assert!(handle.is_none());
+        let logged = logged.lock().unwrap();
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0].0, LogLevel::Info);
+        assert!(
+            logged[0].1.contains("refreshed operation-server helper at"),
+            "{}",
+            logged[0].1
+        );
+    }
+
+    #[test]
+    fn helper_glue_starts_no_thread_for_a_genuine_error() {
+        let (logged, log) = recorder();
+        let handle = start_helper_refresh(
+            || os_err(5),
+            cfg!(windows),
+            |_| panic!("no retry, no sleep"),
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+            log,
+        );
+        assert!(handle.is_none());
+        assert_eq!(logged.lock().unwrap()[0].0, LogLevel::Error);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn helper_glue_retries_a_busy_helper_on_a_thread_and_logs_how_it_ended() {
+        use std::sync::atomic::AtomicU32;
+        let attempts = Arc::new(AtomicU32::new(0));
+        let counter = attempts.clone();
+        let (logged, log) = recorder();
+        // Busy for the first refresh and two retries, then free.
+        let handle = start_helper_refresh(
+            move || {
+                if counter.fetch_add(1, Ordering::SeqCst) < 3 {
+                    os_err(32)
+                } else {
+                    Ok(HelperRefresh::Copied("h.exe".into()))
+                }
+            },
+            true,
+            |_| {},
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+            log,
+        )
+        .expect("a busy helper starts the retry thread");
+        handle.join().unwrap();
+        assert_eq!(attempts.load(Ordering::SeqCst), 4);
+        let logged = logged.lock().unwrap();
+        assert_eq!(logged.len(), 2, "{logged:?}");
+        assert_eq!(logged[0].0, LogLevel::Warn);
+        assert!(logged[0].1.contains("retrying"), "{}", logged[0].1);
+        assert_eq!(logged[1].0, LogLevel::Info);
+        assert!(logged[1].1.contains("after 6s"), "{}", logged[1].1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn helper_glue_logs_an_error_when_the_retry_gives_up() {
+        let (logged, log) = recorder();
+        let handle = start_helper_refresh(
+            || os_err(32),
+            true,
+            |_| {},
+            HELPER_REFRESH_RETRY_INTERVAL,
+            HELPER_REFRESH_RETRY_BUDGET,
+            log,
+        )
+        .expect("thread");
+        handle.join().unwrap();
+        let logged = logged.lock().unwrap();
+        assert_eq!(logged.last().unwrap().0, LogLevel::Error);
+        assert!(
+            logged.last().unwrap().1.contains("still in use after 120s"),
+            "{logged:?}"
+        );
     }
 
     #[test]

@@ -1115,10 +1115,12 @@ pub fn write_stop_marker(data_root: &Path) -> std::io::Result<PathBuf> {
 /// with ERROR_SHARING_VIOLATION (os error 32), which left the helper the OLD
 /// build until the launcher next restarted, so the next update or uninstall
 /// ran it. Windows does allow RENAMING a running image, so `install_helper_copy`
-/// moves the busy copy aside and puts the new one in its place: the helper
+/// moves the busy copy aside and renames the new one into its place: the helper
 /// matches `current/` before this launcher spawns Node, and therefore before
 /// anything can spawn the helper again. The moved-aside copy is deleted by a
-/// later refresh, once its process has exited.
+/// later refresh, once its process has exited. The new build is always copied
+/// to a sibling first and RENAMED into place, so the helper path never holds a
+/// half-written file for a spawn to catch.
 pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<HelperRefresh> {
     let current = std::env::current_exe()?;
     refresh_helper_from(&current, data_root)
@@ -1127,10 +1129,11 @@ pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<HelperRefresh>
 /// What `refresh_helper_binary` did to the canonical helper.
 #[derive(Debug, PartialEq, Eq)]
 pub enum HelperRefresh {
-    /// Copied over the previous helper (or into an empty slot).
+    /// A complete copy was renamed over the previous helper (or into an empty
+    /// slot).
     Copied(PathBuf),
     /// The previous helper was still running, so it was renamed to `aside`
-    /// and the new build copied to `path` (Windows only; see
+    /// and the new build renamed to `path` (Windows only; see
     /// `install_helper_copy`).
     MovedAside { path: PathBuf, aside: PathBuf },
 }
@@ -1183,71 +1186,94 @@ pub(crate) fn helper_busy_error(e: &std::io::Error) -> bool {
 
 /// Suffix of a helper moved aside because it was running (`<name>.stale-<ms>`).
 const STALE_HELPER_MARK: &str = ".stale-";
+/// Suffix of the complete copy staged beside the helper before it is renamed
+/// into place (`<name>.new-<ms>`). One left behind by a process that died
+/// mid-refresh is deleted by the next refresh.
+const NEW_HELPER_MARK: &str = ".new-";
 
-/// Copy `source` over `dest`. On Windows, a `dest` that is a running image
-/// cannot be overwritten (os error 32) but can be renamed, so it is moved to
-/// `<dest>.stale-<ms>` and the copy retried. If that second copy fails, the
-/// old helper is moved back, so a failed refresh never leaves NO helper. A
-/// rename that fails returns the ORIGINAL busy error, so the caller still
-/// classifies it as busy. Linux is unchanged: ETXTBSY there is returned as is
-/// (the service-start case, where the helper is the running launcher).
+/// Put a copy of `source` at `dest` so that `dest` only ever holds a complete
+/// helper: the old one or the new one.
+///
+/// 1. Copy `source` to `<dest>.new-<ms>`. A copy can be interrupted, or caught
+///    half-written; this one is never at the path anything spawns.
+/// 2. Rename it over `dest`. That replaces the old helper in one step: always
+///    on Linux (renaming over a running ELF is allowed, the running process
+///    keeps its inode), and on Windows whenever the old helper is not running.
+/// 3. Windows, when the old helper IS running (renaming over it is refused,
+///    os error 5): rename the running copy to `<dest>.stale-<ms>`, which
+///    Windows allows, then the new one into place. If that last rename fails,
+///    the old helper is renamed back, so a failed refresh never leaves no
+///    helper. The only moment `dest` is empty is between those two renames.
+///
+/// The staged copy never outlives a failure. When the move aside is refused
+/// with a sharing violation (something holds the helper open without delete
+/// sharing), that error is returned so the caller classifies it as busy and
+/// retries; any other failure returns the error from step 2.
 fn install_helper_copy(source: &Path, dest: &Path) -> std::io::Result<HelperRefresh> {
-    install_helper_copy_with(source, dest, |s, d| std::fs::copy(s, d))
+    install_helper_copy_with(source, dest, |from, to| std::fs::rename(from, to))
 }
 
-/// `install_helper_copy` with the copy as a parameter, so a test can make the
-/// SECOND copy fail and see the old helper put back.
+/// `install_helper_copy` with the rename as a parameter, so a test can refuse
+/// a chosen rename and see what is left at `dest`.
 fn install_helper_copy_with(
     source: &Path,
     dest: &Path,
-    mut copy: impl FnMut(&Path, &Path) -> std::io::Result<u64>,
+    mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
 ) -> std::io::Result<HelperRefresh> {
-    match copy(source, dest) {
-        Ok(_) => Ok(HelperRefresh::Copied(dest.to_path_buf())),
-        Err(e) if cfg!(windows) && helper_busy_error(&e) => {
-            let aside = stale_helper_path(dest);
-            if std::fs::rename(dest, &aside).is_err() {
-                return Err(e);
-            }
-            match copy(source, dest) {
-                Ok(_) => Ok(HelperRefresh::MovedAside {
-                    path: dest.to_path_buf(),
-                    aside,
-                }),
-                Err(copy_err) => {
-                    let _ = std::fs::rename(&aside, dest);
-                    Err(copy_err)
-                }
-            }
+    let staged = marked_sibling(dest, NEW_HELPER_MARK);
+    if let Err(e) = std::fs::copy(source, &staged) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
+    let over = match rename(&staged, dest) {
+        Ok(()) => return Ok(HelperRefresh::Copied(dest.to_path_buf())),
+        Err(e) => e,
+    };
+    if !cfg!(windows) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(over);
+    }
+    let aside = marked_sibling(dest, STALE_HELPER_MARK);
+    if let Err(e) = rename(dest, &aside) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(if helper_busy_error(&e) { e } else { over });
+    }
+    match rename(&staged, dest) {
+        Ok(()) => Ok(HelperRefresh::MovedAside {
+            path: dest.to_path_buf(),
+            aside,
+        }),
+        Err(e) => {
+            let _ = rename(&aside, dest);
+            let _ = std::fs::remove_file(&staged);
+            Err(e)
         }
-        Err(e) => Err(e),
     }
 }
 
-/// `<dest>.stale-<unix ms>` — unique per refresh, so a second busy refresh
+/// `<dest><mark><unix ms>` — unique per refresh, so a second busy refresh
 /// never collides with a copy still running from an earlier one.
-fn stale_helper_path(dest: &Path) -> PathBuf {
+fn marked_sibling(dest: &Path, mark: &str) -> PathBuf {
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let mut name = dest.as_os_str().to_os_string();
-    name.push(format!("{STALE_HELPER_MARK}{ms}"));
+    name.push(format!("{mark}{ms}"));
     PathBuf::from(name)
 }
 
-/// Delete helpers an earlier refresh moved aside. One whose process is still
-/// running cannot be deleted yet and is left for the next refresh.
+/// Delete helpers an earlier refresh moved aside, and staged copies a refresh
+/// that died left behind. A moved-aside helper whose process is still running
+/// cannot be deleted yet and is left for the next refresh.
 fn remove_stale_helpers(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .contains(STALE_HELPER_MARK)
-        {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.contains(STALE_HELPER_MARK) || name.contains(NEW_HELPER_MARK) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
@@ -1413,7 +1439,11 @@ mod tests {
             .map(|rd| {
                 rd.flatten()
                     .map(|e| e.path())
-                    .filter(|p| p.to_string_lossy().contains(super::STALE_HELPER_MARK))
+                    .filter(|p| {
+                        let name = p.to_string_lossy();
+                        name.contains(super::STALE_HELPER_MARK)
+                            || name.contains(super::NEW_HELPER_MARK)
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -1448,6 +1478,26 @@ mod tests {
         assert_eq!(outcome, super::HelperRefresh::Copied(canonical.clone()));
         assert_eq!(std::fs::read(&canonical).unwrap(), b"new build");
         assert_eq!(std::fs::read(&legacy).unwrap(), b"new build");
+        // The staged copy was renamed into place, not left beside it.
+        assert!(stale_files_in(canonical.parent().unwrap()).is_empty());
+        assert!(stale_files_in(legacy.parent().unwrap()).is_empty());
+    }
+
+    #[test]
+    fn refresh_replaces_an_existing_helper_that_is_not_running() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("new-build.bin");
+        std::fs::write(&source, b"new build").expect("write source");
+        let data_root = tmp.path().join("data");
+        let (canonical, _) = helper_paths(&data_root);
+        std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        std::fs::write(&canonical, b"old build").unwrap();
+
+        let outcome = super::refresh_helper_from(&source, &data_root).expect("refresh");
+
+        assert_eq!(outcome, super::HelperRefresh::Copied(canonical.clone()));
+        assert_eq!(std::fs::read(&canonical).unwrap(), b"new build");
+        assert!(stale_files_in(canonical.parent().unwrap()).is_empty());
     }
 
     #[test]
@@ -1461,6 +1511,8 @@ mod tests {
             let dir = helper.parent().unwrap();
             std::fs::create_dir_all(dir).unwrap();
             std::fs::write(dir.join("ws-scrcpy-web-launcher.exe.stale-1"), b"old").unwrap();
+            // A staged copy a refresh that died mid-way left behind.
+            std::fs::write(dir.join("ws-scrcpy-web-launcher.exe.new-1"), b"half").unwrap();
         }
 
         super::refresh_helper_from(&source, &data_root).expect("refresh");
@@ -1514,6 +1566,20 @@ mod tests {
             new_bytes,
             "helper is the new build"
         );
+        let dir = canonical.parent().unwrap();
+        let staged_left: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(super::NEW_HELPER_MARK)
+            })
+            .collect();
+        assert!(
+            staged_left.is_empty(),
+            "the staged copy was renamed into place"
+        );
         assert_eq!(std::fs::read(&legacy).unwrap(), new_bytes);
         assert!(aside.exists(), "the running copy was moved, not deleted");
         assert!(
@@ -1534,42 +1600,97 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn a_failed_copy_after_moving_aside_puts_the_old_helper_back() {
+    fn a_failed_rename_after_moving_aside_puts_the_old_helper_back() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let dest = tmp.path().join("ws-scrcpy-web-launcher.exe");
+        let dir = tmp.path().join("helper");
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = tmp.path().join("new-build.bin");
+        std::fs::write(&source, b"new build").unwrap();
+        let dest = dir.join("ws-scrcpy-web-launcher.exe");
         std::fs::write(&dest, b"old build").unwrap();
+        // 1: staged -> dest refused as for a running image; 2: dest -> aside
+        // (real); 3: staged -> dest fails; 4: the rollback, aside -> dest (real).
         let mut calls = 0;
-        let err = super::install_helper_copy_with(tmp.path(), &dest, |_, _| {
+        let err = super::install_helper_copy_with(&source, &dest, |from, to| {
             calls += 1;
-            if calls == 1 {
-                Err(std::io::Error::from_raw_os_error(32))
-            } else {
-                Err(std::io::Error::other("disk full"))
+            match calls {
+                1 => Err(std::io::Error::from_raw_os_error(5)),
+                3 => Err(std::io::Error::other("disk full")),
+                _ => std::fs::rename(from, to),
             }
         })
-        .expect_err("the second copy failed");
+        .expect_err("the last rename failed");
         assert_eq!(err.to_string(), "disk full");
-        assert_eq!(calls, 2);
+        assert_eq!(calls, 4);
         assert_eq!(
             std::fs::read(&dest).unwrap(),
             b"old build",
             "never left with no helper"
         );
-        assert!(stale_files_in(tmp.path()).is_empty());
+        assert!(
+            stale_files_in(&dir).is_empty(),
+            "no staged or moved copy left behind"
+        );
     }
 
-    #[cfg(windows)]
     #[test]
-    fn a_busy_helper_that_cannot_be_moved_reports_the_busy_error() {
-        // The rename fails (here: nothing to rename), so the caller sees the
-        // original sharing violation and can still classify it as busy.
+    fn a_failed_copy_to_the_staging_file_leaves_the_helper_alone() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dest = tmp.path().join("ws-scrcpy-web-launcher.exe");
-        let err = super::install_helper_copy_with(tmp.path(), &dest, |_, _| {
-            Err(std::io::Error::from_raw_os_error(32))
+        std::fs::write(&dest, b"old build").unwrap();
+        let missing = tmp.path().join("no-such-build.bin");
+        let mut renames = 0;
+        let err = super::install_helper_copy_with(&missing, &dest, |_, _| {
+            renames += 1;
+            Ok(())
         })
-        .expect_err("busy");
+        .expect_err("the source is missing");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(renames, 0, "nothing is renamed over the helper");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"old build");
+        let left: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(super::NEW_HELPER_MARK)
+            })
+            .collect();
+        assert!(left.is_empty());
+    }
+
+    /// A helper something holds open WITHOUT delete sharing (an antivirus
+    /// scan, say) can neither be replaced nor moved aside. That is a real
+    /// sharing violation, not a simulated one: the refresh reports it as busy,
+    /// so the supervisor retries, and leaves the helper as it was.
+    #[cfg(windows)]
+    #[test]
+    fn a_helper_held_open_without_delete_sharing_reports_busy_and_is_untouched() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("helper");
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = tmp.path().join("new-build.bin");
+        std::fs::write(&source, b"new build").unwrap();
+        let dest = dir.join("ws-scrcpy-web-launcher.exe");
+        std::fs::write(&dest, b"old build").unwrap();
+        let _lock = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&dest)
+            .expect("hold the helper open with no sharing");
+
+        let err = super::install_helper_copy(&source, &dest).expect_err("held");
+
+        assert_eq!(err.raw_os_error(), Some(32), "{err}");
         assert!(super::helper_busy_error(&err), "{err}");
+        drop(_lock);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"old build");
+        assert!(
+            stale_files_in(&dir).is_empty(),
+            "the staged copy was removed"
+        );
     }
 
     #[test]
