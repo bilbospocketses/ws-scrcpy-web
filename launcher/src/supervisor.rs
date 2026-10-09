@@ -217,7 +217,7 @@ pub(crate) fn retry_helper_refresh(
     HelperRetryOutcome::GaveUp
 }
 
-fn log_at(level: LogLevel, line: &str) {
+pub(crate) fn log_at(level: LogLevel, line: &str) {
     match level {
         LogLevel::Info => log::info(line),
         LogLevel::Warn => log::warn(line),

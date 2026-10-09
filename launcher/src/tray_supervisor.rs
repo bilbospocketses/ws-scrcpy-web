@@ -50,7 +50,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::log;
-use crate::user_session_spawn::{SpawnUserLauncherArgs, spawn_in_session};
+use crate::supervisor::LogLevel;
+use crate::user_session_spawn::{SpawnResult, SpawnUserLauncherArgs, spawn_in_session};
 
 const TRAY_POLL_INTERVAL_SECS: u64 = 10;
 pub(crate) const TRAY_PROCESS_NAME: &str = "ws-scrcpy-web-tray.exe";
@@ -339,6 +340,36 @@ fn ensure_tray_in_active_session(
         None => return EnsureOutcome::SpawnFailed("tray path not valid UTF-8".to_string()),
     };
 
+    ensure_tray_in_sessions(
+        &sessions,
+        no_token,
+        is_tray_running_in_session,
+        |session_id| {
+            // Spawn with --launcher-spawn arg so the tray knows to show the
+            // explanatory balloon. The arg is consumed by tray/src/main.rs at
+            // startup.
+            spawn_in_session(
+                session_id,
+                &SpawnUserLauncherArgs {
+                    launcher_path: tray_path_str.clone(),
+                    launcher_args: vec!["--launcher-spawn".to_string()],
+                },
+            )
+        },
+        crate::supervisor::log_at,
+    )
+}
+
+/// The per-session pass of `ensure_tray_in_active_session`, with the Win32
+/// calls (`present`, `spawn`) and the log as parameters, so the `no_token`
+/// bookkeeping across polls is tested without a logged-on user.
+fn ensure_tray_in_sessions(
+    sessions: &[u32],
+    no_token: &mut HashMap<u32, u32>,
+    present: impl Fn(u32) -> bool,
+    mut spawn: impl FnMut(u32) -> SpawnResult,
+    log: impl Fn(LogLevel, &str),
+) -> EnsureOutcome {
     // Report the FIRST spawn we perform, so a single-session box logs exactly
     // what it always did. A failure is only reported when nothing spawned
     // anywhere: one user's session failing (locking mid-spawn, say) must not
@@ -348,31 +379,25 @@ fn ensure_tray_in_active_session(
     let mut waiting = false;
     let mut already = 0usize;
 
-    for session_id in sessions {
+    for &session_id in sessions {
         // Session-scoped, so a tray in session 1 does not satisfy session 2.
-        if is_tray_running_in_session(session_id) {
+        if present(session_id) {
             no_token.remove(&session_id);
             already += 1;
             continue;
         }
 
-        // Spawn with --launcher-spawn arg so the tray knows to show the
-        // explanatory balloon. The arg is consumed by tray/src/main.rs at
-        // startup.
-        let result = spawn_in_session(
-            session_id,
-            &SpawnUserLauncherArgs {
-                launcher_path: tray_path_str.clone(),
-                launcher_args: vec!["--launcher-spawn".to_string()],
-            },
-        );
+        let result = spawn(session_id);
 
         if result.ok {
             no_token.remove(&session_id);
-            log::info(&format!(
-                "tray-supervisor: spawned tray pid {} in session {}",
-                result.pid, result.session_id
-            ));
+            log(
+                LogLevel::Info,
+                &format!(
+                    "tray-supervisor: spawned tray pid {} in session {}",
+                    result.pid, result.session_id
+                ),
+            );
             if spawned.is_none() {
                 spawned = Some(EnsureOutcome::Spawned {
                     pid: result.pid,
@@ -387,22 +412,31 @@ fn ensure_tray_in_active_session(
             }
             match judge_spawn_failure(result.error_code, prior) {
                 SpawnFailureVerdict::WaitingForLogon => {
-                    log::warn(&format!(
-                        "tray-supervisor: no user token yet for session {session_id} (its logon is still in progress); retrying every {TRAY_POLL_INTERVAL_SECS}s: {msg}"
-                    ));
+                    log(
+                        LogLevel::Warn,
+                        &format!(
+                            "tray-supervisor: no user token yet for session {session_id} (its logon is still in progress); retrying every {TRAY_POLL_INTERVAL_SECS}s: {msg}"
+                        ),
+                    );
                     waiting = true;
                 }
                 SpawnFailureVerdict::StillWaiting => waiting = true,
                 SpawnFailureVerdict::Error => {
                     if result.error_code == Some(ERROR_NO_TOKEN_HRESULT) {
-                        log::error(&format!(
-                            "tray-supervisor: tray spawn failed for session {session_id}: still no user token after {} attempts: {msg}",
-                            prior + 1
-                        ));
+                        log(
+                            LogLevel::Error,
+                            &format!(
+                                "tray-supervisor: tray spawn failed for session {session_id}: still no user token after {} attempts: {msg}",
+                                prior.saturating_add(1)
+                            ),
+                        );
                     } else {
-                        log::error(&format!(
-                            "tray-supervisor: tray spawn failed for session {session_id}: {msg}"
-                        ));
+                        log(
+                            LogLevel::Error,
+                            &format!(
+                                "tray-supervisor: tray spawn failed for session {session_id}: {msg}"
+                            ),
+                        );
                     }
                     last_error = Some(msg);
                 }
@@ -756,6 +790,131 @@ mod tests {
     // Item 175 (2026-10-08): after a guest reboot in service mode the first
     // poll got 0x800703F0 for session 1 before autologon finished, and logged
     // ERROR for a state that fixed itself a poll later.
+    // M8: the per-session bookkeeping across polls, with the Win32 calls faked.
+    mod ensure_tray_in_sessions {
+        use super::super::{
+            ERROR_NO_TOKEN_HRESULT, EnsureOutcome, NO_TOKEN_RETRY_BUDGET, ensure_tray_in_sessions,
+        };
+        use crate::supervisor::LogLevel;
+        use crate::user_session_spawn::SpawnResult;
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+
+        fn no_token(session_id: u32) -> SpawnResult {
+            SpawnResult {
+                ok: false,
+                pid: 0,
+                session_id,
+                error_message: Some("WTSQueryUserToken failed: 0x800703F0".to_string()),
+                error_code: Some(ERROR_NO_TOKEN_HRESULT),
+            }
+        }
+
+        fn spawned(session_id: u32) -> SpawnResult {
+            SpawnResult {
+                ok: true,
+                pid: 4242,
+                session_id,
+                error_message: None,
+                error_code: None,
+            }
+        }
+
+        /// One poll over `sessions`; returns the outcome and the levels it logged.
+        fn poll(
+            sessions: &[u32],
+            counts: &mut HashMap<u32, u32>,
+            present: &[u32],
+            mut answer: impl FnMut(u32) -> SpawnResult,
+        ) -> (EnsureOutcome, Vec<LogLevel>) {
+            let logged = RefCell::new(Vec::new());
+            let out = ensure_tray_in_sessions(
+                sessions,
+                counts,
+                |id| present.contains(&id),
+                &mut answer,
+                |level, _line: &str| logged.borrow_mut().push(level),
+            );
+            (out, logged.into_inner())
+        }
+
+        #[test]
+        fn counts_no_token_per_session_and_warns_only_once() {
+            let mut counts = HashMap::new();
+            let (out, logged) = poll(&[1], &mut counts, &[], no_token);
+            assert!(matches!(out, EnsureOutcome::WaitingForLogon));
+            assert_eq!(logged, vec![LogLevel::Warn]);
+            assert_eq!(counts.get(&1), Some(&1));
+
+            let (out, logged) = poll(&[1], &mut counts, &[], no_token);
+            assert!(matches!(out, EnsureOutcome::WaitingForLogon));
+            assert!(logged.is_empty(), "later waits are quiet: {logged:?}");
+            assert_eq!(counts.get(&1), Some(&2));
+        }
+
+        #[test]
+        fn a_spawn_resets_the_count_so_a_later_logon_warns_again() {
+            let mut counts = HashMap::new();
+            poll(&[1], &mut counts, &[], no_token);
+            poll(&[1], &mut counts, &[], no_token);
+            let (out, logged) = poll(&[1], &mut counts, &[], spawned);
+            assert!(matches!(
+                out,
+                EnsureOutcome::Spawned {
+                    pid: 4242,
+                    session: 1
+                }
+            ));
+            assert_eq!(logged, vec![LogLevel::Info]);
+            assert!(!counts.contains_key(&1));
+            let (_, logged) = poll(&[1], &mut counts, &[], no_token);
+            assert_eq!(logged, vec![LogLevel::Warn]);
+        }
+
+        #[test]
+        fn a_tray_already_present_resets_the_count() {
+            let mut counts = HashMap::from([(1, 7)]);
+            let (out, logged) = poll(&[1], &mut counts, &[1], |_| panic!("no spawn when present"));
+            assert!(matches!(out, EnsureOutcome::AlreadyRunning));
+            assert!(logged.is_empty());
+            assert!(!counts.contains_key(&1));
+        }
+
+        #[test]
+        fn the_budget_running_out_is_an_error_and_a_spawn_failure() {
+            let mut counts = HashMap::from([(1, NO_TOKEN_RETRY_BUDGET)]);
+            let (out, logged) = poll(&[1], &mut counts, &[], no_token);
+            assert!(matches!(out, EnsureOutcome::SpawnFailed(_)));
+            assert_eq!(logged, vec![LogLevel::Error]);
+        }
+
+        #[test]
+        fn sessions_are_counted_apart() {
+            let mut counts = HashMap::from([(2, 5)]);
+            let (out, _) = poll(&[1, 2], &mut counts, &[], |id| {
+                if id == 1 { spawned(1) } else { no_token(2) }
+            });
+            assert!(matches!(out, EnsureOutcome::Spawned { session: 1, .. }));
+            assert!(!counts.contains_key(&1));
+            assert_eq!(counts.get(&2), Some(&6));
+        }
+
+        #[test]
+        fn another_error_code_logs_error_and_does_not_count() {
+            let mut counts = HashMap::new();
+            let (out, logged) = poll(&[1], &mut counts, &[], |id| SpawnResult {
+                ok: false,
+                pid: 0,
+                session_id: id,
+                error_message: Some("CreateProcessAsUserW failed".to_string()),
+                error_code: Some(0x80070005_u32 as i32),
+            });
+            assert!(matches!(out, EnsureOutcome::SpawnFailed(_)));
+            assert_eq!(logged, vec![LogLevel::Error]);
+            assert!(counts.is_empty());
+        }
+    }
+
     mod judge_spawn_failure {
         use super::super::{
             ERROR_NO_TOKEN_HRESULT, NO_TOKEN_RETRY_BUDGET, SpawnFailureVerdict, judge_spawn_failure,
