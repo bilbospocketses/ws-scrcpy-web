@@ -104,6 +104,7 @@ describe('sanitizeFrameAncestors', () => {
         expect(warn).toHaveBeenCalledTimes(2);
         for (const [msg] of warn.mock.calls) {
             expect(msg).toMatch(/must be an http\(s\) origin only/);
+            expect(msg).toMatch(/removed from config\.json the next time the list of allowed embedders changes/);
             expect(msg).not.toMatch(/IPv6/);
         }
     });

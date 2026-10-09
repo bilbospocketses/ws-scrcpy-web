@@ -658,7 +658,8 @@ export function sanitizeFrameAncestors(raw: unknown, warn: (msg: string) => void
             }
             warn(
                 `config.json: frameAncestors entry ${JSON.stringify(entry)} must be an http(s) origin only ` +
-                    '(no path, no wildcard; a host of letters, digits, dots and hyphens); skipping',
+                    '(no path, no wildcard; a host of letters, digits, dots and hyphens). Skipping; it is ' +
+                    'removed from config.json the next time the list of allowed embedders changes',
             );
             continue;
         }
