@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { CA_ROOT_DOWNLOAD_FILE_NAME } from '../../src/common/CaDownload';
+import { CA_ROOT_DOWNLOAD_FILE_NAME } from '../CaDownload';
 
 // public/help/certificate-subject.html (0.5.3): the certificate-subject
 // explainer and the per-device install guide the Local HTTPS tab links to.
@@ -10,8 +10,8 @@ import { CA_ROOT_DOWNLOAD_FILE_NAME } from '../../src/common/CaDownload';
 // subnets.html, every heading a link can land on has an id, every in-page link
 // resolves, and nothing is loaded from anywhere else.
 
-const PAGE = resolve(__dirname, '../../public/help/certificate-subject.html');
-const SUBNETS = resolve(__dirname, '../../public/help/subnets.html');
+const PAGE = resolve(__dirname, '../../../public/help/certificate-subject.html');
+const SUBNETS = resolve(__dirname, '../../../public/help/subnets.html');
 
 function load(path: string): { html: string; doc: Document } {
     const html = readFileSync(path, 'utf8');
