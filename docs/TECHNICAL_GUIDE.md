@@ -3408,7 +3408,12 @@ purpose: a second machine opening Settings → Local HTTPS to download the CA is
 installing the CA has never loaded the page, so it has no cookie. In open mode, where everyone is the
 implicit admin, a bare link, a QR code or `curl -k https://<LAN IP>:<https port>/api/tls/ca-root`
 (`-k` because the device does not trust this CA yet; that is why it is fetching it) therefore downloads
-`ws-scrcpy-web-local-ca.pem` directly. It does not bypass sign-in: in locked mode `AuthGate` answers a
+`ws-scrcpy-web-local-ca.crt` directly. The file holds PEM; since 0.5.3 it is named `.crt` (it was
+`.pem`), one name for every device, from `CA_ROOT_DOWNLOAD_FILE_NAME` in `src/common/CaDownload.ts`, which
+the panel's save uses too. Every platform the install guide covers, and Firefox, accepts a PEM
+certificate under `.crt`, and Linux's `update-ca-certificates` reads only `*.crt`. The per-OS install
+steps are not in the panel any more: one line links to section 4 of `public/help/certificate-subject.html`,
+opening in a new tab. It does not bypass sign-in: in locked mode `AuthGate` answers a
 caller with no session 401 before this handler runs, and the admin gate answers a signed-in non-admin
 403. The rate limit and the per-download log line are unchanged.
 

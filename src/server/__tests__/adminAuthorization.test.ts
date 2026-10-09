@@ -331,7 +331,7 @@ describe('TlsApi: writes are refused off-box in open mode, reads are not (item 1
             () => [],
         ).handle(r.req, r.res);
         expect(r.getStatus()).toBe(200);
-        expect(r.getHeader('content-disposition')).toContain('ws-scrcpy-web-local-ca.pem');
+        expect(r.getHeader('content-disposition')).toContain('ws-scrcpy-web-local-ca.crt');
     });
 
     it('GET /api/tls/state off-box → answered, not refused: the panel still renders there', async () => {

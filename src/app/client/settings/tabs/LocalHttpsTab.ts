@@ -1,3 +1,4 @@
+import { CA_ROOT_DOWNLOAD_FILE_NAME } from '../../../../common/CaDownload';
 import { DependencyStatus } from '../../../../common/DependencyTypes';
 import type { ServiceStatusResponse } from '../../../../common/ServiceEvents';
 import { ConfirmModal } from '../../ConfirmModal';
@@ -142,8 +143,7 @@ export interface LocalHttpsPanelDeps {
     /**
      * `undefined` when not yet known (M2 -- the caller learns this from
      * `/api/service/status`, which resolves after this tab is already built)
-     * OR genuinely unrecognised. Every platform-gated notice below (5, and
-     * `trustInstructionsFor`) treats "don't know" as "say nothing" rather
+     * OR genuinely unrecognized. Every platform-gated notice below (5) treats "don't know" as "say nothing" rather
      * than guessing a specific OS: a hardcoded fallback here previously
      * defaulted to `'linux'`, which fired notification 5's sub-1024 warning
      * on Windows whenever the real platform hadn't arrived yet.
@@ -296,88 +296,12 @@ export function listenerStatusNotice(state: TlsCertState): string | null {
     }
 }
 
-/** A device the trust-instructions accordion (I5) covers. Not `NodeJS.Platform` -- a phone is never the Node process's own platform. */
-export type TrustDevicePlatform = NodeJS.Platform | 'android' | 'ios';
-
 /**
- * Per-device trust instructions for the accordion. Pure/exported so its text
- * is unit-testable.
- *
- * I5: this used to be called ONCE, with `deps.platform` -- the SERVER's
- * platform, from `/api/service/status`. The accordion's own summary promises
- * instructions for "this device", and the device that needs the CA installed
- * is whichever one is BROWSING the panel, which has no relationship to what
- * the server happens to run on (a Linux server browsed from a Windows
- * laptop printed Linux instructions). The phone is the device this whole
- * feature exists to serve, and it was never covered at all. Fixed by not
- * gating on any single platform: the caller now renders every entry in
- * `TRUST_DEVICE_PLATFORMS` unconditionally, and this function stays a pure
- * per-key lookup so each entry's text is independently testable.
+ * Where the panel sends a user for the per-device install steps. Relative, like
+ * the subnet cheat sheet's link (AddSubnetModal.ts), so it follows the app's
+ * own path. Since 0.5.3 the steps live on that page, not in the panel.
  */
-export function trustInstructionsFor(platform: TrustDevicePlatform | string | undefined): string {
-    switch (platform) {
-        case 'win32':
-            return (
-                'double-click the downloaded file, choose "install certificate", pick "local machine" ' +
-                '(admin) or "current user", select "place all certificates in the following store", ' +
-                'choose "trusted root certification authorities", then finish.'
-            );
-        case 'darwin':
-            return (
-                'open keychain access, drag the downloaded file into the "system" keychain, double-click ' +
-                'it, expand "trust", and set "when using this certificate" to "always trust".'
-            );
-        case 'linux':
-            return (
-                'copy the downloaded file into /usr/local/share/ca-certificates/ (renamed to end in .crt) ' +
-                'and run "sudo update-ca-certificates", or import it into your browser\'s certificate settings directly.'
-            );
-        case 'android':
-            return (
-                'copy the downloaded file to the device (or open it directly if you downloaded it there), ' +
-                'then settings → security → encryption & credentials → install a certificate → ca certificate, ' +
-                'and confirm the warning. some android versions require a screen lock (pin/pattern/password) ' +
-                'to be set before this option appears.'
-            );
-        case 'ios':
-            return (
-                'airdrop or email the downloaded file to the device and open it to install the profile ' +
-                '(settings → general → vpn & device management), then go to settings → general → about → ' +
-                'certificate trust settings and enable full trust for the new root certificate -- ios does ' +
-                'not trust a manually installed ca until this second step.'
-            );
-        default:
-            return "import the downloaded certificate into your browser or operating system's trusted root store.";
-    }
-}
-
-/**
- * The fixed device list the accordion renders, in order. `key` feeds
- * `trustInstructionsFor`; `label` is the lowercase heading shown above it.
- * Exported so the panel-building code and any future test iterate the same
- * list rather than risking two hand-kept copies drifting apart.
- */
-export const TRUST_DEVICE_PLATFORMS: ReadonlyArray<{ key: TrustDevicePlatform; label: string }> = [
-    { key: 'win32', label: 'windows' },
-    { key: 'darwin', label: 'macos' },
-    { key: 'linux', label: 'linux' },
-    { key: 'android', label: 'android' },
-    { key: 'ios', label: 'ios / ipados' },
-];
-
-/**
- * Firefox keeps its own certificate store on every OS and does not consult
- * the one the steps above install into -- spec §7 requires this as its own
- * note, not folded into any one platform's steps, because it applies
- * regardless of which OS entry above a Firefox user just followed.
- */
-export function firefoxTrustNote(): string {
-    return (
-        "using firefox? firefox keeps its own certificate store and ignores the operating system's -- " +
-        "install the ca separately via firefox's settings → privacy & security → certificates → " +
-        'view certificates → import, instead of (or in addition to) the steps above.'
-    );
-}
+export const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-certificate-establishing-trust';
 
 /** Local copy of the notice-row shape every other tab already uses for a status line. */
 function buildNoticeRow(): HTMLParagraphElement {
@@ -813,7 +737,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     caRestoreNotice.setAttribute('data-tls-ca-restore-notice', '');
     body.appendChild(caRestoreNotice);
 
-    // ---- download CA + per-OS trust instructions ----
+    // ---- download CA (a .crt holding the PEM, since 0.5.3) ----
     const downloadBtn = document.createElement('button');
     downloadBtn.type = 'button';
     downloadBtn.className = 'settings-btn';
@@ -821,31 +745,26 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     downloadBtn.setAttribute('data-tls-download', '');
     body.appendChild(buildRow('root ca', downloadBtn));
 
-    // I5: every device this feature exists to serve gets its own entry --
-    // not just whichever platform the server happens to run on. The phone
-    // installing the CA is never the server, so gating this on
-    // `deps.platform` (the server's OS) was wrong regardless of which value
-    // it held.
-    const details = document.createElement('details');
-    const summary = document.createElement('summary');
-    summary.textContent = 'how to trust this certificate on your device';
-    details.appendChild(summary);
-    for (const { key, label } of TRUST_DEVICE_PLATFORMS) {
-        const entry = document.createElement('p');
-        entry.className = 'settings-status';
-        const labelStrong = document.createElement('strong');
-        labelStrong.textContent = `${label}: `;
-        entry.appendChild(labelStrong);
-        entry.appendChild(document.createTextNode(trustInstructionsFor(key)));
-        details.appendChild(entry);
-    }
-    const firefoxNote = document.createElement('p');
-    firefoxNote.className = 'settings-status';
-    firefoxNote.textContent = firefoxTrustNote();
-    details.appendChild(firefoxNote);
-    const detailsRow = buildRow('trust the ca', details);
-    detailsRow.style.gridColumn = '1 / -1';
-    body.appendChild(detailsRow);
+    // 0.5.3: the per-device install steps moved to the help page (section 4 of
+    // certificate-subject.html), which has room for each OS's real steps and
+    // the Firefox one. The panel keeps one line pointing there.
+    const trustHelp = document.createElement('p');
+    trustHelp.className = 'settings-status';
+    trustHelp.style.gridColumn = '1 / -1';
+    trustHelp.setAttribute('data-tls-trust-help', '');
+    trustHelp.appendChild(
+        document.createTextNode(
+            'to trust the certificate, install it on each device that connects (firefox has its own store): ',
+        ),
+    );
+    const trustHelpLink = document.createElement('a');
+    trustHelpLink.className = 'settings-help-link';
+    trustHelpLink.href = TRUST_HELP_HREF;
+    trustHelpLink.target = '_blank';
+    trustHelpLink.rel = 'noopener noreferrer';
+    trustHelpLink.textContent = 'step-by-step install guide (opens in a new tab)';
+    trustHelp.appendChild(trustHelpLink);
+    body.appendChild(trustHelp);
 
     function renderCertState(state: TlsCertState): void {
         const candidateIps = candidateIpsFor(state);
@@ -1174,7 +1093,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 const blob = await res.blob();
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
-                a.download = 'ws-scrcpy-web-local-ca.pem';
+                // The same name the server's Content-Disposition carries (CaDownload.ts).
+                a.download = CA_ROOT_DOWNLOAD_FILE_NAME;
                 a.click();
                 URL.revokeObjectURL(a.href);
                 showTransientAlert('success', 'ca certificate downloaded.');
@@ -1470,7 +1390,7 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
         // real /api/service/status response, but if it somehow isn't,
         // `undefined` is passed straight through -- every platform-gated
         // notice already treats "don't know" as "say nothing"
-        // (subPrivilegedPortNotice, trustInstructionsFor). A `?? 'linux'`
+        // (subPrivilegedPortNotice). A `?? 'linux'`
         // fallback once fabricated a platform that was never observed, and
         // fired notification 5's sub-1024 warning on Windows.
         const platform = resp.platform as NodeJS.Platform | undefined;

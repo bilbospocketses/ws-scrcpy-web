@@ -6,11 +6,10 @@ import {
     certExpiryNotice,
     certSubjectMismatchNotice,
     fetchMkcertInstalled,
-    firefoxTrustNote,
     listenerStatusNotice,
     recheckLocalHttpsMkcert,
     subPrivilegedPortNotice,
-    trustInstructionsFor,
+    TRUST_HELP_HREF,
 } from '../tabs/LocalHttpsTab';
 
 const state = (over = {}) => ({ status: 'none', ...over });
@@ -552,20 +551,7 @@ describe('local https panel: generate waits for mkcert', () => {
     });
 });
 
-describe('pure notification/instruction helpers', () => {
-    it('trustInstructionsFor gives distinct, per-platform guidance and a generic fallback', () => {
-        const win = trustInstructionsFor('win32');
-        const mac = trustInstructionsFor('darwin');
-        const lin = trustInstructionsFor('linux');
-        const other = trustInstructionsFor(undefined);
-        expect(win).toMatch(/install certificate/i);
-        expect(mac).toMatch(/keychain access/i);
-        expect(lin).toMatch(/update-ca-certificates/i);
-        expect(other).not.toBe(win);
-        expect(other).not.toBe(mac);
-        expect(other).not.toBe(lin);
-    });
-
+describe('pure notification helpers', () => {
     it('subPrivilegedPortNotice fires only on linux/darwin for a sub-1024 port', () => {
         expect(subPrivilegedPortNotice(443, 'linux')).toMatch(/elevated privileges/i);
         expect(subPrivilegedPortNotice(443, 'darwin')).toMatch(/elevated privileges/i);
@@ -1034,34 +1020,65 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         expect(el.querySelector<HTMLInputElement>('[data-tls-port]')!.value).toBe('8443');
     });
 
-    // ---- I5: every device, not just the server's OS ----
+    // ---- 0.5.3: the install steps live on the help page; the panel links there ----
 
-    it('trustInstructionsFor covers android and ios distinctly (I5)', () => {
-        const android = trustInstructionsFor('android');
-        const ios = trustInstructionsFor('ios');
-        expect(android).toMatch(/install a certificate/i);
-        expect(ios).toMatch(/certificate trust settings/i);
-        expect(android).not.toBe(ios);
-    });
-
-    it('firefoxTrustNote names its own private trust store', () => {
-        expect(firefoxTrustNote()).toMatch(/firefox keeps its own certificate store/i);
-    });
-
-    it('the accordion shows every device platform plus a firefox note, regardless of the SERVER platform (I5)', async () => {
+    it('replaces the per-OS trust steps with one link to the help page, opening in a new tab', async () => {
         const el = await buildLocalHttpsPanel({
-            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            fetchFn: vi.fn(
+                async () => new Response(JSON.stringify(state({ status: 'ready', subject: '192.168.86.3' }))),
+            ),
             candidateIps: ['192.168.86.3'],
-            platform: 'linux', // the server's OS -- must not gate which entries render
+            platform: 'linux',
         });
-        expect(el.textContent).toMatch(/windows/i);
-        expect(el.textContent).toMatch(/macos/i);
-        expect(el.textContent).toMatch(/\blinux\b/i);
-        expect(el.textContent).toMatch(/android/i);
-        expect(el.textContent).toMatch(/ios/i);
-        expect(el.textContent).toMatch(/firefox keeps its own certificate store/i);
+        // The accordion and its per-OS steps are gone.
+        expect(el.querySelector('details')).toBeNull();
+        expect(el.textContent).not.toMatch(/how to trust this certificate on your device/i);
+        expect(el.textContent).not.toMatch(/update-ca-certificates|keychain access|renamed to end in/i);
+
+        const line = el.querySelector<HTMLElement>('[data-tls-trust-help]')!;
+        expect(line).not.toBeNull();
+        expect(line.hidden).toBe(false);
+        const links = line.querySelectorAll<HTMLAnchorElement>('a');
+        expect(links).toHaveLength(1);
+        const link = links[0]!;
+        expect(link.getAttribute('href')).toBe(TRUST_HELP_HREF);
+        expect(TRUST_HELP_HREF).toBe('help/certificate-subject.html#4-installing-a-certificate-establishing-trust');
+        expect(link.target).toBe('_blank');
+        expect(link.rel).toBe('noopener noreferrer');
+        expect(link.textContent).toMatch(/opens in a new tab/);
+        // Firefox's own store is still named, since the guide covers it separately.
+        expect(line.textContent).toMatch(/firefox/);
     });
 
+    it('saves the CA as ws-scrcpy-web-local-ca.crt (0.5.3; it was .pem)', async () => {
+        const fetchFn = vi.fn(async (url: string) =>
+            url === '/api/tls/ca-root'
+                ? new Response('-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n', { status: 200 })
+                : new Response(JSON.stringify(state({ status: 'ready', subject: '192.168.86.3' }))),
+        ) as unknown as typeof fetch;
+        // jsdom has no blob URLs; swap the two statics in for this test only.
+        const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+        const created = vi.fn(() => 'blob:x');
+        URL.createObjectURL = created;
+        URL.revokeObjectURL = vi.fn();
+        const names: string[] = [];
+        const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+            this: HTMLAnchorElement,
+        ) {
+            names.push(this.download);
+        });
+        try {
+            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+            el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
+            await vi.waitFor(() => expect(names).toEqual(['ws-scrcpy-web-local-ca.crt']));
+            expect(created).toHaveBeenCalledTimes(1);
+            expect(el.querySelector('[data-tls-alert]')!.textContent).toBe('ca certificate downloaded.');
+        } finally {
+            clickSpy.mockRestore();
+            URL.createObjectURL = original.create;
+            URL.revokeObjectURL = original.revoke;
+        }
+    });
     // ---- I7: every candidate IP, not an arbitrary one ----
 
     it('lists every candidate ip in a picker, not just one (I7)', async () => {

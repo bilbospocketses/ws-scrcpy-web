@@ -243,7 +243,8 @@ test.describe('local https', () => {
             // button is enabled.
             const download = panel.locator('[data-tls-download]');
             const [downloadEvent] = await Promise.all([page.waitForEvent('download'), download.click()]);
-            expect(downloadEvent.suggestedFilename()).toBe('ws-scrcpy-web-local-ca.pem');
+            // PEM content under a .crt name since 0.5.3 (src/common/CaDownload.ts).
+            expect(downloadEvent.suggestedFilename()).toBe('ws-scrcpy-web-local-ca.crt');
             await expect(alert, 'alert visible after CA download').toBeVisible();
             await expect(alert).toHaveText('ca certificate downloaded.');
 

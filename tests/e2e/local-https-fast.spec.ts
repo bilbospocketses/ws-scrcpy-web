@@ -72,10 +72,9 @@ const MKCERT_MISSING =
     'mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.';
 const EXPIRY_SOON_RE =
     /^this certificate expires on .+\. regenerate before then, or streaming stops working from other machines\.$/;
-// The row says "on this device"; the panel's own words are "on your device".
-const TRUST_SUMMARY = 'how to trust this certificate on your device';
-const TRUST_LABELS = ['windows:', 'macos:', 'linux:', 'android:', 'ios / ipados:'];
-const FIREFOX_NOTE_RE = /^using firefox\? firefox keeps its own certificate store/;
+// Since 0.5.3 the per-OS install steps live on the help page; the panel links to section 4.
+const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-certificate-establishing-trust';
+const CA_FILE_NAME = 'ws-scrcpy-web-local-ca.crt'; // src/common/CaDownload.ts
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -362,7 +361,7 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         expect(writes.writes).toEqual([]);
     });
 
-    test('21.9 notices and the trust guide: five platforms plus Firefox; the expiry notice inside 30 days; restart-required while bound; "regenerate to restore the ca download." with the CA gone', async ({
+    test('21.9 notices and the trust guide: one link to the install guide, opening in a new tab; the expiry notice inside 30 days; restart-required while bound; "regenerate to restore the ca download." with the CA gone', async ({
         page,
     }) => {
         const writes = await guardTlsWrites(page);
@@ -398,15 +397,16 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         await expect(p.caRestoreNotice).toBeHidden();
         await expect(p.download).toBeEnabled();
 
-        // The trust guide: collapsed until expanded, then five platforms and the Firefox note.
-        const guide = panel.locator('details').filter({ has: page.locator('summary', { hasText: TRUST_SUMMARY }) });
-        const labels = guide.locator('p.settings-status > strong');
-        const firefox = guide.locator('p.settings-status').filter({ hasText: FIREFOX_NOTE_RE });
-        await expect(labels.first()).toBeHidden();
-        await guide.locator('summary').click();
-        await expect(labels).toHaveText(TRUST_LABELS);
-        for (let i = 0; i < TRUST_LABELS.length; i++) await expect(labels.nth(i)).toBeVisible();
-        await expect(firefox).toBeVisible();
+        // The trust guide (0.5.3): one link to the help page's install section,
+        // opening in a new tab, in place of the per-OS accordion.
+        await expect(panel.locator('details')).toHaveCount(0);
+        const guide = panel.locator('[data-tls-trust-help] a');
+        await expect(guide).toHaveCount(1);
+        await expect(guide).toBeVisible();
+        await expect(guide).toHaveAttribute('href', TRUST_HELP_HREF);
+        await expect(guide).toHaveAttribute('target', '_blank');
+        await expect(guide).toHaveAttribute('rel', 'noopener noreferrer');
+        await expect(guide).toContainText('opens in a new tab');
         expect(writes.writes).toEqual([]);
     });
 });
@@ -490,7 +490,7 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
             const res = await api.get('/api/tls/ca-root');
             expect(res.status(), `download ${i + 1}`).toBe(200);
             expect(res.headers()['content-type']).toBe('application/x-pem-file');
-            expect(res.headers()['content-disposition']).toBe('attachment; filename="ws-scrcpy-web-local-ca.pem"');
+            expect(res.headers()['content-disposition']).toBe(`attachment; filename="${CA_FILE_NAME}"`);
             expect(await res.text(), `download ${i + 1} is the CA on disk`).toBe(planted.ca.cert);
         }
         const eleventh = await api.get('/api/tls/ca-root');
