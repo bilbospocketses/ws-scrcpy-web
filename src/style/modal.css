@@ -913,8 +913,8 @@ dialog.settings-modal .settings-callout[hidden] {
 /*
  * An in-page action that reads as a link inside running text (the callout's
  * "dependencies tab"): a real <button>, so it is in the tab order, with the
- * button chrome taken away. It takes its colour from the text around it,
- * bold and underlined so it is a link without relying on colour alone.
+ * button chrome taken away. It takes its color from the text around it,
+ * bold and underlined so it is a link without relying on color alone.
  */
 dialog.settings-modal .settings-inline-link {
     background: none;
