@@ -240,6 +240,8 @@ async function guardBatch(page: Page): Promise<{ sent: unknown[] }> {
 function serverPortParts(server: Locator) {
     return {
         http: settingsRow(server, 'http port').locator('input'),
+        // The http row's own status line is the element right after its row.
+        httpStatus: settingsRow(server, 'http port').locator('xpath=following-sibling::*[1]'),
         https: settingsRow(server, 'https port').locator('input[data-tls-port]'),
         httpsStatus: server.locator('[data-https-port-status]'),
         gateNote: server.locator('[data-https-port-gate-note]'),
@@ -397,6 +399,15 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
             }
             await expect(p.restartNote, c.label).toBeVisible();
             await expect(p.restartNote, c.label).toHaveText(PORT_RESTART_NOTE);
+            if (c.tls === NONE_STATE) {
+                // Equal ports matter only while a certificate exists (user
+                // decision after 0.5.3): with none, the http port may sit on
+                // 8443, the https port's default, as it always could.
+                await expect(p.http).not.toHaveValue('');
+                await typeAndLeave(p.http, '8443');
+                await expect(p.httpStatus).toBeHidden();
+                await expect(footerSave(settings)).toBeEnabled();
+            }
         }
         expect(writes.writes).toEqual([]);
     });
@@ -928,7 +939,12 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
         // rebind on the new port needs a supervisor (Windows guest tier).
         const ok = await api.post('/api/settings/batch', { data: batchOf(NEW_HTTPS_PORT) });
         expect(ok.status()).toBe(200);
-        expect(await ok.json()).toEqual({ ok: true, applied: ['httpsPort'], restartRequired: true });
+        expect(await ok.json()).toEqual({
+            ok: true,
+            applied: ['httpsPort'],
+            restartRequired: true,
+            redirectHttpsPort: NEW_HTTPS_PORT,
+        });
         expect(configHttpsPort(), 'config.json after the save').toBe(NEW_HTTPS_PORT);
         expect(existsSync(A.restartMarkerPath), 'the .restart marker').toBe(true);
         const exit = await withTimeout(handle!.exited, 15_000, () => `waiting for exit 75:\n${handle!.output()}`);
@@ -945,9 +961,11 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
     browser,
 }) => {
     test.setTimeout(150_000);
-    // http 8194, https 8195.
+    // http 8194, https 8195; 8196 is the https port the last step saves.
     const B = tlsServerPaths('ws-scrcpy-web-e2e-164e-bound', 8194);
     const SECURE_PORT = 8195;
+    // Where the https-page save below moves the https port (never bound: no supervisor).
+    const NEXT_SECURE_PORT = 8196;
     seedPrivateDataRoot(B, { httpsPort: SECURE_PORT });
     const first = plantCert(B);
     const handle = spawnServer(B);
@@ -996,6 +1014,45 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
             await expect(notice).toHaveText(LISTENER_STALE);
         } finally {
             await staleView.close();
+        }
+
+        // M5 (after 0.5.3): a page served over https follows the https listener.
+        // Saving a new https port from https://localhost:<https port> sends the
+        // browser to the NEW https port, keeping scheme and host, and the server
+        // exits 75 to restart (the rebind itself needs a supervisor). Last,
+        // because it ends the server.
+        const httpsContext = await browser.newContext({
+            baseURL: `https://localhost:${SECURE_PORT}`,
+            ignoreHTTPSErrors: true,
+        });
+        try {
+            const page = await httpsContext.newPage();
+            // This server's mkcert state is not the row's subject; the
+            // certificate on disk is real.
+            await stubMkcert(page, () => 'v0.1.0');
+            await page.goto('/');
+            expect(new URL(page.url()).protocol).toBe('https:');
+            const settings = await openSettings(page);
+            const p = serverPortParts(await openSettingsTab(settings, 'Server'));
+            await expect(p.https).toBeEnabled();
+            await expect(p.https).toHaveValue(String(SECURE_PORT));
+            await typeAndLeave(p.https, String(NEXT_SECURE_PORT));
+            const redirect = page.waitForRequest(
+                (r) => r.isNavigationRequest() && new URL(r.url()).port === String(NEXT_SECURE_PORT),
+                { timeout: 20_000 },
+            );
+            await footerSave(settings).click();
+            const review = reviewDialog(page);
+            await expect(reviewLines(review)).toHaveText([`HTTPS port: ${SECURE_PORT} → ${NEXT_SECURE_PORT}`]);
+            await review.getByRole('button', { name: 'Save', exact: true }).click();
+            const target = new URL((await redirect).url());
+            expect(target.protocol).toBe('https:');
+            expect(target.hostname).toBe('localhost');
+            expect(target.port).toBe(String(NEXT_SECURE_PORT));
+            const exit = await withTimeout(handle.exited, 15_000, () => `waiting for exit 75:\n${handle.output()}`);
+            expect(exit.code, handle.output()).toBe(75);
+        } finally {
+            await httpsContext.close();
         }
     } finally {
         await api.dispose();
