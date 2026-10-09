@@ -381,6 +381,233 @@ describe('POST /api/settings/batch — webPort restart', () => {
     });
 });
 
+// ──────────────────────────────────────────────────────────────────────────
+// The https port, staged from the Server tab since it left Local HTTPS. It is
+// applied through Config.setHttpsPort, needs the same restart as webPort, and
+// may never land on the web port. (The container refusal is pinned with the
+// other container routes, in containerGuard.routes.test.ts.)
+
+describe('POST /api/settings/batch — httpsPort', () => {
+    const httpsChange = (to: unknown): Change => ({ id: 'httpsPort', label: 'HTTPS port', from: 8443, to });
+    const readConfigFile = (dir: string): Record<string, unknown> =>
+        JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf-8')) as Record<string, unknown>;
+
+    it('is stageable, and goes second to last, straight before webPort', () => {
+        expect(STAGEABLE_IDS.has('httpsPort')).toBe(true);
+        const ordered = orderChanges([
+            { id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 },
+            httpsChange(9443),
+            { id: 'channel', label: 'Channel', from: 'stable', to: 'beta' },
+        ]);
+        expect(ordered.map((c) => c.id)).toEqual(['channel', 'httpsPort', 'webPort']);
+    });
+
+    it('applies a new https port to config.json and schedules one restart, with no redirect', async () => {
+        const dir = setup();
+        const schedule = vi.fn();
+        const exit = vi.fn();
+        const r = makeReqRes('POST', '/api/settings/batch', { changes: [httpsChange(9443)] }, {}, LOOPBACK);
+        await new SettingsBatchApi({ schedule, exit }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        expect(r.getJson()).toEqual({ ok: true, applied: ['httpsPort'], restartRequired: true });
+        expect(readConfigFile(dir)['httpsPort']).toBe(9443);
+        expect(Config.getInstance().httpsPort).toBe(9443);
+        expect(fs.existsSync(path.join(dir, '.restart'))).toBe(true);
+        expect(schedule).toHaveBeenCalledTimes(1);
+        expect(exit).not.toHaveBeenCalled();
+        const row = Config.getInstance()
+            .db.sqlite.prepare('SELECT status FROM pending_settings ORDER BY id DESC LIMIT 1')
+            .get() as { status: string } | undefined;
+        expect(row?.status).toBe('completed');
+    });
+
+    it('schedules ONE restart when both ports move, and redirects to the new http port', async () => {
+        const dir = setup();
+        const schedule = vi.fn();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8010 }, httpsChange(9443)] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        expect(r.getJson()).toEqual({
+            ok: true,
+            applied: ['httpsPort', 'webPort'],
+            restartRequired: true,
+            redirectPort: 8010,
+        });
+        expect(readConfigFile(dir)['httpsPort']).toBe(9443);
+        expect(readConfigFile(dir)['webPort']).toBe(8010);
+        expect(schedule).toHaveBeenCalledTimes(1);
+    });
+
+    it('restarts for a moved https port even when the web port in the batch did not move', async () => {
+        setup();
+        const schedule = vi.fn();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [httpsChange(9443), { id: 'webPort', label: 'HTTP port', from: 8000, to: 8000 }] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        const body = r.getJson() as { restartRequired: boolean; redirectPort?: number };
+        expect(body.restartRequired).toBe(true);
+        expect(body.redirectPort).toBeUndefined();
+        expect(schedule).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not restart for an https port that did not move', async () => {
+        const dir = setup();
+        const schedule = vi.fn();
+        const r = makeReqRes('POST', '/api/settings/batch', { changes: [httpsChange(8443)] }, {}, LOOPBACK);
+        await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        expect(r.getJson()).toEqual({ ok: true, applied: ['httpsPort'] });
+        expect(schedule).not.toHaveBeenCalled();
+        expect(fs.existsSync(path.join(dir, '.restart'))).toBe(false);
+    });
+
+    it('refuses an out-of-range https port before the WAL row, applying nothing', async () => {
+        for (const bad of [0, 65536, 8443.5, '9443']) {
+            const dir = setup();
+            const schedule = vi.fn();
+            const r = makeReqRes(
+                'POST',
+                '/api/settings/batch',
+                {
+                    changes: [
+                        { id: 'autoUpdate', label: 'Automatic updates', from: true, to: false },
+                        httpsChange(bad),
+                    ],
+                },
+                {},
+                LOOPBACK,
+            );
+            await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
+
+            expect(r.getStatus(), String(bad)).toBe(400);
+            expect(r.getJson()).toEqual({
+                ok: false,
+                applied: [],
+                failed: { id: 'httpsPort', error: 'port must be an integer between 1 and 65535' },
+            });
+            const cfg = Config.getInstance();
+            expect(cfg.getAppConfig().autoUpdate).toBe(true);
+            expect(cfg.httpsPort).toBe(8443);
+            expect(readConfigFile(dir)['httpsPort']).toBeUndefined();
+            const rows = cfg.db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as { n: number };
+            expect(rows.n).toBe(0);
+            expect(schedule).not.toHaveBeenCalled();
+        }
+    });
+
+    it('409s an https port equal to the current http port, before anything is applied', async () => {
+        const dir = setup();
+        const schedule = vi.fn();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            {
+                changes: [{ id: 'autoUpdate', label: 'Automatic updates', from: true, to: false }, httpsChange(8000)],
+            },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(409);
+        expect(r.getJson()).toEqual({
+            ok: false,
+            applied: [],
+            failed: { id: 'httpsPort', error: 'the http and https ports must differ (both would be 8000)' },
+        });
+        expect(Config.getInstance().getAppConfig().autoUpdate).toBe(true);
+        expect(readConfigFile(dir)['httpsPort']).toBeUndefined();
+        const rows = Config.getInstance().db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as {
+            n: number;
+        };
+        expect(rows.n).toBe(0);
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    it('409s a batch whose two port changes collide with each other', async () => {
+        setup();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 9443 }, httpsChange(9443)] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn() }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(409);
+        expect((r.getJson() as { failed: { id: string; error: string } }).failed).toEqual({
+            id: 'httpsPort',
+            error: 'the http and https ports must differ (both would be 9443)',
+        });
+        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+    });
+
+    it('409s a web port moved onto the configured https port', async () => {
+        setup();
+        const schedule = vi.fn();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 8443 }] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(409);
+        expect((r.getJson() as { failed: { id: string; error: string } }).failed).toEqual({
+            id: 'webPort',
+            error: 'the http and https ports must differ (both would be 8443)',
+        });
+        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    it('still schedules the restart a written https port needs when the web port after it is refused', async () => {
+        const dir = setup();
+        const schedule = vi.fn();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'webPort', label: 'HTTP port', from: 8000, to: 80 }, httpsChange(9443)] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule, exit: vi.fn() }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(400);
+        const body = r.getJson() as {
+            ok: boolean;
+            applied: string[];
+            failed: { id: string };
+            restartRequired?: boolean;
+        };
+        expect(body.applied).toEqual(['httpsPort']);
+        expect(body.failed.id).toBe('webPort');
+        expect(body.restartRequired).toBe(true);
+        expect(readConfigFile(dir)['httpsPort']).toBe(9443);
+        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+        expect(schedule).toHaveBeenCalledTimes(1);
+    });
+});
+
 /**
  * The client/server boundary, driven end to end: what `StagedSettingsStore`
  * REALLY produces, fed to the REAL endpoint.
