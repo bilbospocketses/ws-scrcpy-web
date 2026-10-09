@@ -130,7 +130,7 @@ neither of which identifies you to anyone:
 
 - **A per-launch instance token.** Issued to any browser that loads a page, and discarded when the
   server restarts. It exists so a non-browser client cannot drive the API, and so another site
-  cannot make your browser act on the app behind your back (CSRF / DNS-rebinding defence). It
+  cannot make your browser act on the app behind your back (CSRF / DNS-rebinding defense). It
   carries no identity — only a random value that is valid for the life of that one server process.
 - **A session cookie, only if you enable login.** Present only when the optional login is turned on,
   and tied to an account stored in the local SQLite database on your machine.

@@ -21,7 +21,7 @@ When reporting, please provide:
 
 ## Response Expectations
 
-- **Acknowledgement:** within **72 hours** of receipt
+- **Acknowledgment:** within **72 hours** of receipt
 - **Triage and initial assessment:** within one week
 - **Fix and disclosure timeline:** discussed with the reporter on a per-issue basis, depending on severity and complexity
 
@@ -78,7 +78,7 @@ The opt-out is **ignored entirely once sign-in is on** — then a session is the
 
 ### Containers
 
-**In a container nobody is ever on loopback**: the browser reaches the server through the Docker gateway, so a containerised deployment has no operator by the loopback test. There are two supported paths:
+**In a container nobody is ever on loopback**: the browser reaches the server through the Docker gateway, so a containerized deployment has no operator by the loopback test. There are two supported paths:
 
 - set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` on the container. `docker-compose.yml` already forwards it from your shell, so `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 docker compose up` is enough; with plain `docker run`, pass `-e WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`. Unset, nothing is forwarded and the container keeps the refusing default; or
 - turn sign-in on, using that variable once to get there: start the container with `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`, create an admin account with a password in Settings → Users, turn sign-in on, then re-create the container without the variable. Sign-in refuses to turn on until an admin with a password exists, and once it is on the variable is ignored anyway, so dropping it only matters if sign-in is ever turned off again.
@@ -103,7 +103,7 @@ Allow a specific embedder via the server-only `frameAncestors` array in `config.
 { "frameAncestors": ["http://localhost:5159"] }
 ```
 
-That adds `Content-Security-Policy: frame-ancestors 'self' http://localhost:5159` alongside the existing header. Both are sent deliberately: a browser that supports CSP `frame-ancestors` must ignore `X-Frame-Options` when both are present, so the allowlist applies in modern browsers while older ones keep the stricter same-origin behaviour. Leave the key out and the headers are unchanged.
+That adds `Content-Security-Policy: frame-ancestors 'self' http://localhost:5159` alongside the existing header. Both are sent deliberately: a browser that supports CSP `frame-ancestors` must ignore `X-Frame-Options` when both are present, so the allowlist applies in modern browsers while older ones keep the stricter same-origin behavior. Leave the key out and the headers are unchanged.
 
 ### Approving a request instead of editing the file
 
@@ -116,7 +116,7 @@ The split between asking and granting is the security design:
 
 A web page cannot even ask. Browsers always send an `Origin` header on `fetch()`, and the Origin check rejects a cross-origin one on every non-GET request, so only a non-browser local caller reaches the request endpoint.
 
-**The risk this cannot remove** is a local program asking for an origin it controls and hoping you click Approve. That is why the prompt shows the requesting origin verbatim and deny is the safe answer: approve only a request you just started yourself, from an app you recognise.
+**The risk this cannot remove** is a local program asking for an origin it controls and hoping you click Approve. That is why the prompt shows the requesting origin verbatim and deny is the safe answer: approve only a request you just started yourself, from an app you recognize.
 
 ### Revoking
 
