@@ -56,21 +56,26 @@ export interface CertServiceDeps {
 
 /**
  * Whether a hostname subject may have a certificate (and so a CA) minted for
- * it: any name except a listed public suffix (`src/common/publicSuffix.ts`).
+ * it: any name except a real internet TLD or a listed second-level public
+ * suffix (`src/common/publicSuffix.ts`).
  *
  * F1: `cert.go:508-510`'s DNS branch appends the subject prefixed with "."
  * UNCONDITIONALLY (`dns = append(dns, entry, "."+entry)`), so the resulting
- * CA is constrained to `{subject, *.subject}`, never to the subject alone.
+ * CA is constrained to `{subject, *.subject}`, never to the subject alone --
+ * and an RFC 5280 dNSName constraint covers the subtree in any case.
  * `nameConstraintsFor` cannot fix this from the constraint string -- there is
  * no flag for "exact match only" in this fork. So the guard belongs here,
- * before the CA is ever minted. For a real public suffix (`com`, `co.uk`) that
- * subtree is every site registered under it: a CA whose key leaked could then
- * impersonate any of them on each device that trusts it. A one-word LAN name
- * (`nas`, `media`, `dev`) has no such reach -- its subtree is only what those
- * same devices resolve under that one word -- so it is allowed (user decision,
- * 2026-10-09: hobbyists name machines that way and reach them through a hosts
- * file). Until 0.5.5 every name with fewer than two labels except `localhost`
- * was refused as well.
+ * before the CA is ever minted. For a delegated TLD (`de`, `dev`, `media`) or a
+ * suffix like `co.uk`, that subtree is every site registered under it: a CA
+ * for `de` signs a `bank.de` leaf that passes verification (measured with
+ * mkcert and `openssl verify`), and every device that installed the CA accepts
+ * it from whoever presents it, an interceptor on the network path included --
+ * DNS has no say in it. So any real TLD is refused (user decision 2026-10-09).
+ * A name that is not delegated (`htpc`, `nas`, `lan`, `local`, `home`,
+ * `localhost`) is allowed: its subtree can only be names on the LAN, and the
+ * user accepted that reach for `lan`, `local` and `home`. Until 0.5.5 every
+ * name with fewer than two labels except `localhost` was refused, and only a
+ * hand-picked list of 25 suffixes beyond that.
  */
 function isAcceptableHostnameSubject(value: string): boolean {
     return !isPublicSuffix(value);
@@ -328,7 +333,7 @@ export class CertService {
             }
             if (!isAcceptableHostnameSubject(bareValue)) {
                 throw new Error(
-                    `invalid certificate subject: ${JSON.stringify(value)} is a public suffix, too broad to safely constrain a CA to`,
+                    `invalid certificate subject: ${JSON.stringify(value)} is an internet TLD or public suffix, too broad to safely constrain a CA to`,
                 );
             }
         }

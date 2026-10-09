@@ -261,15 +261,19 @@ describe('CertService.generate', () => {
 
     // --- review round 1 (2026-09-19) ---
 
-    describe('F1: hostname subject must not be a public suffix', () => {
-        it('rejects a single-label public suffix like "com", in any case, and never spawns', async () => {
-            const { svc, run, removeCaRoot } = makeService();
-            await expect(svc.generate('hostname', 'com')).rejects.toThrow(/invalid.*public suffix/i);
-            await expect(svc.generate('hostname', 'NET')).rejects.toThrow(/invalid/i);
-            await expect(svc.generate('hostname', 'org')).rejects.toThrow(/invalid/i);
-            expect(run).not.toHaveBeenCalled();
-            expect(removeCaRoot).not.toHaveBeenCalled();
-        });
+    describe('F1: hostname subject must not be a real internet TLD or a public suffix', () => {
+        // A CA for `de` is constrained to {de, *.de}, and signs a `bank.de` leaf
+        // every device that installed it accepts (user decision 2026-10-09:
+        // refuse any real internet TLD).
+        it.each(['com', 'NET', 'de', 'De', 'media', 'dev', 'app', 'me', 'io', 'co', 'xn--p1ai', 'XN--P1AI'])(
+            'refuses the delegated TLD "%s", in any case, and never spawns or touches the CA',
+            async (name) => {
+                const { svc, run, removeCaRoot } = makeService();
+                await expect(svc.generate('hostname', name)).rejects.toThrow(/invalid.*internet TLD or public suffix/i);
+                expect(run).not.toHaveBeenCalled();
+                expect(removeCaRoot).not.toHaveBeenCalled();
+            },
+        );
 
         it('rejects a two-label public suffix like "co.uk"', async () => {
             const { svc, run } = makeService();
@@ -278,20 +282,23 @@ describe('CertService.generate', () => {
             expect(run).not.toHaveBeenCalled();
         });
 
-        // 0.5.5 (user decision 2026-10-09): one-word names are allowed. Until
-        // then anything with fewer than two labels but `localhost` was refused,
-        // which turned away the hosts-file names hobbyists actually use.
-        it.each(['localhost', 'lan', 'local', 'nas', 'mediabox'])('allows the one-word name "%s"', async (name) => {
-            const { svc, run } = makeService();
-            await svc.generate('hostname', name);
-            expect(run).toHaveBeenCalled();
-        });
+        // 0.5.5: a one-word name that is NOT delegated is allowed. Until then
+        // anything with fewer than two labels but `localhost` was refused, which
+        // turned away the hosts-file names hobbyists actually use.
+        it.each(['localhost', 'htpc', 'nas', 'lan', 'local', 'home', 'HTPC'])(
+            'allows the undelegated one-word name "%s"',
+            async (name) => {
+                const { svc, run } = makeService();
+                await svc.generate('hostname', name);
+                expect(run).toHaveBeenCalled();
+            },
+        );
 
-        // Were on the denylist until 0.5.5; believable machine names, so off it.
-        it.each(['dev', 'app', 'me', 'io', 'co'])('allows "%s", which is no longer listed', async (name) => {
+        it('allows a name UNDER a real TLD: only the TLD itself would cover other sites', async () => {
             const { svc, run } = makeService();
-            await svc.generate('hostname', name);
-            expect(run).toHaveBeenCalled();
+            await svc.generate('hostname', 'media.lan');
+            await svc.generate('hostname', 'nas.example.de');
+            expect(run).toHaveBeenCalledTimes(2);
         });
 
         it('allows an ordinary two-label LAN name', async () => {
