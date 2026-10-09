@@ -23,10 +23,11 @@ function list(n, extra = []) {
 
 describe('parseTldList', () => {
     it('keeps the header and lower-cases every label, CRLF or LF', () => {
-        const parsed = parseTldList(`${list(1000, ['XN--P1AI', 'THEATRE']).replace(/\n/g, '\r\n')}\r\n`);
+        // spelling: allow -- `theatre` is a real TLD, a fixed external name.
+        const parsed = parseTldList(`${list(1000, ['XN--P1AI', 'THEATRE']).replace(/\n/g, '\r\n')}\r\n`); // spelling: allow
         expect(parsed.header).toBe(HEADER);
         expect(parsed.tlds).toHaveLength(1002);
-        expect(parsed.tlds.slice(-2)).toEqual(['xn--p1ai', 'theatre']);
+        expect(parsed.tlds.slice(-2)).toEqual(['xn--p1ai', 'theatre']); // spelling: allow
     });
 
     it.each([
@@ -41,7 +42,7 @@ describe('parseTldList', () => {
 
 describe('renderTldModule', () => {
     it('writes the header, one TLD per line, and marks a British-spelled TLD for the spelling gate', () => {
-        const module = renderTldModule({ header: HEADER, tlds: ['aaa', 'theatre', 'xn--p1ai'] });
+        const module = renderTldModule({ header: HEADER, tlds: ['aaa', 'theatre', 'xn--p1ai'] }); // spelling: allow
         expect(module).toContain(`export const IANA_TLDS_VERSION = '${HEADER}';`);
         expect(module).toContain("    'aaa',\n");
         expect(module).toContain("    'theatre', // spelling: allow");

@@ -37,7 +37,7 @@ const MIN_TLDS = 1000;
  * marker so the American-spelling gate (CI) passes a verbatim external name.
  * Add a new one here if a refresh brings one in and the gate names it.
  */
-const BRITISH_SPELLED_TLDS = new Set(['theatre']);
+const BRITISH_SPELLED_TLDS = new Set(['theatre']); // spelling: allow
 
 /**
  * Parse IANA's file: its version header and the labels, lower-cased. Throws on

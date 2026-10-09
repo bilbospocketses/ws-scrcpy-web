@@ -3587,7 +3587,7 @@ test suite is a fake.
   `Permitted: DNS:de, DNS:.de`, and a leaf for `bank.de` signed by that CA passed `openssl verify`.
   Every device that installed such a CA accepts that leaf from anyone who presents it, an
   interceptor on the path included; DNS has no part in it, so "the name only reaches what the
-  devices resolve" is not a defence. Hence any real TLD is refused (user decision 2026-10-09), `dev`,
+  devices resolve" is not a defense. Hence any real TLD is refused (user decision 2026-10-09), `dev`,
   `app` and `media` with `com` and `de`. A one-word name that is not delegated (`htpc`, `nas`,
   `localhost`, and `lan`, `local`, `home`, whose LAN-wide reach the user accepted) is allowed since
   0.5.5; until then a hostname needed two labels, with `localhost` the one exception, beside a
