@@ -80,6 +80,8 @@ export function wsRejectionLogLine(
     limiter: RejectionLogLimiter = wsRejectionLog,
 ): string | null {
     const remote = remoteAddress ?? 'unknown';
+    // Keyed by the socket's peer address: behind a reverse proxy every client is the proxy, so one stale tab's
+    // window can swallow another client's first line. Accepted: the count of what was left out is still logged.
     const skipped = limiter.note(`${remote}\u0000${reason ?? ''}`, now);
     if (skipped === null) return null;
     const base = `rejected WS connection (origin="${origin ?? ''}" host="${host ?? ''}"): ${reason}`;

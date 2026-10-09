@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import WS from 'ws';
 import { RejectionLogLimiter } from '../security/rejectionLogLimiter';
-import { wsRejectionLogLine } from '../services/WebSocketServer';
+import { WebSocketServer, wsRejectionLog, wsRejectionLogLine } from '../services/WebSocketServer';
 
 /**
  * Item 174 (2026-10-08): after a local-mode update, the first launch's tab
@@ -80,5 +83,41 @@ describe('wsRejectionLogLine', () => {
         expect(wsRejectionLogLine(undefined, undefined, undefined, TOKEN, 0, l)).toBe(
             `rejected WS connection (origin="" host=""): ${TOKEN} [from unknown]`,
         );
+    });
+});
+
+describe('the WebSocket server logs refusals through wsRejectionLogLine (M8)', () => {
+    const opened: http.Server[] = [];
+    afterEach(() => {
+        vi.restoreAllMocks();
+        for (const wss of WebSocketServer.getInstance().getServers()) wss.close();
+        WebSocketServer.getInstance().getServers().length = 0;
+        while (opened.length) opened.pop()!.close();
+    });
+
+    it('a refused handshake is answered 403 and noted in the shared limiter, keyed by the peer address and reason', async () => {
+        const server = http.createServer();
+        opened.push(server);
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+        const { port } = server.address() as AddressInfo;
+        WebSocketServer.getInstance().attachToServer({ server, port });
+        const note = vi.spyOn(wsRejectionLog, 'note');
+
+        const status = await new Promise<number>((resolve, reject) => {
+            const ws = new WS(`ws://127.0.0.1:${port}/?action=multiplex`, { headers: { Origin: 'http://evil.test' } });
+            ws.on('unexpected-response', (_req, res) => {
+                resolve(res.statusCode ?? 0);
+                ws.terminate();
+            });
+            ws.on('open', () => reject(new Error('the handshake must be refused')));
+            ws.on('error', () => undefined);
+        });
+
+        expect(status).toBe(403);
+        expect(note).toHaveBeenCalledTimes(1);
+        const [key] = note.mock.calls[0]!;
+        const [remote, reason] = key.split('\u0000');
+        expect(remote).toMatch(/127\.0\.0\.1$/);
+        expect(reason).toBe('cross-origin request rejected');
     });
 });
