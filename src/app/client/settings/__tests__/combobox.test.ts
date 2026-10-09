@@ -78,6 +78,9 @@ describe('buildCombobox: opening and picking', () => {
         expect(c.button.getAttribute('aria-expanded')).toBe('true');
         expect(options(c).map((o) => o.textContent)).toEqual(['192.168.86.3', '10.0.0.5', '172.16.4.9']);
         expect(options(c).map((o) => o.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+        // Opened by a click, nothing is singled out for the arrows yet.
+        expect(c.input.hasAttribute('aria-activedescendant')).toBe(false);
+        expect(c.list.querySelector('.settings-combo-option-active')).toBeNull();
         c.button.click();
         expect(c.isOpen()).toBe(false);
         expect(c.input.getAttribute('aria-expanded')).toBe('false');
@@ -162,6 +165,13 @@ describe('buildCombobox: the keyboard', () => {
 
     it('ArrowDown with a value that is not an option opens on the first', () => {
         const c = build(undefined, 'typed by hand');
+        key(c, 'ArrowDown');
+        expect(c.input.getAttribute('aria-activedescendant')).toBe(options(c)[0]!.id);
+    });
+
+    it('after a click opened the list, ArrowDown starts at the first option', () => {
+        const c = build(undefined, '10.0.0.5');
+        c.button.click();
         key(c, 'ArrowDown');
         expect(c.input.getAttribute('aria-activedescendant')).toBe(options(c)[0]!.id);
     });

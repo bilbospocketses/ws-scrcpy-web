@@ -1111,9 +1111,11 @@ dialog.settings-modal .settings-combo-option.settings-combo-option-active {
     background: var(--device-list-hover-color);
 }
 
-/* The value the box holds now, ticked. */
+/* The value the box holds now, ticked. The empty alternative text keeps the
+   tick out of the option's accessible name: aria-selected already says it, and
+   "check mark 192.168.1.5" is what a screen reader would read otherwise. */
 dialog.settings-modal .settings-combo-option[aria-selected="true"]::before {
-    content: "✓";
+    content: "✓" / "";
     position: absolute;
     left: 9px;
     color: var(--accent-color);

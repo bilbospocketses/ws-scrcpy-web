@@ -152,13 +152,12 @@ export function buildCombobox(opts: ComboboxOptions): Combobox {
         close();
     }
 
+    /** Opened by a click: the tick shows the value, and no option is singled out until an arrow key is pressed. */
     function open(): void {
         if (!available || values.length === 0 || input.disabled) return;
         render();
         setExpanded(true);
-        // On the value the box holds, when it is one of the options, so the
-        // arrow keys start from there; otherwise on nothing until one is pressed.
-        setActive(values.indexOf(input.value));
+        setActive(-1);
         input.ownerDocument.addEventListener('mousedown', onOutsidePointer, true);
     }
 
@@ -191,10 +190,12 @@ export function buildCombobox(opts: ComboboxOptions): Combobox {
         switch (e.key) {
             case 'ArrowDown':
                 if (!isOpen()) {
-                    if (!available || values.length === 0) return;
+                    if (!available || values.length === 0 || input.disabled) return;
                     e.preventDefault();
                     open();
-                    if (active === -1) setActive(0);
+                    // On the value the box holds when it is one of the options,
+                    // so the arrows start from there; otherwise on the first.
+                    setActive(Math.max(values.indexOf(input.value), 0));
                     return;
                 }
                 e.preventDefault();
