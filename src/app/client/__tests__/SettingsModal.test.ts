@@ -716,7 +716,7 @@ describe('Server section row order (folded App, beta.62)', () => {
 describe('Settings section restructure (beta.62)', () => {
     const flushMicrotasks = (): Promise<void> => new Promise((resolve) => queueMicrotask(resolve));
 
-    it('renders sections in order Users, Embedding, Updates, Service, Server — no standalone App section', async () => {
+    it('renders sections in order Users, Embedding, Updates, Service, Server, Local HTTPS — no standalone App section', async () => {
         document.body.replaceChildren();
         stubMeAsAdmin();
         vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
@@ -728,10 +728,42 @@ describe('Settings section restructure (beta.62)', () => {
         const headings = Array.from(document.body.querySelectorAll<HTMLElement>('.settings-section-heading')).map(
             (el) => el.textContent ?? '',
         );
-        // stubMeAsAdmin returns role=admin: admin sees Users, Embedding, Updates, Service, Server.
+        // stubMeAsAdmin returns role=admin: admin sees Users, Embedding, Updates, Service, Server,
+        // then Local HTTPS (its own tab since 0.5.3; its heading is there from the start, over a
+        // placeholder, before /api/service/status lets the panel build).
         // Embedding sits beside Users because both answer "who may do what with this server".
         // No standalone App section (folded into Server in beta.62).
-        expect(headings).toEqual(['Users', 'Embedding', 'Updates', 'Service', 'Server']);
+        expect(headings).toEqual(['Users', 'Embedding', 'Updates', 'Service', 'Server', 'Local HTTPS']);
+    });
+
+    it('puts the Local HTTPS tab immediately after Server, and only for an admin', async () => {
+        document.body.replaceChildren();
+        stubMeAsAdmin();
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        HTMLDialogElement.prototype.showModal = vi.fn();
+
+        new SettingsModal();
+        await flushMicrotasks();
+
+        const tabs = Array.from(document.body.querySelectorAll<HTMLElement>('[role="tab"]')).map(
+            (el) => el.textContent ?? '',
+        );
+        expect(tabs).toEqual(['Users', 'Embedding', 'Updates', 'Service', 'Dependencies', 'Server', 'Local HTTPS']);
+        // The Server tab body carries no Local HTTPS section of its own any more.
+        const serverBody = Array.from(document.body.querySelectorAll<HTMLElement>('section.settings-section')).find(
+            (s) => s.querySelector(':scope > h3')?.textContent === 'Server',
+        );
+        expect(serverBody?.querySelector('[data-tls-subject], [data-local-https-container-note]')).toBeNull();
+
+        // Contrast: a non-admin gets no Local HTTPS tab.
+        document.body.replaceChildren();
+        vi.spyOn(authClient, 'me').mockResolvedValue({ authEnabled: true, user: { username: 'u', role: 'user' } });
+        new SettingsModal();
+        await flushMicrotasks();
+        const userTabs = Array.from(document.body.querySelectorAll<HTMLElement>('[role="tab"]')).map(
+            (el) => el.textContent ?? '',
+        );
+        expect(userTabs).toEqual(['Server']);
     });
 });
 
@@ -821,9 +853,22 @@ describe('the running version in the dialog footer', () => {
         expect(version!.hidden).toBe(false);
         expect(version!.textContent).toBe('v0.5.1');
     });
+
+    it('in a container the Local HTTPS tab shows only the reverse-proxy note and never reads /api/tls/*', async () => {
+        stubConfig({ ...base, docker: true, appVersion: '0.5.3' });
+        new SettingsModal();
+        await flush();
+
+        const tab = document.querySelector<HTMLElement>('dialog.settings-modal [data-settings-tab="local-https"]');
+        expect(tab).not.toBeNull();
+        expect(tab!.querySelector('[data-local-https-container-note]')).not.toBeNull();
+        expect(tab!.querySelector('[data-tls-subject]')).toBeNull();
+        const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+        expect(urls.filter((u) => u.startsWith('/api/tls/'))).toEqual([]);
+    });
 });
 
-describe('an mkcert install in Dependencies enables generate on the Server tab', () => {
+describe('an mkcert install in Dependencies enables generate on the Local HTTPS tab', () => {
     beforeEach(() => {
         document.body.replaceChildren();
         HTMLDialogElement.prototype.showModal = vi.fn();

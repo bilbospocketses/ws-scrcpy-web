@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Local HTTPS has its own tab in Settings, right after Server.** It used to be a second section at the bottom of the Server tab, below the uninstall option; the Server tab now ends at uninstall. The tab is shown to admins only, as the section was. When mkcert is not installed, the top of the tab now says, in orange, `mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.` This replaces the line that used to sit under the certificate controls. What it disables is unchanged: **generate** and the certificate-subject controls wait for mkcert, and the https port, the plain-http exposure setting, revoke and the CA download still work without it. In the Docker image the tab shows only the note that HTTPS comes from a reverse proxy in front of the container (`src/app/client/settings/tabs/LocalHttpsTab.ts`, `src/app/client/settings/tabs/ServerTab.ts`, `src/app/client/SettingsModal.ts`).
+
 ## [0.5.2] - 2026-10-09
 
 ### Changed

@@ -405,7 +405,14 @@ export async function openSettings(page: Page): Promise<Locator> {
     return settings;
 }
 
-export type SettingsTabTitle = 'Users' | 'Embedding' | 'Updates' | 'Service' | 'Dependencies' | 'Server';
+export type SettingsTabTitle =
+    | 'Users'
+    | 'Embedding'
+    | 'Updates'
+    | 'Service'
+    | 'Dependencies'
+    | 'Server'
+    | 'Local HTTPS';
 
 export function settingsSection(settings: Locator, title: SettingsTabTitle): Locator {
     // Dependencies is the one tab with no `h3` of its own: it wraps

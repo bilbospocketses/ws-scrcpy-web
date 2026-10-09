@@ -12,8 +12,13 @@ import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
 import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
 import {
+    applyLocalHttpsContainerMode,
+    applyLocalHttpsDependencyInstalled,
+    applyLocalHttpsServiceStatus,
+    buildLocalHttpsTab,
+} from './settings/tabs/LocalHttpsTab';
+import {
     applyServerContainerMode,
-    applyServerDependencyInstalled,
     applyServerServiceStatus,
     buildServerTab,
     refreshServer,
@@ -445,6 +450,16 @@ export class SettingsModal extends Modal {
      */
     private serverTabEl: HTMLElement | null = null;
     /**
+     * The Local HTTPS tab's root element, captured the same way and for the same
+     * reason as `serverTabEl`: `buildLocalHttpsTab` fires no request of its own.
+     * The constructor hands it container mode (`applyLocalHttpsContainerMode()`)
+     * or the /api/service/status response (`applyLocalHttpsServiceStatus()`,
+     * which builds the panel), and a dependency install
+     * (`applyLocalHttpsDependencyInstalled()`). Stays null when the role cannot
+     * see Local HTTPS.
+     */
+    private localHttpsTabEl: HTMLElement | null = null;
+    /**
      * The Updates tab's root element, captured the same way and for the same
      * reason as `serviceTabEl`. Its /api/updates/status read is held until
      * container mode is known, so the constructor's post-probe block is what
@@ -508,11 +523,11 @@ export class SettingsModal extends Modal {
         // deferred to a microtask, so it reads this safely.
         this.initialTab = options?.initialTab ?? null;
         this.dialog.classList.add('settings-modal');
-        // An install from the Dependencies tab bubbles up to here; the Server
-        // tab's Local HTTPS panel re-checks mkcert so generate enables without
-        // a reopen. On the dialog itself, so the listener goes with it.
+        // An install from the Dependencies tab bubbles up to here; the Local
+        // HTTPS tab's panel re-checks mkcert so generate enables without a
+        // reopen. On the dialog itself, so the listener goes with it.
         this.dialog.addEventListener(DEPENDENCY_INSTALLED_EVENT, () => {
-            if (this.serverTabEl) void applyServerDependencyInstalled(this.serverTabEl);
+            if (this.localHttpsTabEl) void applyLocalHttpsDependencyInstalled(this.localHttpsTabEl);
         });
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
         // Resolve the current user's role first so admin-only sections can be gated.
@@ -586,6 +601,10 @@ export class SettingsModal extends Modal {
                         // default because the service-status path below never runs
                         // in a container (findings 20.4, 20.5).
                         if (this.serverTabEl) applyServerContainerMode(this.serverTabEl);
+                        // Local HTTPS is unsupported in a container (user
+                        // decision 2026-09-30): its tab shows only the
+                        // reverse-proxy note, and nothing there fetches.
+                        if (this.localHttpsTabEl) applyLocalHttpsContainerMode(this.localHttpsTabEl);
                         return;
                     }
                     if (this.canUse('dependencies') && this.dependenciesTabEl) {
@@ -596,9 +615,11 @@ export class SettingsModal extends Modal {
                             // renderServiceState (inside ServiceTab.ts) learns the
                             // fresh ServiceStatusResponse and hands it back here so
                             // the SERVER tab's rows can react to it too — see
-                            // ServiceTabCallbacks.
+                            // ServiceTabCallbacks — and so the Local HTTPS tab can
+                            // build its panel once the platform is known.
                             onServiceStatus: (resp) => {
                                 if (this.serverTabEl) applyServerServiceStatus(this.serverTabEl, resp);
+                                if (this.localHttpsTabEl) applyLocalHttpsServiceStatus(this.localHttpsTabEl, resp);
                             },
                         });
                     }
@@ -695,6 +716,20 @@ export class SettingsModal extends Modal {
                 return el;
             },
         });
+        // Right after Server, which held it as a second section until 0.5.3.
+        // Admin-only: `/api/tls/*` is admin-gated server-side, and an ungated tab
+        // would 403 on every read (adminGate.ts's `localHttps` entry).
+        if (canSeeSection(this.role, 'localHttps')) {
+            tabs.push({
+                id: 'local-https',
+                label: 'Local HTTPS',
+                build: () => {
+                    const el = buildLocalHttpsTab(ctx);
+                    this.localHttpsTabEl = el; // so the constructor can decide what it shows
+                    return el;
+                },
+            });
+        }
         const strip = new TabStrip(tabs);
         this.tabStrip = strip; // so applyDockerGating() can route its swap through TabStrip
         // After construction, which has already activated the first tab. A no-op

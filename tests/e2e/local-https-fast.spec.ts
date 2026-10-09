@@ -55,7 +55,7 @@ const SUBJECT_400 = { error: 'that address could not be used for a certificate' 
 const GENERATE_500 = { error: 'certificate generation failed; see the server logs for the cause' }; // TlsApi.ts
 const PORT_400 = { error: 'port must be an integer between 1 and 65535' }; // src/server/Config.ts validateHttpsPortInput
 
-// src/app/client/settings/tabs/ServerTab.ts
+// src/app/client/settings/tabs/LocalHttpsTab.ts
 const PANEL_PORT_REFUSAL = 'port must be an integer between 1 and 65535.';
 const PANEL_PORT_SAVED = 'https port saved. the server is restarting for the change to take effect.';
 const SUB_1024_ADVISORY = 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
@@ -68,7 +68,8 @@ const LISTENER_NOT_STARTED =
 const LISTENER_STALE =
     'the https listener is running, but it is still serving the certificate from before your last regenerate — including a ca that no longer exists. restart the server so it serves the new one; until then, a device using the new ca will not match what is actually being served.';
 const CA_RESTORE = 'regenerate to restore the ca download.';
-const MKCERT_MISSING = 'install mkcert in the dependencies tab to generate a certificate.';
+const MKCERT_MISSING =
+    'mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.';
 const EXPIRY_SOON_RE =
     /^this certificate expires on .+\. regenerate before then, or streaming stops working from other machines\.$/;
 // The row says "on this device"; the panel's own words are "on your device".
@@ -274,6 +275,8 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         }
         await expect(notice).toBeVisible();
         await expect(notice).toHaveText(MKCERT_MISSING);
+        // 0.5.3: the note is the very first thing in the Local HTTPS tab.
+        await expect(panel.locator('.settings-section-body > *').first()).toHaveAttribute('data-tls-mkcert-notice', '');
         // What needs no mkcert stays usable.
         await expect(panelParts(panel).port).toBeEnabled();
         await expect(panelParts(panel).portOk).toBeEnabled();
@@ -311,7 +314,7 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         }
 
         // The advisory is per platform: the server's, as /api/service/status
-        // reports it to the panel (ServerTab.ts subPrivilegedPortNotice).
+        // reports it to the panel (LocalHttpsTab.ts subPrivilegedPortNotice).
         const status = await page.request.get('/api/service/status');
         expect(status.status(), 'GET /api/service/status').toBe(200);
         const platform = ((await status.json()) as { platform?: string }).platform;

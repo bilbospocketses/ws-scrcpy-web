@@ -271,8 +271,8 @@ test.describe('container mode', () => {
     // Row 20.19: the page's container decisions. Each one is asserted against a
     // control that proves the thing it looks for would be there on a host: the
     // update pill's container is in the DOM (hidden) whenever it is mounted, the
-    // web-port row is still BUILT, and the Local HTTPS slot is filled with a note
-    // rather than left empty.
+    // web-port row is still BUILT, and the Local HTTPS tab is filled with a note
+    // rather than left on its placeholder.
     test('@docker 20.19 no update pill, no web-port row, Local HTTPS names the reverse proxy', async ({ page }) => {
         const updatePolls: string[] = [];
         page.on('request', (req) => {
@@ -300,10 +300,16 @@ test.describe('container mode', () => {
         await expect(webPort.locator('.settings-label')).not.toBeVisible();
         await expect(webPort.locator('input[type="number"]')).not.toBeVisible();
 
-        const note = server.locator('[data-local-https-container-note]');
+        // Local HTTPS is its own tab since 0.5.3. In a container it holds the
+        // reverse-proxy note and nothing else; the Server tab holds neither.
+        await expect(server.locator('[data-local-https-container-note]')).toHaveCount(0);
+        const localHttps = await openSettingsTab(settings, 'Local HTTPS');
+        const note = localHttps.locator('[data-local-https-container-note]');
         await expect(note).toBeVisible();
         await expect(note).toContainText('reverse proxy');
-        await expect(server.locator('[data-tls-subject]')).toHaveCount(0);
+        await expect(settings.locator('[data-tls-subject]')).toHaveCount(0);
+        await expect(settings.locator('[data-tls-mkcert-notice]')).toHaveCount(0);
+        await expect(localHttps.getByRole('button')).toHaveCount(0);
 
         // Checked last, after the modal work gave any stray poll time to fire.
         expect(updatePolls, 'no /api/updates/status poll from the page').toEqual([]);

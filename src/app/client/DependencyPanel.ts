@@ -7,7 +7,7 @@ const POLL_INTERVAL_MS = 15_000;
 /**
  * Dispatched (bubbling) from the panel's element after an install or update
  * succeeds, with `{ name }` as its detail. The Settings dialog listens for it
- * on itself and tells the Server tab, whose Local HTTPS panel keeps generate
+ * on itself and tells the Local HTTPS tab, whose panel keeps generate
  * disabled until mkcert is installed (0.5.1) -- without it, installing mkcert
  * here would leave generate greyed out until the dialog was reopened.
  */

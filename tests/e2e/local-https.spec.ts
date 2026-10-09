@@ -39,7 +39,7 @@ import { openSettings, openSettingsTab } from './support/auth';
  *
  * To run the safe (default) tests:
  *   1. On a machine on your LAN, generate a certificate for that machine's
- *      own LAN IP (Settings -> Server -> Local HTTPS -> ip address -> generate),
+ *      own LAN IP (Settings -> Local HTTPS -> ip address -> generate),
  *      and restart the server so the listener actually binds (generating
  *      alone does not -- the listener set is built once at boot; see
  *      smoke-test.md row 21.1).
@@ -163,7 +163,7 @@ test.describe('local https', () => {
             `this server's plain-http exposure is currently '${exposure}', not 'open' — the plain-http control ` +
                 "below needs 'open' to mean anything (under 'httpsOnly' it gets no answer at all; under " +
                 "'redirect' it 30x's straight to https and would pass for the wrong reason). Switch Settings → " +
-                'Server → Local HTTPS → plain http exposure back to open to run this test.',
+                'Local HTTPS → plain http exposure back to open to run this test.',
         );
 
         const httpsCtx = await browser.newContext({ ignoreHTTPSErrors: true });
@@ -219,11 +219,9 @@ test.describe('local https', () => {
             await page.goto(LAN_ORIGIN!);
 
             const settings = await openSettings(page);
-            const server = await openSettingsTab(settings, 'Server');
-            const panel = server
-                .locator('section.settings-section')
-                .filter({ has: page.locator('h3.settings-section-heading', { hasText: 'Local HTTPS' }) });
-            await expect(panel).toBeVisible();
+            // Its own tab since 0.5.3 (until then a section of the Server tab).
+            const panel = await openSettingsTab(settings, 'Local HTTPS');
+            await expect(panel.locator('[data-tls-generate]')).toBeVisible();
 
             const alert = panel.locator('[data-tls-alert]');
             // Contrast pair on REAL visibility, not text presence: jsdom
@@ -294,11 +292,9 @@ test.describe('local https', () => {
             await page.goto(LAN_ORIGIN!);
 
             const settings = await openSettings(page);
-            const server = await openSettingsTab(settings, 'Server');
-            const panel = server
-                .locator('section.settings-section')
-                .filter({ has: page.locator('h3.settings-section-heading', { hasText: 'Local HTTPS' }) });
-            await expect(panel).toBeVisible();
+            // Its own tab since 0.5.3 (until then a section of the Server tab).
+            const panel = await openSettingsTab(settings, 'Local HTTPS');
+            await expect(panel.locator('[data-tls-generate]')).toBeVisible();
 
             const alert = panel.locator('[data-tls-alert]');
             await expect(alert, 'alert hidden before generate').toBeHidden();

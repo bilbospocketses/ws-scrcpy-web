@@ -3032,9 +3032,10 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   question false for `docker: true` explicitly (`mountsUpdateButton`,
   `showsWelcomeWizard`, `offersSystemWideUpdate`) instead of relying on the server's
   replies happening to keep the control quiet.
-- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the web-port row,
-  replaces the Local HTTPS panel with a note naming the reverse proxy, and makes
+- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the web-port row and makes
   "reset all my settings" send the per-user reset only, with no first-run `PATCH`.
+- **Settings → Local HTTPS** (`applyLocalHttpsContainerMode`, its own tab since 0.5.3) shows only a
+  note naming the reverse proxy: no panel, no mkcert note, and no `/api/tls/*` read.
 - **No browser is auto-opened** (`openBrowser.ts`, `inContainer`): there is no desktop.
 - **Node.js and mkcert are not managed dependencies** (`hostOnly`, §13.1). The container's list is adb and scrcpy-server, and nothing in it names mkcert.
 - **Local HTTPS is not supported in a container** (user decision, 2026-09-30). A
@@ -3062,7 +3063,7 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   section gives the reverse-proxy recipe; the three rules it states — `allowedHosts`
   lists the name, `Host` is forwarded unchanged, WebSocket upgrades pass — are §24's
   layers seen from the proxy's side. **The app's own Local HTTPS (§28) is off in a
-  container**: every `/api/tls/*` route answers 409, the two reads included (since 2026-10-01; the page never asks for them there, and a container carries no hint of the local CA), and the Server tab shows a note,
+  container**: every `/api/tls/*` route answers 409, the two reads included (since 2026-10-01; the page never asks for them there, and a container carries no hint of the local CA), and the Local HTTPS tab shows only a note,
   so the reverse proxy is the only supported HTTPS.
 
 ### 26.7 Verification
@@ -3161,9 +3162,10 @@ and never rebuilds. Two consequences:
 - Every section is in the DOM from the start, which is what the pre-tabs
   regression tests (and `SettingsModal`'s unconditional refresh calls) assume.
 
-Tabs, in order, each gated by `canSeeSection` on the caller's role except the
-last: **Users**, **Embedding**, **Updates**, **Service**, **Dependencies**,
-**Server** (always built — it carries the user-level reset row). A caller may ask
+Tabs, in order, each gated by `canSeeSection` on the caller's role except Server:
+**Users**, **Embedding**, **Updates**, **Service**, **Dependencies**,
+**Server** (always built — it carries the user-level reset row), **Local HTTPS**
+(admin-only; its own tab since 0.5.3, `LocalHttpsTab.ts`). A caller may ask
 for a starting tab (`new SettingsModal({ initialTab: 'dependencies' })`), which
 is what the home page's dependency alert uses; an id that was never built is a
 no-op and lands on the first tab.
@@ -3172,10 +3174,11 @@ Container mode swaps the Updates, Service and Dependencies bodies for the locked
 copy through `TabStrip.replaceTabBody()`, not a direct `replaceWith` — a fresh node
 carries no `hidden` attribute, so a direct swap rendered visible beside whatever tab
 was actually active and orphaned the strip's cache. The Server tab stays, and
-`applyServerContainerMode()` (`ServerTab.ts`) applies its three container decisions:
-the web-port row is hidden (the port inside the image is always 8000), Local HTTPS is
-replaced by a note naming the reverse proxy, and "reset all my settings" stops
-sending the first-run reset (§26.5).
+`applyServerContainerMode()` (`ServerTab.ts`) applies its two container decisions:
+the web-port row is hidden (the port inside the image is always 8000), and "reset all
+my settings" stops sending the first-run reset (§26.5). The Local HTTPS tab stays too:
+`applyLocalHttpsContainerMode()` (`LocalHttpsTab.ts`) shows only a note naming the
+reverse proxy, and a later service status never builds the panel over it.
 
 ### 27.4 What stages, and what still writes immediately
 
@@ -3354,7 +3357,7 @@ stays bounded; `pending` rows are never pruned.
 | `src/app/client/settings/SettingsSummaryModal.ts` | The pre-save review list, rendered from `changes()` |
 | `src/app/client/settings/closeIntent.ts` | `prompt` vs `close`, as a pure function of the store |
 | `src/app/client/settings/SaveRunner.ts` | `runSave()` and the `res.ok` normalization of a refused batch |
-| `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server |
+| `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server, Local HTTPS |
 | `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save, `performStagedSave`, `performDirtyClose`, the dirty-close prompt |
 | `src/app/client/DependencyAlertCard.ts` | The top-bar dependency-update indicator (§14.3) |
 | `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, the apply loop and the WAL marks |
@@ -3369,7 +3372,7 @@ stays bounded; `pending` rows are never pruned.
 Streaming needs a secure context: the browser exposes its video decoder (WebCodecs) only on
 `https://`, `http://localhost`, or `http://127.0.0.1`, so `http://<lan-ip>:8000` lists devices and
 plays nothing (§24, and the README's Access-control section). Local HTTPS closes that gap without a
-domain, a public CA, or a reverse proxy: a **Settings → Server → Local HTTPS** panel drives a
+domain, a public CA, or a reverse proxy: a **Settings → Local HTTPS** tab (its own tab since 0.5.3, right after Server; until then a section of the Server tab) drives a
 vendored, hardened fork of `mkcert` (`bilbospocketses/mkcert` — see §13's dependency-manager pattern,
 which this dependency joins) to mint a certificate for this machine's LAN IP or a chosen hostname,
 and an HTTPS listener starts alongside the existing plain-HTTP one once that certificate exists. The
@@ -3380,7 +3383,7 @@ its token-gated CA download have since changed, and §28.2, §28.4 and the route
 on each.
 
 **Host installs only.** Local HTTPS is not supported in a container (user decision, 2026-09-30):
-every `/api/tls/*` route answers 409 there, the reads included (2026-10-01), naming the reverse proxy, and the Server tab shows a note
+every `/api/tls/*` route answers 409 there, the reads included (2026-10-01), naming the reverse proxy, and the Local HTTPS tab shows only a note
 in place of the panel. A reverse proxy in front of the container is the only supported HTTPS for the
 image (§26.5, §26.6).
 
@@ -3396,7 +3399,7 @@ gate is keyed on the method: `GET`/`HEAD` go through `requireAdmin`, anything el
 `requireOperator` (§24.0), so a write route added later is operator-gated too. Before this, in open
 mode, any LAN client that had loaded a page could regenerate the CA every device trusts, revoke it,
 change the exposure, or restart the server through the port. The two reads stay reachable off-box on
-purpose: a second machine opening Settings → Server → Local HTTPS to download the CA is the feature
+purpose: a second machine opening Settings → Local HTTPS to download the CA is the feature
 (smoke 21.2), so the panel still renders there, and a write from it is answered
 `403 {"error":"admin actions are limited to this machine"}`, which the panel shows as it is.
 `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` and a signed-in admin session pass the gate as they do everywhere else.
@@ -3617,10 +3620,9 @@ above all an answer the definition refuses such as an unexpected mkcert release 
 the same `POST /api/dependencies/mkcert/update` the update button uses. A failed install reads `Error`, with
 the button kept as the retry. The Local HTTPS panel reads `GET /api/dependencies` beside `/api/tls/state`:
 while mkcert is not installed, **generate** and the subject controls (the ip/hostname radios, the subject
-field and the address picker) are disabled with `install mkcert in the dependencies tab to generate a
-certificate.`; the https port, exposure modes, revoke and the CA download need no mkcert and are left
+field and the address picker) are disabled, and the very top of the Local HTTPS tab carries an orange (`settings-status-warning`, `--warning-color`) note: `mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.` (since 0.5.3; until then a line under the certificate controls). The https port, exposure modes, revoke and the CA download need no mkcert and are left
 alone. A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
-the Server tab re-read mkcert, so generate enables without a reopen. When the panel cannot tell (the read
+the Local HTTPS tab re-read mkcert, so generate enables without a reopen. When the panel cannot tell (the read
 failed, was refused, or does not name mkcert) it fails open: generate stays enabled.
 
 `createCertService.ts`'s `ensureMkcertInstalled(exe)` stays as the server-side backstop: called from the
@@ -3791,5 +3793,5 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, verify them (`createSigstoreVerifier`: `@sigstore/tuf` + `@sigstore/verify`) against the tag-pinned release-workflow identity, and check the statement names the manifest |
 | `tests/e2e/support/githubRefusal.ts` | The e2e refused-lookup rule as a pure function (`isExcusableNullLatest(dep, seqBefore)`), used by row 9.4 on a host and unit-tested in `tests/unit/githubRefusal.test.ts` so the refused branch runs on every build. It excuses a null Latest only for a GitHub-backed dependency whose own `latestLookup` was refused with 403 or 429 by a lookup newer than the one read before the press. The `/rate_limit` re-query it replaced (`githubQuota.ts`, deleted 2026-10-06) raced the hourly reset. The container rows 20.9 and 1.9 excuse nothing since a container stopped listing mkcert (2026-10-01) |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
-| `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
+| `src/app/client/settings/tabs/LocalHttpsTab.ts` | The Settings → Local HTTPS tab (`buildLocalHttpsTab`) and its panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design as of 2026-09-18: measured facts, rejected alternatives, the UI notification table. §28.4, §28.2 and §28's route list supersede its mkcert pin, its Windows TLS path and its token-gated CA download |

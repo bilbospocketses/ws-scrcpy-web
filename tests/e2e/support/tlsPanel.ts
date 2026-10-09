@@ -2,20 +2,18 @@ import { expect, type Locator, type Page, type Route } from '@playwright/test';
 import { openSettings, openSettingsTab } from './auth';
 
 /**
- * The Local HTTPS panel (Settings → Server), and the browser-side stubs that
- * let a row drive it against the SHARED server without ever changing that
- * server's TLS state.
+ * The Local HTTPS panel (Settings → Local HTTPS, its own tab since 0.5.3; until
+ * then a section of the Server tab), and the browser-side stubs that let a row
+ * drive it against the SHARED server without ever changing that server's TLS
+ * state.
  */
 
-/** Settings → Server → the Local HTTPS section, once its state fetch has rendered. */
+/** Settings → Local HTTPS, once its state fetch has rendered the panel. */
 export async function openLocalHttpsPanel(page: Page): Promise<Locator> {
     const settings = await openSettings(page);
-    const server = await openSettingsTab(settings, 'Server');
-    const panel = server
-        .locator('section.settings-section')
-        .filter({ has: page.locator('h3.settings-section-heading', { hasText: 'Local HTTPS' }) });
-    await expect(panel).toBeVisible();
-    // The panel is swapped in only after GET /api/tls/state has answered.
+    // The tab holds exactly one section under the "Local HTTPS" heading: a
+    // placeholder first, then the panel once GET /api/tls/state has answered.
+    const panel = await openSettingsTab(settings, 'Local HTTPS');
     await expect(panel.locator('[data-tls-generate]')).toBeVisible();
     return panel;
 }

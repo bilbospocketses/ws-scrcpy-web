@@ -85,26 +85,24 @@ describe('ServerTab: container decisions for port, HTTPS and reset (row 20.19)',
         expect(rowOf(el, 'web port').style.display).toBe('');
     });
 
-    it('container mode replaces Local HTTPS with a note naming the reverse proxy, and fetches nothing', () => {
-        const fetchMock = vi.fn();
-        vi.stubGlobal('fetch', fetchMock);
-        const el = buildServerTab(ctx, new StagedSettingsStore());
-        applyServerContainerMode(el);
-        const note = el.querySelector('[data-local-https-container-note]');
-        expect(note).not.toBeNull();
-        expect(note?.textContent).toMatch(/reverse proxy/);
-        expect(el.querySelector('[data-tls-subject]')).toBeNull();
-        expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('a later service status does not rebuild Local HTTPS over the container note', () => {
+    // 0.5.3: Local HTTPS is its own tab now (localHttpsTab.test.ts). The Server
+    // tab carries none of it, on a host or in a container.
+    it('carries no Local HTTPS section, and a service status fetches no /api/tls/state', async () => {
         const fetchMock = vi.fn().mockReturnValue(new Promise(() => undefined));
         vi.stubGlobal('fetch', fetchMock);
         const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
+        await flush();
+        expect(el.querySelector('[data-local-https-container-note]')).toBeNull();
+        expect(el.querySelector('[data-tls-subject]')).toBeNull();
+        expect([...el.querySelectorAll('h3')].map((h) => h.textContent)).toEqual(['Server']);
+        expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain('/api/tls/state');
+    });
+
+    it('container mode leaves no Local HTTPS note in the Server tab', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
         applyServerContainerMode(el);
-        applyServerServiceStatus(el, { supported: false, platform: 'linux', docker: true });
-        expect(el.querySelector('[data-local-https-container-note]')).not.toBeNull();
-        expect(fetchMock).not.toHaveBeenCalledWith('/api/tls/state', expect.anything());
+        expect(el.querySelector('[data-local-https-container-note]')).toBeNull();
     });
 
     it('"reset all my settings" in a container clears user settings but never PATCHes firstRunComplete', async () => {

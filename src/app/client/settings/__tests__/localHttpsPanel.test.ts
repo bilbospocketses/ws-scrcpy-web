@@ -11,7 +11,7 @@ import {
     recheckLocalHttpsMkcert,
     subPrivilegedPortNotice,
     trustInstructionsFor,
-} from '../tabs/ServerTab';
+} from '../tabs/LocalHttpsTab';
 
 const state = (over = {}) => ({ status: 'none', ...over });
 
@@ -400,7 +400,28 @@ describe('local https panel: generate waits for mkcert', () => {
         expect(c.radios).toHaveLength(2);
         for (const r of c.radios) expect(r.disabled).toBe(true);
         expect(c.notice.hidden).toBe(false);
-        expect(c.notice.textContent).toBe('install mkcert in the dependencies tab to generate a certificate.');
+        expect(c.notice.textContent).toBe(
+            'mkcert must be installed from the dependencies tab before https can be enabled and a certificate generated. until then, this section is unavailable.',
+        );
+    });
+
+    // 0.5.3: the note moved from a line under the certificate controls to the
+    // very top of the tab, in the warning (orange, `--warning-color`) tone.
+    it('puts the mkcert note at the very top of the panel, in the warning tone', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: routedFetch(() => [mkcertRow(null)]),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const body = el.querySelector<HTMLElement>('.settings-section-body')!;
+        const notice = controls(el).notice;
+        expect(body.firstElementChild).toBe(notice);
+        expect(notice.classList.contains('settings-status-warning')).toBe(true);
+        // Above every control, not merely somewhere in the panel.
+        const firstRow = body.querySelector('.settings-row')!;
+        expect(notice.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        // Exactly one such note: the old line under the controls is gone.
+        expect(el.querySelectorAll('[data-tls-mkcert-notice]')).toHaveLength(1);
     });
 
     it('leaves what needs no mkcert alone: the https port, the exposure ok, and revoke / download for a certificate that exists', async () => {
