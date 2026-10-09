@@ -73,6 +73,44 @@ describe('NotInstalled for a first-use dependency', () => {
         expect(mkcert.latestLookup?.httpStatus).toBe(403);
     });
 
+    // Smoke row 21.12: the definition refusing the ANSWER is a provenance
+    // signal, not a rate limit, and must stay visible as an Error with its
+    // message (mkcert-provenance.spec.ts asserts exactly this).
+    it.each(['v1.4.4-bt.2', 'v01.2.3'])(
+        'an unexpected release tag (%s) is an Error with the message, not NotInstalled',
+        async (tag) => {
+            stubLatest(tag);
+            const mgr = new DependencyManager(depsPath);
+            await mgr.checkInstalled('mkcert');
+
+            await mgr.checkLatest('mkcert');
+
+            const mkcert = mgr.getByName('mkcert')!;
+            expect(mkcert.status).toBe(DependencyStatus.Error);
+            expect(mkcert.latestVersion).toBeNull();
+            expect(mkcert.errorMessage).toBe(`unexpected mkcert release tag ${JSON.stringify(tag)}`);
+
+            // ...and an update refuses with the same message, downloading nothing.
+            const result = await mgr.update('mkcert');
+            expect(result.success).toBe(false);
+            expect(result.errorMessage).toBe(`unexpected mkcert release tag ${JSON.stringify(tag)}`);
+            expect(mkcert.status).toBe(DependencyStatus.Error);
+            expect(fs.existsSync(path.join(depsPath, 'mkcert'))).toBe(false);
+        },
+    );
+
+    it('an unreachable lookup (no answer at all) is an Error, as before 0.5.1', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
+        const mgr = new DependencyManager(depsPath);
+        await mgr.checkInstalled('mkcert');
+
+        await mgr.checkLatest('mkcert');
+
+        const mkcert = mgr.getByName('mkcert')!;
+        expect(mkcert.status).toBe(DependencyStatus.Error);
+        expect(mkcert.errorMessage).toBeTruthy();
+    });
+
     it('a boot-installed dependency missing with a refused lookup is still an Error (item 124)', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response('{}', { status: 403 }));
         const mgr = new DependencyManager(depsPath);

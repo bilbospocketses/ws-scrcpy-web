@@ -153,8 +153,17 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                     // reads "Not installed" with an install button, where it
                     // used to show an Unknown pill and nothing to press. Not
                     // clicked here: the shared server must not fetch mkcert.
+                    //
+                    // Its status is the server's: `not-installed` when its
+                    // version lookup answered or was refused (rate limit), but
+                    // `error`, with the reason, when the lookup got no answer
+                    // or the answer was refused as untrustworthy (21.12). The
+                    // install button is there either way, as the retry.
                     if (dep.deferInstall) {
-                        await expect(row.locator('.dep-status .dep-badge')).toHaveText('Not installed');
+                        expect(['not-installed', 'error'], `${dep.name}.status`).toContain(dep.status);
+                        await expect(row.locator('.dep-status .dep-badge')).toHaveText(
+                            dep.status === 'error' ? 'Error' : 'Not installed',
+                        );
                         await expect(row.locator('button[data-install]')).toHaveText('install');
                         await expect(row.locator('button[data-install]')).toBeEnabled();
                     }

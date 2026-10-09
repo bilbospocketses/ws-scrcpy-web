@@ -3610,8 +3610,10 @@ panel never downloads the ~4.5 MB binary.
 
 Since 0.5.1 the user installs it: while it is missing, `DependencyManager.resolveStatus` reports it
 `not-installed` (`DependencyStatus.NotInstalled`, decided on the server from `checkInstalled` finding
-nothing for a `deferInstall` dependency; a refused or failed latest-version lookup leaves it there rather
-than in `Error`), and the Dependencies panel shows **Not installed** with an **install** button that calls
+nothing for a `deferInstall` dependency; a latest-version lookup the upstream REFUSED with an HTTP status,
+such as api.github.com's rate limit, leaves it there rather than in `Error`, while any other failure,
+above all an answer the definition refuses such as an unexpected mkcert release tag (smoke 21.12), is
+`Error` with its message, as before), and the Dependencies panel shows **Not installed** with an **install** button that calls
 the same `POST /api/dependencies/mkcert/update` the update button uses. A failed install reads `Error`, with
 the button kept as the retry. The Local HTTPS panel reads `GET /api/dependencies` beside `/api/tls/state`:
 while mkcert is not installed, **generate** and the subject controls (the ip/hostname radios, the subject

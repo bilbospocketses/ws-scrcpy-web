@@ -291,16 +291,20 @@ export class DependencyManager {
             // was faulty. `resolveStatus` reports Unknown for a null
             // latestVersion, which is the honest state.
             info.latestVersion = null;
-            if (info.installedVersion === null && this.isDeferred(name)) {
-                // Not installed, and not needed until someone asks for it: the
-                // same reasoning as an installed dependency below. Nothing is
-                // broken yet, so it reads NotInstalled with its install button,
-                // and the Latest cell names a refused lookup from
-                // `latestLookup`. An install retries the lookup itself and
-                // reports its own failure (performUpdate). Marking it Error here
-                // showed a red badge, and no install button, for a dependency
-                // nobody had asked for, whenever api.github.com rate-limited
-                // the boot check.
+            if (info.installedVersion === null && this.isDeferred(name) && err instanceof HttpStatusError) {
+                // Not installed, not needed until someone asks for it, and the
+                // lookup was merely REFUSED (an HTTP status: api.github.com's
+                // rate limit, typically). Nothing is broken yet, so it reads
+                // NotInstalled with its install button, and the Latest cell
+                // names the refusal from `latestLookup`. An install retries the
+                // lookup itself and reports its own failure (performUpdate).
+                //
+                // ONLY a refusal. Any other failure falls through to Error
+                // below, with its message: above all the definition's own
+                // refusal of the answer (mkcert's "unexpected mkcert release
+                // tag", a provenance check), which smoke row 21.12 requires the
+                // panel to show. Swallowing that as NotInstalled hid a refused
+                // release behind an install button.
                 this.resolveStatus(info);
                 info.errorMessage = undefined;
                 log.info(`Latest-version check failed for ${name} (not installed, installs on first use): ${message}`);
