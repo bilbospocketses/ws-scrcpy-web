@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Local HTTPS: choosing redirect to https no longer says plain http will stop answering other machines.** Both narrowed plain-http exposure modes showed the https-only notice, `plain http will stop answering other machines.`, but in redirect mode another machine's plain-http request is answered, with a redirect to the https address. Selecting **redirect to https** now says `other machines that open the plain http address are sent to the https address instead.`; **https only** keeps its sentence, and both still say this machine keeps working over localhost (`src/app/client/settings/tabs/LocalHttpsTab.ts`).
+
 ### Changed
 - **ci: the American-spelling gate moves to v1.0.3.** `build-and-test` checks out `bilbospocketses/american-spelling` at `4fe6f6e2` (v1.0.3, was v1.0.1 at `cfefb24e`). v1.0.2 added an allow entry for another repository; v1.0.3 adds the British spellings of materialize and its inflections to the word list. The gate still checks only the lines a branch adds, so nothing already on `main` is affected.
 - **docs: the technical guide explains how Settings tells a refusal from a failure.** §24.0 gains a paragraph on 0.5.6's refusal handling: a 403 is classified by its body (`refusalFromBody` / `adminRefusal`), the operator refusal holds the whole dialog back (`SettingsModal.onAdminRefused`), a role refusal shows `only an admin can change these settings.` on that tab alone, a stale token keeps its retry, Embedding's own rules, and Local HTTPS's retry for a failed `/api/tls/state` read. The key-files rows for `adminGate.ts`, `settingsLayout.ts` and `remoteAdmin.ts` name the new exports. Found by the 2026-10-10 wrap-up's doc sweep: nothing in the guide was wrong, but 0.5.6 was missing from it.

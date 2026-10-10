@@ -93,6 +93,37 @@ describe('local https panel', () => {
         expect(effectNotice.hidden).toBe(true);
     });
 
+    // Each narrowed mode says what IT does to other machines: https only
+    // refuses them (421), redirect answers them with a 302 to https
+    // (decideHttpRequest). Before 0.5.7 both showed the https-only sentence,
+    // which told a redirect user plain http would stop answering.
+    it('words the lockout notice for the mode selected: refused for https only, redirected for redirect', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(
+                async () => new Response(JSON.stringify(state({ status: 'ready', httpsListener: { bound: true } }))),
+            ),
+            candidateIps: ['192.168.86.3'],
+        });
+        const lockout = el.querySelector<HTMLElement>('[data-exposure-lockout-notice]')!;
+        const effectNotice = el.querySelector<HTMLElement>('[data-exposure-restart-notice]')!;
+
+        el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.click();
+        expect(lockout.textContent).toMatch(/plain http will stop answering other machines/i);
+        expect(lockout.textContent).not.toMatch(/sent to the https address/i);
+
+        el.querySelector<HTMLInputElement>('[data-exposure="redirect"]')!.click();
+        expect(lockout.hidden).toBe(false);
+        expect(lockout.textContent).toMatch(/sent to the https address instead/i);
+        expect(lockout.textContent).not.toMatch(/stop answering/i);
+        expect(lockout.textContent).toMatch(/cannot lock yourself out/i);
+        expect(effectNotice.hidden).toBe(false);
+        expect(effectNotice.textContent).toMatch(/takes effect immediately for new connections/i);
+
+        // And back: switching from redirect to https only replaces the text.
+        el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.click();
+        expect(lockout.textContent).toMatch(/plain http will stop answering other machines/i);
+    });
+
     it('tells the user streaming already works, once a downloadable certificate exists', async () => {
         // The measured fact that makes this panel honest: a click-through cert
         // warning is still a secure context. Someone seeing a browser warning
