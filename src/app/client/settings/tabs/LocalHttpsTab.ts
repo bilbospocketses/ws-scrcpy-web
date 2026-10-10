@@ -1210,11 +1210,18 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
             if (!radio.checked) return;
             const narrowed = radio.value !== 'open';
             // Notifications 6 and 7 — shown together, BEFORE confirm, the
-            // moment a narrowed mode is selected.
+            // moment a narrowed mode is selected. Notification 6 says what
+            // the chosen mode does to OTHER machines (decideHttpRequest):
+            // https only refuses their plain-http requests (421), redirect
+            // answers them with a 302 to the https address.
+            const otherMachines =
+                radio.value === 'redirect'
+                    ? 'other machines that open the plain http address are sent to the https address instead.'
+                    : 'plain http will stop answering other machines.';
             setNotice(
                 exposureLockoutNotice,
                 narrowed
-                    ? 'plain http will stop answering other machines. this machine keeps working over localhost, so you cannot lock yourself out.'
+                    ? `${otherMachines} this machine keeps working over localhost, so you cannot lock yourself out.`
                     : null,
             );
             // Corrected (review addendum): this is NOT the port field's
