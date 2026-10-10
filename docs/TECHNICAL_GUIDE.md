@@ -2411,11 +2411,13 @@ return requireAdmin(req, res);
 - **`GET /api/config` is never gated.** It is the launcher's readiness probe, the Docker image's `HEALTHCHECK` and the test harness's ready path. Gating it breaks all three at once, and it discloses nothing sensitive. Only the PATCH branch is guarded.
 - **`ServerShutdownApi` keeps its own ladder** rather than adopting `requireOperator`, because its off-box branch must stay token-first (403) then session (401) for the cookieless tray helper. It gained one clause: in **open** mode an off-box caller now also needs the opt-out.
 
-**The opt-out.** `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` (exact string `'1'` — a loose truthiness check would admit `''` or `'false'`) or `allowRemoteAdmin: true` in `config.json`. The env var is first-class and checked first: a container has nobody at a loopback browser, so it is the way into a container's admin routes, including the one-time setup of sign-in (`SECURITY.md` § Containers). There is no `docker exec` route: the image has no `curl` or `wget`, every `/api` call needs the per-launch token, and `POST /api/auth/enable` refuses until an admin with a password exists. The config key is what the banner's confirmation modal writes, and that PATCH is itself operator-gated, so the switch cannot be thrown from off-box.
+**The opt-out.** `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` (exact string `'1'` — a loose truthiness check would admit `''` or `'false'`) or `allowRemoteAdmin: true` in `config.json`. The env var is first-class and checked first: a container has nobody at a loopback browser, so it is the way into a container's admin routes, including the one-time setup of sign-in (`SECURITY.md` § Containers). There is no `docker exec` route: the image has no `curl` or `wget`, every `/api` call needs the per-launch token, and `POST /api/auth/enable` refuses until an admin with a password exists. The config key is what Settings → Users saves (0.5.5, below) and what the home page banner's confirmation modal writes, and both routes are themselves operator-gated, so the switch cannot be thrown from off-box.
 
 **`runtime.adminScope` and `runtime.callerIsLocal` on `GET /api/config`.** Two fields, not one: `adminScope` (`'local' | 'remote' | 'authenticated'`) is the **policy in force**, `callerIsLocal` is whether **this** request can act under it. The client needs both — a `local` policy shows buttons to a loopback caller and instructions to everyone else. Both are optional on the wire, so an older server reads as "no opinion" and the banner stays hidden rather than claiming a posture it cannot verify.
 
-**The banner is informational to everyone, actionable only from loopback.** In open mode there is no auth, so a card with a working "enable" button would render for an attacker too — a switch that turns off the lock, mounted on the outside of the door. It leads with **Set up sign-in** (recommended); **Allow remote admin without sign-in** sits second behind a red confirmation whose every dismissal path resolves *no*.
+**The banner is informational to everyone, actionable only from loopback.** In open mode there is no auth, so a card with a working "enable" button would render for an attacker too — a switch that turns off the lock, mounted on the outside of the door. It leads with **Set up sign-in** (recommended); **Allow remote admin without sign-in** sits second behind a red confirmation whose every dismissal path resolves *no*. **Under the `remote` policy the banner renders nothing** (0.5.5): until then it showed "Remote admin is enabled without sign-in." with no button and no way to dismiss it, and nothing in the app could turn the opt-out off.
+
+**Settings → Users owns the opt-out since 0.5.5.** Its card carries a **remote admin without sign-in** checkbox, with the warning the banner used to show as the note under it: `any device that can reach this server can administer it. set up sign-in, or uncheck this, to close it.` in the warning tone while checked, `admin actions are limited to this machine unless sign-in is set up.` while not. It is a **staged** setting, `allowRemoteAdmin` (`src/common/remoteAdmin.ts`): checking it raises the same `RemoteAdminWarningModal` first and stages only on its explicit accept (its `choose()` tells **Set up sign-in instead**, which opens the manage-users dialog over Settings, apart from a dismissal, which does nothing), unchecking asks nothing, the review lists `Remote admin without sign-in: off → on`, and Save applies it through the batch (§27.4, §27.7). The item is fed the `/api/config` envelope by the dialog (`applyUsersConfig`) and stays hidden until it arrives. Three more states: **forced** — `runtime.remoteAdminForced` (`remoteAdminForcedByEnv()`, true while `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`) shows the box checked and disabled with `forced on by WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 on the server; remove the variable to turn it off.`, and the batch refuses an attempt to turn it off with 409 and that sentence; **sign-in on** — the box stays visible and editable with `ignored while sign-in is on; it applies again if sign-in is turned off.`, so a stored `true` can be cleared before it comes back into force; **unreachable** — an off-box caller under the `local` policy sees the box disabled, since Save would only be refused. A device on another machine that is admin **only because of** the opt-out (`adminScope` `remote`, `callerIsLocal` false) is told under the box, and on the review screen through the field's `warning` (`StagedField.warning`), `you are on another device: saving this ends your admin access from here.`; after such a save the dialog re-reads `/api/config` and, if `adminApiReachable` now says no, opens Settings again on Users, where `canUse` holds back every admin read and poll (`reopenIfAdminLost`). The home page's dependency badge, mounted while the device was still admin, keeps its 15 s poll until that page reloads.
 
 **`adminApiReachable()` (`src/app/client/adminGate.ts`) is a second, independent predicate.** Every admin handler gates at the top of `handle`, so the GETs are gated too — without it a flagless container would 403-spam every poll interval on a completely healthy app. It composes with `canSeeSection`: *permitted* and *reachable* are different questions, and a signed-in admin reaching a container without the opt-out passes the first and fails the second. This is finding 9.6's argument extended from `role` to `adminScope`.
 
@@ -3154,11 +3156,13 @@ mark-completed-before-restart a race rather than a fact.
 
 The important property is negative. `set()` on an unregistered id is **silently
 ignored**, so a field nobody registered can never appear in `changes()`. The
-action-only tabs (Users, Service) register nothing, which makes "actions must not
+action-only tab (Service) registers nothing, which makes "actions must not
 appear in the change summary" a structural fact rather than a rule someone has to
 remember — and a future action cannot leak into the summary by oversight.
 Embedding registers exactly one field, `frameAncestorsAdd` (its pre-approvals,
-§27.4); its **revoke** is still an action and registers nothing.
+§27.4); its **revoke** is still an action and registers nothing. Users likewise
+registers one, `allowRemoteAdmin` (0.5.5, §24.0); its manage-users button and login
+toggle are still actions.
 
 ### 27.3 The tabs
 
@@ -3215,9 +3219,32 @@ dialog knows it is on a host, and stays hidden in a container. The Local HTTPS s
 box is an editable combobox (`src/app/client/settings/Combobox.ts`, the APG pattern:
 `role="combobox"`, `aria-autocomplete="none"`, a `listbox` that always lists every
 candidate, keyboard and Escape handling) rather than a native `<datalist>`, which filters
-its options by the box's value. The tab's one transient alert stays in one place, the last
-element of the section, below and outside its three cards (`.settings-tab-alert`), so it never
-reads as part of the last card; 5 s after a success, 10 s after an error.
+its options by the box's value.
+
+**Every tab reports an action's result on ONE status line** (0.5.5,
+`buildTabAlert` in `settingsLayout.ts`): the last element of the tab's section, below
+and outside its cards, so it never reads as part of the last one (`.settings-tab-alert`,
+hook `data-settings-alert`; the Local HTTPS one keeps `data-tls-alert` too). It is a
+`role="status"` live region. A success hides after 5 s and an error after 10 s; a new
+message replaces the old and restarts the clock, and a busy message (`saving…`,
+`removing the system service…`, `restarting → redirecting…`) stays until its result
+replaces it. `addCard` puts a split tab's later cards above it, and closing the dialog
+destroys every line (`destroyTabAlerts`), so nothing hides or shows after the dialog has
+gone. On it: the login toggle's failures (Users); change password's `saving…` /
+`password changed` / its refusals, log out's failure and install for all users' failure
+(Server); a revoke that never reached the server (Embedding, which used to write it into
+the list); a check or an apply that failed (Updates, whose action-row label keeps the
+update state); an install or uninstall that failed, with the card left as it was
+(Service, which used to replace the card with the error); a dependency install or update
+that failed (Dependencies, which used the browser's `alert()`); every Local HTTPS result;
+and the dialog's own save (§27.5), on the line of the tab on screen. What stays beside
+its control is what describes the control rather than an action's outcome: a field's
+validation (the port range and collision lines, the Embedding add row, the
+change-password blank check, and since 0.5.5 the Updates interval and owner refusals,
+each under its own field) and standing state (gate notes, the restart note, the
+privilege warning, `already installed for all users (/opt)`, the loading and
+"couldn't reach server" placeholders, the Updates state text, the note after a
+system-scope uninstall).
 
 ### 27.4 What stages, and what still writes immediately
 
@@ -3233,6 +3260,7 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'updateCheckIntervalMinutes',
     'githubOwner',
     FRAME_ANCESTORS_ADD_ID, // 'frameAncestorsAdd', src/common/embedderOrigin.ts
+    REMOTE_ADMIN_ID, // 'allowRemoteAdmin', src/common/remoteAdmin.ts (0.5.5)
 ]);
 ```
 
@@ -3280,9 +3308,15 @@ Three things the allowlist implies, all easy to state wrongly:
   nothing was removed from the endpoint — the tab simply no longer calls it. In a
   container it answers 409, as every updater route does (§26.5).
 - **"check for updates now" and "apply update" are actions**, as are everything
-  on Users and Service, Embedding's **revoke**, and the Server tab's reset /
-  change password / log out / install for all users / stop & exit / uninstall.
-  They fire on click and register nothing.
+  on Service, Users' **manage users** and **login** toggle, Embedding's
+  **revoke**, and the Server tab's reset / change password / log out / install
+  for all users / stop & exit / uninstall. They fire on click and register
+  nothing.
+- **Remote admin without sign-in stages** (0.5.5). The Users tab's checkbox
+  registers `allowRemoteAdmin` (label `Remote admin without sign-in`, `on` /
+  `off`) and Save sends it; the batch applies it through `updateAppConfig`, so
+  turning it off removes the key from `config.json` as `PATCH /api/config`
+  always has (§24.0).
 - **Pre-approving an embedder stages; revoking one does not** (0.5.3). The
   Embedding tab's **add an embedder** row (address, optional port, scheme
   `http` / `https` / `http & https`) validates with `embedderOriginsFromInput`
@@ -3365,10 +3399,14 @@ the order of its calls is the behavior:
 2. **A failure leaves the store alone.** No `reset()` and — above all — no tab
    refresh, since `refreshUpdates()` / `refreshServer()` re-register their fields
    with server values and would silently discard every staged edit. A refused
-   batch leaves the dialog open, the changes staged, and the reason on the footer
-   status line, named by the change's **label** rather than its wire id.
+   batch leaves the dialog open, the changes staged, and the reason on the status
+   line of the tab on screen (§27.3; it was a line in the footer until 0.5.5),
+   named by the change's **label** rather than its wire id. A change can carry a
+   `warning` for the summary to show under its list (`StagedField.warning`): remote
+   admin turned off by the device that is admin only because of it.
 3. **A restart redirects.** On `restartRequired` with a numeric `redirectPort`,
-   the dialog says `restarting → redirecting…` and navigates
+   the dialog says `restarting → redirecting…` on the tab's line, as a busy
+   message that stays up, and navigates
    `RESTART_REDIRECT_DELAY_MS` (4000 ms) later to that port on **this browser's
    own origin** — the server names only the port, because a server-built
    `localhost` URL sends every off-box client to its own machine. The delay is
@@ -3413,6 +3451,13 @@ A batch naming an id outside `STAGEABLE_IDS` is refused **before** the WAL row i
 written, so a rejected batch leaves no trace to reason about later. In a container,
 so is a batch naming a host-only key (`webPort` or an updater key): 409
 `reason: unsupported`, the same refusal `PATCH /api/config` gives (§26.5).
+
+**`allowRemoteAdmin` carries two pre-WAL checks** (0.5.5, `remoteAdminRefusal`),
+in the same rejected-apply shape: a value that is not a boolean is 400 (`allowRemoteAdmin must be a boolean`),
+and turning it off while `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` forces it on is 409 with
+`REMOTE_ADMIN_FORCED_MESSAGE`, since nothing the save writes could change what the
+server does. A container allows it, as `PATCH /api/config` does: it is not a
+host-only key.
 
 **`frameAncestorsAdd` carries two extra pre-WAL checks** (0.5.3), both answered in
 the rejected-apply shape (`{ ok: false, applied: [], failed: { id, error } }`), so
@@ -3500,11 +3545,12 @@ stays bounded; `pending` rows are never pruned.
 | `src/app/client/settings/closeIntent.ts` | `prompt` vs `close`, as a pure function of the store |
 | `src/app/client/settings/SaveRunner.ts` | `runSave()` and the `res.ok` normalization of a refused batch |
 | `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server, Local HTTPS |
-| `src/app/client/settings/settingsLayout.ts` | The shared section / card / item / row builders every tab but Dependencies uses (§27.3, Layout) |
+| `src/app/client/settings/settingsLayout.ts` | The shared section / card / item / row builders every tab but Dependencies uses (§27.3, Layout), and every tab's status line (`buildTabAlert`, §27.3) |
 | `src/app/client/settings/Combobox.ts` | The editable combobox the Local HTTPS certificate subject uses |
-| `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save, `performStagedSave`, `performDirtyClose`, the dirty-close prompt |
+| `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save and where its result is reported, `performStagedSave`, `performDirtyClose`, the dirty-close prompt, `reopenIfAdminLost` (§24.0) |
 | `src/app/client/DependencyAlertCard.ts` | The top-bar dependency-update indicator (§14.3) |
-| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, `frameAncestorsAddRefusal()`, the apply loop and the WAL marks |
+| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, `frameAncestorsAddRefusal()`, `remoteAdminRefusal()`, the apply loop and the WAL marks |
+| `src/common/remoteAdmin.ts` | `REMOTE_ADMIN_ID` and the forced-on copy, shared by the batch and Settings → Users (§24.0) |
 | `src/common/embedderOrigin.ts` | `FRAME_ANCESTORS_ADD_ID`, the Embedding add row's address / port validators and origin builder |
 | `src/server/db/PendingSettingsStore.ts` | The WAL rows and their transitions |
 | `src/server/db/reconcilePendingSettings.ts` | Boot-time abandon + prune |
