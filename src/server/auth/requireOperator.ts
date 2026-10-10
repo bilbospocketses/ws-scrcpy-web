@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { OPERATOR_REFUSAL_ERROR } from '../../common/remoteAdmin';
 import { Config } from '../Config';
 import { isLoopback } from '../security/loopback';
 import { isAuthEnabled } from './authState';
@@ -57,7 +58,7 @@ export function requireOperator(req: IncomingMessage, res: ServerResponse): bool
         const proven = isAuthEnabled(Config.getInstance().db) ? hasAuthenticatedUser(req) : allowRemoteAdmin();
         if (!proven) {
             res.writeHead(403, { 'content-type': 'application/json' });
-            res.end(JSON.stringify({ error: 'admin actions are limited to this machine' }));
+            res.end(JSON.stringify({ error: OPERATOR_REFUSAL_ERROR }));
             return false;
         }
     }

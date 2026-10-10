@@ -1,4 +1,5 @@
 import type { FirstRunStatus } from '../../common/ConfigEvents';
+import { OPERATOR_REFUSAL_ERROR } from '../../common/remoteAdmin';
 import type { Role } from './AuthClient';
 
 // Settings areas that only an admin may see/use. Everything NOT listed here is
@@ -57,3 +58,44 @@ export function adminApiReachable(runtime: Pick<FirstRunStatus, 'adminScope' | '
  * refused (0.5.5).
  */
 export const ADMIN_UNREACHABLE_NOTE = 'admin changes are limited to the machine running the server.';
+
+/**
+ * Said in place of a tab's controls when the server refused its read because
+ * this user is not an admin (`requireAdmin`'s `forbidden`; 0.5.6). The tab is
+ * not normally shown to such a user at all: this is the role check that
+ * failed open (`SettingsModal`), met by the server's own.
+ */
+export const ADMIN_ONLY_NOTE = 'only an admin can change these settings.';
+
+/** Which refusal a 403 was: see `adminRefusal`. */
+export type AdminRefusal = 'operator' | 'role';
+
+/**
+ * Which refusal a 403's body is (0.5.6), or null when it is not one this page
+ * can act on:
+ * - `operator`: `requireOperator` refused this page, which is not the
+ *   operator, so every admin call from here will be refused the same way;
+ * - `role`: `requireAdmin`'s bare `{"error":"forbidden"}`, a user who is not
+ *   an admin;
+ * - null for anything else, the stale-token refusal above all
+ *   (`isStaleTokenRefusal`: `forbidden` WITH a `reason`), which says the
+ *   server process changed under this page, not that this page may not ask.
+ */
+export function refusalFromBody(status: number, body: unknown): AdminRefusal | null {
+    if (status !== 403 || typeof body !== 'object' || body === null) return null;
+    const { error, reason } = body as { error?: unknown; reason?: unknown };
+    if (error === OPERATOR_REFUSAL_ERROR) return 'operator';
+    if (error === 'forbidden' && reason === undefined) return 'role';
+    return null;
+}
+
+/**
+ * Why the server refused an admin read, or null when it did not refuse it
+ * (`refusalFromBody`; any status but 403 is null). A refusal is not worth a
+ * retry; a null is a failure like any other, and keeps its retry. Reads the
+ * body, so call it only on a response whose body nothing else will read.
+ */
+export async function adminRefusal(res: Response): Promise<AdminRefusal | null> {
+    if (res.status !== 403) return null;
+    return refusalFromBody(res.status, await res.json().catch(() => null));
+}

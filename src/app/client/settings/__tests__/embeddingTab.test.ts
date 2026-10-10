@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FRAME_ANCESTORS_ADD_ID } from '../../../../common/embedderOrigin';
-import { ADMIN_UNREACHABLE_NOTE } from '../../adminGate';
+import { ADMIN_ONLY_NOTE, ADMIN_UNREACHABLE_NOTE } from '../../adminGate';
 import { performDirtyClose, performStagedSave, type SaveDeps } from '../../SettingsModal';
 import type { BatchResult } from '../SaveRunner';
 import { type Change, StagedSettingsStore } from '../StagedSettingsStore';
@@ -27,12 +27,15 @@ import {
 
 let approved: string[] = [];
 let listStatus = 200;
+/** The list read's body in place of `{ origins: approved }`, when set. */
+let listBody: unknown = null;
 let hangList = false;
 let calls: string[] = [];
 
 beforeEach(() => {
     approved = [];
     listStatus = 200;
+    listBody = null;
     hangList = false;
     calls = [];
     vi.stubGlobal(
@@ -42,7 +45,7 @@ beforeEach(() => {
             if (url === '/api/embed-origins' && hangList) return new Promise(() => undefined);
             if (url === '/api/embed-origins/revoke') return new Response('{}', { status: 500 });
             if (url === '/api/embed-origins') {
-                return new Response(JSON.stringify({ origins: approved }), { status: listStatus });
+                return new Response(JSON.stringify(listBody ?? { origins: approved }), { status: listStatus });
             }
             return new Promise(() => undefined);
         }),
@@ -182,8 +185,40 @@ describe('the add row', () => {
         expect(row.querySelector('.settings-control')).toBeNull();
     });
 
-    it('stays hidden when the list cannot be read (another machine is refused), with the reason shown', async () => {
+    // 0.5.6: a refused read is held back as the dialog holds it back when it
+    // knows from the start -- the reason, and nothing to retry or click into
+    // another refusal.
+    it('stays hidden when the list read is refused (another machine), saying why', async () => {
         listStatus = 403;
+        listBody = { error: 'embed permission is decided on this machine only' };
+        const ui = await buildTab();
+        expect(ui.adder.hidden).toBe(true);
+        expect(ui.listText()).toBe(ADMIN_UNREACHABLE_NOTE);
+        expect(ui.section.querySelector('[data-embed-list] [data-admin-unreachable-note]')).not.toBeNull();
+        expect(ui.listText()).not.toContain('could not read the list');
+    });
+
+    it('a user who is not an admin is told only an admin can change these, with nothing to add', async () => {
+        listStatus = 403;
+        listBody = { error: 'forbidden' };
+        const ui = await buildTab();
+        expect(ui.adder.hidden).toBe(true);
+        expect(ui.listText()).toBe(ADMIN_ONLY_NOTE);
+        expect(ui.section.querySelector('[data-embed-list] [data-admin-only-note]')).not.toBeNull();
+        expect(ui.section.querySelector('[data-admin-unreachable-note]')).toBeNull();
+    });
+
+    it('a stale token reads as a failure to read the list, not as a refusal', async () => {
+        listStatus = 403;
+        listBody = { error: 'forbidden', reason: 'missing or invalid token' };
+        const ui = await buildTab();
+        expect(ui.adder.hidden).toBe(true);
+        expect(ui.listText()).toContain('could not read the list');
+        expect(ui.section.querySelector('[data-admin-unreachable-note], [data-admin-only-note]')).toBeNull();
+    });
+
+    it('stays hidden when the list cannot be read (a server error), with the reason shown', async () => {
+        listStatus = 500;
         const ui = await buildTab();
         expect(ui.adder.hidden).toBe(true);
         expect(ui.listText()).toContain('could not read the list');

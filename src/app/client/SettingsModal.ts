@@ -33,6 +33,7 @@ import {
     applyLocalHttpsDependencyInstalled,
     applyLocalHttpsServiceStatus,
     applyLocalHttpsServiceStatusFailed,
+    applyLocalHttpsServiceStatusRefused,
     buildLocalHttpsTab,
     TLS_CERT_CHANGED_EVENT,
 } from './settings/tabs/LocalHttpsTab';
@@ -47,7 +48,12 @@ import {
 } from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
 import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
-import { applyUsersConfig, buildUsersTab, REMOTE_ADMIN_OFF_BOX_WARNING } from './settings/tabs/UsersTab';
+import {
+    applyUsersAdminUnreachable,
+    applyUsersConfig,
+    buildUsersTab,
+    REMOTE_ADMIN_OFF_BOX_WARNING,
+} from './settings/tabs/UsersTab';
 
 /**
  * Settings modal — every tab in a card, each setting in a two-column grid.
@@ -809,6 +815,11 @@ export class SettingsModal extends Modal {
                                 if (this.localHttpsTabEl)
                                     applyLocalHttpsServiceStatusFailed(this.localHttpsTabEl, retry);
                             },
+                            // A refusal says why on both tabs, with no retry.
+                            onServiceStatusRefused: (refusal) => {
+                                if (this.localHttpsTabEl)
+                                    applyLocalHttpsServiceStatusRefused(this.localHttpsTabEl, refusal);
+                            },
                         });
                     }
                     if (this.canUse('updates') && this.updatesTabEl) void refreshUpdates(this.updatesTabEl);
@@ -858,6 +869,7 @@ export class SettingsModal extends Modal {
                 strip.activate(id);
                 strip.getElement().querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
             },
+            onAdminRefused: () => this.onAdminRefused(),
         };
         const tabs: TabDef[] = [];
         if (canSeeSection(this.role, 'users')) {
@@ -1209,12 +1221,35 @@ export class SettingsModal extends Modal {
     }
 
     /**
+     * A tab's admin read was refused as not from the operator
+     * (`ctx.onAdminRefused`; 0.5.6), though `adminReachable` said the admin API
+     * would answer: it fails open when the runtime probe itself fails. Does now
+     * what the post-probe block does when it knows from the start: holds back
+     * the Server, Users and Embedding admin controls, replaces the four
+     * admin-only tabs with the note, and tells the page's pollers. Once per
+     * dialog; the Dependencies panel is stopped before its body goes, since
+     * replacing a body does not stop the poll inside it (§36).
+     */
+    private onAdminRefused(): void {
+        if (!this.adminReachable) return;
+        this.adminReachable = false;
+        if (this.serverTabEl) applyServerAdminUnreachable(this.serverTabEl);
+        if (this.usersTabEl) applyUsersAdminUnreachable(this.usersTabEl);
+        if (this.embeddingTabEl) applyEmbeddingHeldBack(this.embeddingTabEl);
+        if (this.dependenciesTabEl) destroyDependenciesTab(this.dependenciesTabEl);
+        this.applyAdminUnreachableNotes();
+        announceAdminAccessLost();
+    }
+
+    /**
      * Replace the Updates, Service, Dependencies and Local HTTPS bodies with
      * `buildAdminUnreachableSection` where the admin API will not answer this
      * page, the way `applyDockerGating` replaces them in a container (and
-     * through `TabStrip.replaceTabBody` for the same reasons). None of the four
-     * has started anything: their refreshes are all held behind `canUse`. The
-     * refs are dropped so nothing drives a detached body later.
+     * through `TabStrip.replaceTabBody` for the same reasons). From the
+     * post-probe block none of the four has started anything, since their
+     * refreshes are all held behind `canUse`; from `onAdminRefused` they have,
+     * which is why it stops the Dependencies panel's poll first. The refs are
+     * dropped so nothing drives a detached body later.
      */
     private applyAdminUnreachableNotes(): void {
         const notes: Array<[string, string]> = [

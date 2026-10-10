@@ -34,7 +34,7 @@
  * wraps the home page's dependency panel, which brings its own card.
  */
 
-import { ADMIN_UNREACHABLE_NOTE } from '../adminGate';
+import { ADMIN_ONLY_NOTE, ADMIN_UNREACHABLE_NOTE, type AdminRefusal } from '../adminGate';
 
 /** A single-card tab: its title, and the one card its items go into. */
 export interface SettingsSection {
@@ -326,5 +326,23 @@ export function buildAdminUnreachableNote(): HTMLElement {
     note.setAttribute('data-admin-unreachable-note', '');
     note.textContent = ADMIN_UNREACHABLE_NOTE;
     note.hidden = true;
+    return note;
+}
+
+/**
+ * What a tab shows in place of its controls when the server refused its read
+ * (`adminRefusal`; 0.5.6): why, and no retry, since a retry can only be
+ * refused again. An operator refusal is `buildAdminUnreachableNote`'s note,
+ * hook and all; a role refusal says only an admin can change these settings
+ * (`data-admin-only-note`). Shown, unlike `buildAdminUnreachableNote`.
+ */
+export function buildRefusedNote(refusal: AdminRefusal): HTMLElement {
+    const note = buildAdminUnreachableNote();
+    note.hidden = false;
+    if (refusal === 'role') {
+        note.removeAttribute('data-admin-unreachable-note');
+        note.setAttribute('data-admin-only-note', '');
+        note.textContent = ADMIN_ONLY_NOTE;
+    }
     return note;
 }
