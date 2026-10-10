@@ -66,6 +66,12 @@ async function batch(to: unknown, socket = LOOPBACK) {
     return r;
 }
 
+/** Every row the WAL holds, whatever its state: a refusal must leave none. */
+function walRows(): number {
+    return (Config.getInstance().db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as { n: number })
+        .n;
+}
+
 function onDisk(file: string): Record<string, unknown> {
     return JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<string, unknown>;
 }
@@ -111,7 +117,7 @@ describe('allowRemoteAdmin in the settings batch', () => {
             failed: { id: REMOTE_ADMIN_ID, error: 'allowRemoteAdmin must be a boolean' },
         });
         expect(onDisk(file)).not.toHaveProperty('allowRemoteAdmin');
-        expect(Config.getInstance().db.pendingSettings.getPending()).toHaveLength(0);
+        expect(walRows()).toBe(0);
     });
 
     it('refuses to turn it off while WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 forces it on, saying why', async () => {
@@ -124,9 +130,31 @@ describe('allowRemoteAdmin in the settings batch', () => {
             applied: [],
             failed: { id: REMOTE_ADMIN_ID, error: REMOTE_ADMIN_FORCED_MESSAGE },
         });
-        // Nothing written: the stored value is untouched.
+        // Nothing written: the stored value is untouched, and no WAL row at all.
         expect(Config.getInstance().getAppConfig().allowRemoteAdmin).toBe(true);
         expect(onDisk(file)['allowRemoteAdmin']).toBe(true);
+        expect(walRows()).toBe(0);
+    });
+
+    it('checks every allowRemoteAdmin change in the batch, not only the first', async () => {
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        setup({ webPort: 8000, allowRemoteAdmin: true });
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            {
+                changes: [
+                    { id: REMOTE_ADMIN_ID, label: 'Remote admin without sign-in', from: false, to: true },
+                    { id: REMOTE_ADMIN_ID, label: 'Remote admin without sign-in', from: true, to: false },
+                ],
+            },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi().handle(r.req, r.res);
+        expect(r.getStatus()).toBe(409);
+        expect(Config.getInstance().getAppConfig().allowRemoteAdmin).toBe(true);
+        expect(walRows()).toBe(0);
     });
 
     it('still accepts turning it on while forced (it changes nothing the server does)', async () => {
@@ -176,6 +204,39 @@ describe('remoteAdminRefusal', () => {
         [null, false, { status: 400, error: 'allowRemoteAdmin must be a boolean' }],
     ])('to %j, forced %j → %j', (to, forced, expected) => {
         expect(remoteAdminRefusal(to, forced)).toEqual(expected);
+    });
+});
+
+describe('PATCH /api/config while WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 forces it on', () => {
+    async function patch(body: Record<string, unknown>) {
+        const r = makeReqRes('PATCH', '/api/config', body, {}, LOOPBACK);
+        await new ConfigApi().handle(r.req, r.res);
+        return r;
+    }
+
+    it("refuses turning it off with the batch's 409 and copy, writing nothing", async () => {
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        const file = setup({ webPort: 8000, allowRemoteAdmin: true });
+        const r = await patch({ allowRemoteAdmin: false });
+        expect(r.getStatus()).toBe(409);
+        expect(r.getJson()).toEqual({ error: REMOTE_ADMIN_FORCED_MESSAGE, field: REMOTE_ADMIN_ID });
+        expect(Config.getInstance().getAppConfig().allowRemoteAdmin).toBe(true);
+        expect(onDisk(file)['allowRemoteAdmin']).toBe(true);
+    });
+
+    it('still turns it off when nothing forces it', async () => {
+        delete process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'];
+        const file = setup({ webPort: 8000, allowRemoteAdmin: true });
+        const r = await patch({ allowRemoteAdmin: false });
+        expect(r.getStatus()).toBe(200);
+        expect(onDisk(file)).not.toHaveProperty('allowRemoteAdmin');
+    });
+
+    it('still accepts other keys while forced', async () => {
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        setup();
+        const r = await patch({ firstRunComplete: true });
+        expect(r.getStatus()).toBe(200);
     });
 });
 

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
+import { REMOTE_ADMIN_FORCED_MESSAGE, REMOTE_ADMIN_ID } from '../../common/remoteAdmin';
 import { getAppVersion } from '../appVersion';
 import { callerIsLocal, remoteAdminForcedByEnv, requireOperator, resolveAdminScope } from '../auth/requireOperator';
 import { Config, ConfigValidationError, validateWebPortInput } from '../Config';
@@ -88,6 +89,16 @@ export class ConfigApi {
                 // audit): refuse the whole write rather than apply part of it.
                 const hostOnly = hostOnlyConfigKeys(Object.keys(parsed));
                 if (hostOnly.length > 0 && refuseInContainer(res, `change ${hostOnly.join(', ')}`, 'docker-settings')) {
+                    return true;
+                }
+                // Turning remote admin off while WS_SCRCPY_ALLOW_REMOTE_ADMIN=1
+                // forces it on changes nothing the server does: refused with the
+                // settings batch's 409 and copy (SettingsBatchApi), before anything
+                // is written.
+                if ((parsed as Record<string, unknown>)[REMOTE_ADMIN_ID] === false && remoteAdminForcedByEnv()) {
+                    log.warn(`PATCH /api/config refused: ${REMOTE_ADMIN_FORCED_MESSAGE}`);
+                    res.writeHead(409);
+                    res.end(JSON.stringify({ error: REMOTE_ADMIN_FORCED_MESSAGE, field: REMOTE_ADMIN_ID }));
                     return true;
                 }
                 const cfg = Config.getInstance();

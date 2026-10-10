@@ -249,9 +249,9 @@ export class SettingsBatchApi {
 
         // Remote admin, in the same rejected-apply shape and also before the
         // WAL row: a value that is not a boolean, or an attempt to turn it off
-        // while the environment forces it on.
-        const remoteAdmin = changes.find((c) => c.id === REMOTE_ADMIN_ID);
-        if (remoteAdmin) {
+        // while the environment forces it on. Every one in the batch, as the
+        // embedder check above does: a crafted batch can name it twice.
+        for (const remoteAdmin of changes.filter((c) => c.id === REMOTE_ADMIN_ID)) {
             const refusal = remoteAdminRefusal(remoteAdmin.to, remoteAdminForcedByEnv());
             if (refusal) {
                 log.warn(`refusing batch: ${REMOTE_ADMIN_ID} ${refusal.error}`);
