@@ -110,6 +110,20 @@ export function addCard(section: HTMLElement, headingText: string): HTMLElement 
 }
 
 /**
+ * `addCard` with no heading (0.5.8): a card that stands in for the cards around
+ * it rather than naming a group of its own -- the Server tab's note where the
+ * admin API will not answer this page, in place of its Ports and Application
+ * cards. Above the tab's status line in the same way. With no heading to set
+ * it off, modal.css's `.settings-card + .settings-card` gives it the space a
+ * heading's top margin would.
+ */
+export function addUntitledCard(section: HTMLElement): HTMLElement {
+    const card = buildCardElement();
+    section.insertBefore(card, section.querySelector(':scope > [data-settings-alert]'));
+    return card;
+}
+
+/**
  * Show or hide a split tab's card together with its heading. A card whose
  * every item is hidden would otherwise still draw an empty box under a heading
  * (the Server tab's Ports card before the dialog knows it is on a host, and in

@@ -139,8 +139,26 @@ describe('the read waits for the dialog (0.5.5)', () => {
         expect(list.textContent).toBe('admin changes are limited to the machine running the server.');
         expect(section.querySelector<HTMLElement>('[data-embed-add]')!.hidden).toBe(true);
         expect([...section.querySelectorAll('button')].filter((b) => !b.closest('[hidden]'))).toEqual([]);
+        expectMutedNote(list, 'data-admin-unreachable-note');
     });
 });
+
+/**
+ * The refusal note is the muted note every other tab shows (0.5.8): the
+ * `p.settings-status` `buildRefusedNote` makes, straight in the list's item,
+ * shown, and not a settings row (until 0.5.8 it was a label-only row, styled
+ * as a setting's label).
+ */
+function expectMutedNote(list: HTMLElement, hook: 'data-admin-unreachable-note' | 'data-admin-only-note'): void {
+    const notes = [...list.querySelectorAll<HTMLElement>(`[${hook}]`)];
+    expect(notes, hook).toHaveLength(1);
+    const note = notes[0]!;
+    expect(note.tagName).toBe('P');
+    expect(note.className).toBe('settings-status');
+    expect(note.hidden).toBe(false);
+    expect(note.parentElement).toBe(list);
+    expect(list.querySelector('.settings-row, .settings-label')).toBeNull();
+}
 
 describe('the add row', () => {
     it('stays hidden until the approved list has loaded, then shows', async () => {
@@ -195,6 +213,7 @@ describe('the add row', () => {
         expect(ui.adder.hidden).toBe(true);
         expect(ui.listText()).toBe(ADMIN_UNREACHABLE_NOTE);
         expect(ui.section.querySelector('[data-embed-list] [data-admin-unreachable-note]')).not.toBeNull();
+        expectMutedNote(ui.section.querySelector<HTMLElement>('[data-embed-list]')!, 'data-admin-unreachable-note');
         expect(ui.listText()).not.toContain('could not read the list');
     });
 
@@ -205,6 +224,7 @@ describe('the add row', () => {
         expect(ui.adder.hidden).toBe(true);
         expect(ui.listText()).toBe(ADMIN_ONLY_NOTE);
         expect(ui.section.querySelector('[data-embed-list] [data-admin-only-note]')).not.toBeNull();
+        expectMutedNote(ui.section.querySelector<HTMLElement>('[data-embed-list]')!, 'data-admin-only-note');
         expect(ui.section.querySelector('[data-admin-unreachable-note]')).toBeNull();
     });
 

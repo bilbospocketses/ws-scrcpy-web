@@ -649,6 +649,16 @@ dialog.settings-modal .settings-card[hidden] {
     display: none;
 }
 
+/*
+ * A card straight after another, with no heading between them: an untitled
+ * card (settingsLayout.ts's addUntitledCard; 0.5.8). The space above it is the
+ * top margin a card heading would have given it, so it never touches the card
+ * before.
+ */
+dialog.settings-modal .settings-card + .settings-card {
+    margin-top: 1.25rem;
+}
+
 /* The Dependencies panel's own card (home.css .section-card), inside the dialog. */
 dialog.settings-modal .section-card {
     background: var(--settings-card-bg);

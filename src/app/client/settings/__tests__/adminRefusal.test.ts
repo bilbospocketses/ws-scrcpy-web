@@ -289,7 +289,7 @@ describe('Users: a login click in flight when the controls are held back', () =>
 });
 
 describe('Users: held back after the fact', () => {
-    it('disables every control and shows the note, and a later envelope does not re-enable the box', () => {
+    it('hides and disables every control, shows only the note, and a later envelope brings none of it back', () => {
         const el = buildUsersTab(context(), new StagedSettingsStore());
         applyUsersAdminUnreachable(el);
         applyUsersConfig(el, {
@@ -299,8 +299,15 @@ describe('Users: held back after the fact', () => {
 
         for (const b of el.querySelectorAll<HTMLButtonElement>('.settings-card button')) {
             expect(b.disabled, b.textContent ?? '').toBe(true);
+            expect(b.closest<HTMLElement>('.settings-item')!.hidden, b.textContent ?? '').toBe(true);
         }
-        expect(el.querySelector<HTMLInputElement>('input[data-remote-admin]')!.disabled).toBe(true);
-        expect(el.querySelector<HTMLElement>('[data-admin-unreachable-note]')!.hidden).toBe(false);
+        const box = el.querySelector<HTMLInputElement>('input[data-remote-admin]')!;
+        expect(box.disabled).toBe(true);
+        expect(box.closest<HTMLElement>('.settings-item')!.hidden).toBe(true);
+        const note = shownNote(el, 'data-admin-unreachable-note');
+        const shownItems = [...el.querySelectorAll<HTMLElement>('.settings-card > .settings-item')].filter(
+            (i) => !i.hidden,
+        );
+        expect(shownItems).toEqual([note.parentElement]);
     });
 });

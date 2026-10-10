@@ -74,37 +74,131 @@ describe('ServerTab: Settings, Ports and Application cards', () => {
         expect(labelsIn(cards[0]!.card)).toEqual(['reset all my settings', 'password', 'session']);
         // The http and https ports are separate items.
         expect(labelsIn(cards[1]!.card)).toEqual(['http port', 'https port']);
-        // First, the note the tab shows only where the admin API will not
-        // answer this page (applyServerAdminUnreachable): an item of its own,
-        // hidden, with no row.
         expect(labelsIn(cards[2]!.card)).toEqual([
-            undefined,
             'install for all users',
             'stop the server and close the app',
             'uninstall ws-scrcpy-web',
         ]);
-        const note = cards[2]!.card.querySelector<HTMLElement>(
-            ':scope > .settings-item > [data-admin-unreachable-note]',
-        );
-        expect(note?.hidden).toBe(true);
+        // 0.5.8: the note the tab shows only where the admin API will not
+        // answer this page (applyServerAdminUnreachable) is a card of its own,
+        // with no heading, right under Settings, and hidden until then.
+        const noteCard = cards[0]!.card.nextElementSibling as HTMLElement;
+        expect(noteCard.className).toBe('settings-card');
+        expect(noteCard.hidden).toBe(true);
+        expect(noteCard.nextElementSibling).toBe(cards[1]!.heading);
+        expect(noteCard.querySelector(':scope > .settings-item > [data-admin-unreachable-note]')).not.toBeNull();
+        expect(el.querySelectorAll('[data-admin-unreachable-note]')).toHaveLength(1);
     });
 
-    it('where the admin API will not answer, holds back the ports and stop & exit, and says why once', () => {
-        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
-        const el = buildServerTab({ ...ctx, authEnabled: true }, new StagedSettingsStore());
-        applyServerHostMode(el);
-        applyServerAdminUnreachable(el);
-        expect(rowOf(el, 'http port').querySelector('input')!.disabled).toBe(true);
-        expect(rowOf(el, 'https port').querySelector('input')!.disabled).toBe(true);
-        expect(rowOf(el, 'stop the server and close the app').querySelector('button')!.disabled).toBe(true);
+    /**
+     * Where the admin API will not answer (0.5.8): the Settings card as it
+     * always is, then ONE untitled card holding only the note; the Ports and
+     * Application cards hidden, headings and all. Asserted by `hidden`, never
+     * by text: jsdom's textContent reads hidden elements too.
+     */
+    function expectOnlyNoteBesideSettings(el: HTMLElement): void {
+        const cards = [...el.querySelectorAll<HTMLElement>(':scope > .settings-card')];
+        const headings = [...el.querySelectorAll<HTMLElement>(':scope > h4.settings-card-heading')];
+        const byHeading = (text: string) => headings.find((h) => h.textContent === text)!;
+        const cardUnder = (text: string) => byHeading(text).nextElementSibling as HTMLElement;
+        const noteCard = cards.find((c) => c.querySelector('[data-admin-unreachable-note]'))!;
+        // Settings: shown, and every control in it usable.
+        expect(byHeading('Settings').hidden).toBe(false);
+        expect(cardUnder('Settings').hidden).toBe(false);
+        // Ports and Application: hidden with their headings.
+        for (const title of ['Ports', 'Application']) {
+            expect(byHeading(title).hidden, title).toBe(true);
+            expect(cardUnder(title).hidden, title).toBe(true);
+        }
+        // The note's card: shown, below Settings, and holding the note alone.
+        expect(noteCard.hidden).toBe(false);
+        expect(noteCard.previousElementSibling).toBe(cardUnder('Settings'));
         const notes = [...el.querySelectorAll<HTMLElement>('[data-admin-unreachable-note]')];
         expect(notes).toHaveLength(1);
         expect(notes[0]!.hidden).toBe(false);
         expect(notes[0]!.textContent).toBe('admin changes are limited to the machine running the server.');
+        expect(noteCard.querySelectorAll('.settings-row, button, input')).toHaveLength(0);
+        // Exactly two cards on show: Settings and the note's.
+        expect(cards.filter((c) => !c.hidden)).toEqual([cardUnder('Settings'), noteCard]);
+    }
+
+    it('where the admin API will not answer, shows the Settings card and the note alone, and holds back the rest', () => {
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        const el = buildServerTab({ ...ctx, authEnabled: true }, new StagedSettingsStore());
+        applyServerHostMode(el);
+        applyServerAdminUnreachable(el);
+        expectOnlyNoteBesideSettings(el);
+        // Still disabled under the hidden cards, as defense in depth.
+        expect(rowOf(el, 'http port').querySelector('input')!.disabled).toBe(true);
+        expect(rowOf(el, 'https port').querySelector('input')!.disabled).toBe(true);
+        expect(rowOf(el, 'stop the server and close the app').querySelector('button')!.disabled).toBe(true);
         // The user's own controls stay.
         expect(rowOf(el, 'reset all my settings').querySelector('button')!.disabled).toBe(false);
         expect(el.querySelector<HTMLButtonElement>('[data-action="change-password"]')!.disabled).toBe(false);
         expect(el.querySelector<HTMLButtonElement>('[data-action="logout"]')!.disabled).toBe(false);
+    });
+
+    // SettingsModal calls these in varying orders: the post-probe block holds
+    // the tab back BEFORE host mode, `onAdminRefused` after it, and a service
+    // status can arrive after either. None may bring a hidden card back.
+    it('host mode after the hold, then a service status, show neither the Ports nor the Application card', () => {
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        const el = buildServerTab({ ...ctx, authEnabled: true }, new StagedSettingsStore());
+        applyServerAdminUnreachable(el);
+        applyServerHostMode(el);
+        applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
+        expectOnlyNoteBesideSettings(el);
+        expect(rowOf(el, 'stop the server and close the app').querySelector('button')!.disabled).toBe(true);
+    });
+
+    it('host mode before the hold, then a service status, show neither the Ports nor the Application card', () => {
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        const el = buildServerTab({ ...ctx, authEnabled: true }, new StagedSettingsStore());
+        applyServerHostMode(el);
+        applyServerServiceStatus(el, { supported: true, platform: 'win32', status: 'not-installed' });
+        applyServerAdminUnreachable(el);
+        applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
+        expectOnlyNoteBesideSettings(el);
+    });
+
+    it('in a container, held back, shows the Settings card and the note alone too', () => {
+        const el = buildServerTab({ ...ctx, authEnabled: true }, new StagedSettingsStore());
+        applyServerAdminUnreachable(el);
+        applyServerContainerMode(el);
+        applyServerHostMode(el);
+        expectOnlyNoteBesideSettings(el);
+    });
+
+    it('where the admin API answers, the note card stays hidden and the admin cards show', () => {
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerHostMode(el);
+        applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
+        const noteCard = el
+            .querySelector<HTMLElement>('[data-admin-unreachable-note]')!
+            .closest<HTMLElement>('.settings-card')!;
+        expect(noteCard.hidden).toBe(true);
+        for (const h of el.querySelectorAll<HTMLElement>(':scope > h4.settings-card-heading')) {
+            expect(h.hidden, h.textContent ?? '').toBe(false);
+            expect((h.nextElementSibling as HTMLElement).hidden, h.textContent ?? '').toBe(false);
+        }
+    });
+
+    it('held back, "reset all my settings" still sends the per-user reset, and not the first-run half', async () => {
+        vi.spyOn(ResetConfirmModal, 'confirm').mockResolvedValue(true);
+        const reset = vi.spyOn(settingsService, 'reset').mockResolvedValue(undefined);
+        const fetchMock = vi.fn().mockReturnValue(new Promise(() => undefined));
+        vi.stubGlobal('fetch', fetchMock);
+        const reload = vi.fn();
+        const el = buildServerTab({ ...ctx, reload }, new StagedSettingsStore());
+        applyServerHostMode(el);
+        applyServerAdminUnreachable(el);
+        rowOf(el, 'reset all my settings').querySelector('button')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(reset).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls.filter((c) => c[0] === '/api/config')).toEqual([]);
+        expect(reload).toHaveBeenCalledTimes(1);
     });
 
     it('puts every https-port note, and the restart note both ports share, under the https port', () => {
@@ -157,6 +251,10 @@ describe('ServerTab: Settings, Ports and Application cards', () => {
         const cards = cardsOf(el);
         expect(cards.map((c) => c.heading.textContent)).toEqual(['Settings']);
         expect(labelsIn(cards[0]!.card)).toEqual(['reset all my settings']);
+        // No admin cards, so no note to stand in for them, held back or not.
+        applyServerAdminUnreachable(el);
+        expect(el.querySelectorAll(':scope > .settings-card')).toHaveLength(1);
+        expect(el.querySelector('[data-admin-unreachable-note]')).toBeNull();
     });
 });
 

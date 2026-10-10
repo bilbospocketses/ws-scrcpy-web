@@ -72,6 +72,39 @@ function sections(): HTMLElement[] {
     return [...document.querySelectorAll<HTMLElement>('dialog.settings-modal .settings-tab-panel section')];
 }
 
+/**
+ * Users where the admin API will not answer (0.5.8): the card shows the note
+ * and nothing else, and every control under it is still disabled. By `hidden`,
+ * never by text: jsdom's textContent reads hidden elements too.
+ */
+function expectUsersOnlyNote(users: HTMLElement): void {
+    const items = [...users.querySelectorAll<HTMLElement>('.settings-card > .settings-item')];
+    const note = users.querySelector<HTMLElement>('[data-admin-unreachable-note]')!;
+    expect(note.hidden).toBe(false);
+    expect(items.filter((i) => !i.hidden)).toEqual([note.parentElement]);
+    const buttons = [...users.querySelectorAll<HTMLButtonElement>('.settings-card button')];
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const b of buttons) expect(b.disabled, b.textContent ?? '').toBe(true);
+    expect(users.querySelector<HTMLInputElement>('input[data-remote-admin]')!.disabled).toBe(true);
+}
+
+/**
+ * Server where the admin API will not answer (0.5.8): the Settings card, and
+ * under it one untitled card with the note; Ports and Application hidden,
+ * headings and all.
+ */
+function expectServerOnlyNote(server: HTMLElement): void {
+    const shownCards = [...server.querySelectorAll<HTMLElement>(':scope > .settings-card')].filter((c) => !c.hidden);
+    const shownHeadings = [...server.querySelectorAll<HTMLElement>(':scope > h4.settings-card-heading')].filter(
+        (h) => !h.hidden,
+    );
+    expect(shownHeadings.map((h) => h.textContent)).toEqual(['Settings']);
+    expect(shownCards).toHaveLength(2);
+    expect(shownCards[0]).toBe(shownHeadings[0]!.nextElementSibling);
+    expect(shownCards[1]!.querySelector('[data-admin-unreachable-note]')).not.toBeNull();
+    expect(shownCards[1]!.previousElementSibling).toBe(shownCards[0]);
+}
+
 function tabButton(label: string): HTMLButtonElement {
     return [...document.querySelectorAll<HTMLButtonElement>('dialog.settings-modal [role="tab"]')].find(
         (b) => b.textContent === label,
@@ -189,17 +222,24 @@ describe('where the admin API will not answer this page', () => {
         );
 
         const byTitle = (t: string) => sections().find((s) => s.querySelector('h3')?.textContent === t);
-        // Users: manage users and enable login disabled.
-        for (const b of byTitle('Users')!.querySelectorAll<HTMLButtonElement>('.settings-card button')) {
-            expect(b.disabled, b.textContent ?? '').toBe(true);
-        }
-        // Server: the ports and stop & exit disabled.
+        // Users: only the note shows; manage users and enable login are
+        // hidden, and disabled underneath (0.5.8).
+        expectUsersOnlyNote(byTitle('Users')!);
+        // Server: the Settings card and the note's card alone; the ports and
+        // stop & exit are hidden with their cards, and disabled underneath.
         const server = byTitle('Server')!;
+        expectServerOnlyNote(server);
         for (const input of server.querySelectorAll<HTMLInputElement>('input[type="number"]')) {
             expect(input.disabled).toBe(true);
         }
         const stop = [...server.querySelectorAll('button')].find((b) => b.textContent === 'stop server & exit');
         expect(stop?.disabled).toBe(true);
+        // Embedding: the note is the muted one every other tab shows.
+        const embedNote = byTitle('Embedding')!.querySelector<HTMLElement>(
+            '[data-embed-list] [data-admin-unreachable-note]',
+        );
+        expect(embedNote?.tagName).toBe('P');
+        expect(embedNote?.className).toBe('settings-status');
         // Every affected tab says why, once.
         for (const t of ['Users', 'Embedding', 'Updates', 'Service', 'Dependencies', 'Server', 'Local HTTPS']) {
             const s =
@@ -274,10 +314,10 @@ describe('where the admin API will not answer this page', () => {
             expect(s!.textContent, t).not.toContain("couldn't reach server");
             expect(s!.querySelectorAll('.settings-card button'), t).toHaveLength(0);
         }
-        for (const b of byTitle('Users')!.querySelectorAll<HTMLButtonElement>('.settings-card button')) {
-            expect(b.disabled, b.textContent ?? '').toBe(true);
-        }
+        expectUsersOnlyNote(byTitle('Users')!);
         const server = byTitle('Server')!;
+        // Held back after host mode here: the Ports card it showed is hidden again.
+        expectServerOnlyNote(server);
         const stop = [...server.querySelectorAll('button')].find((b) => b.textContent === 'stop server & exit');
         expect(stop?.disabled).toBe(true);
         for (const input of server.querySelectorAll<HTMLInputElement>('input[type="number"]')) {
@@ -287,6 +327,7 @@ describe('where the admin API will not answer this page', () => {
         const embedding = byTitle('Embedding')!;
         const embedNote = embedding.querySelector<HTMLElement>('[data-embed-list] [data-admin-unreachable-note]');
         expect(embedNote?.textContent).toBe('admin changes are limited to the machine running the server.');
+        expect(embedNote?.className).toBe('settings-status');
         expect(embedding.querySelector<HTMLElement>('[data-embed-add]')!.hidden).toBe(true);
     });
 

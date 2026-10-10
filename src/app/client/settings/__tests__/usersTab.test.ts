@@ -9,6 +9,7 @@ import { SettingsSummaryModal } from '../SettingsSummaryModal';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { type AskChild, askUnbound, type TabContext } from '../tabs/EmbeddingTab';
 import {
+    applyUsersAdminUnreachable,
     applyUsersConfig,
     buildUsersTab,
     REMOTE_ADMIN_LABEL,
@@ -266,26 +267,79 @@ describe('remote admin without sign-in: what the item shows', () => {
 });
 
 describe('where the admin API will not answer this page', () => {
-    it('disables manage users and enable login, and says why once', () => {
+    /**
+     * The card shows the note and nothing else (0.5.8): every other item is
+     * hidden, and the note's is not. Asserted by `hidden`, never by text:
+     * jsdom's textContent reads hidden elements too.
+     */
+    function expectOnlyTheNote(section: HTMLElement): void {
+        const items = [...section.querySelectorAll<HTMLElement>('.settings-card > .settings-item')];
+        const noteItem = section.querySelector<HTMLElement>('[data-admin-unreachable-note]')!.parentElement!;
+        expect(items).toContain(noteItem);
+        expect(noteItem.hidden).toBe(false);
+        expect(section.querySelector<HTMLElement>('[data-admin-unreachable-note]')!.hidden).toBe(false);
+        for (const item of items) {
+            if (item === noteItem) continue;
+            expect(item.hidden, item.querySelector('.settings-label')?.textContent ?? '').toBe(true);
+        }
+        expect(items.filter((i) => !i.hidden)).toEqual([noteItem]);
+    }
+
+    it('shows only the note, says why once, and keeps the hidden controls disabled', () => {
         const ui = mount();
         applyUsersConfig(ui.section, envelope({ adminScope: 'local', callerIsLocal: false }, false));
+        expectOnlyTheNote(ui.section);
+        // Still disabled under the hidden items, as defense in depth.
         const buttons = [...ui.section.querySelectorAll<HTMLButtonElement>('button')];
         expect(buttons.map((b) => [b.textContent, b.disabled])).toEqual([
             ['manage users', true],
             ['enable login', true],
         ]);
         expect(ui.checkbox.disabled).toBe(true);
+        expect(ui.item.hidden).toBe(true);
         const notes = [...ui.section.querySelectorAll<HTMLElement>('[data-admin-unreachable-note]')];
         expect(notes).toHaveLength(1);
-        expect(notes[0]!.hidden).toBe(false);
         expect(notes[0]!.textContent).toBe('admin changes are limited to the machine running the server.');
     });
 
-    it('leaves everything usable, and the note hidden, where it answers', () => {
+    it('with sign-in on, hides the disable-login row too', () => {
+        const ui = mount(ctx({ authEnabled: true }));
+        applyUsersConfig(ui.section, envelope({ adminScope: 'local', callerIsLocal: false }, false));
+        expectOnlyTheNote(ui.section);
+        const disable = [...ui.section.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+            /disable login/.test(b.textContent ?? ''),
+        )!;
+        expect(disable.disabled).toBe(true);
+        expect(disable.closest<HTMLElement>('.settings-item')!.hidden).toBe(true);
+    });
+
+    it('a refusal after the envelope (applyUsersAdminUnreachable) leaves only the note as well', () => {
+        const ui = mount();
+        applyUsersConfig(ui.section, envelope({ adminScope: 'remote', callerIsLocal: false }, true));
+        expect(ui.item.hidden).toBe(false);
+        applyUsersAdminUnreachable(ui.section);
+        expectOnlyTheNote(ui.section);
+        expect(ui.checkbox.disabled).toBe(true);
+    });
+
+    it('a refusal before the envelope keeps the remote-admin item hidden when the envelope arrives', () => {
+        const ui = mount();
+        applyUsersAdminUnreachable(ui.section);
+        applyUsersConfig(ui.section, envelope({ adminScope: 'remote', callerIsLocal: true }, true));
+        expectOnlyTheNote(ui.section);
+        expect(ui.checkbox.disabled).toBe(true);
+    });
+
+    it('leaves everything usable and shown, and the note hidden, where it answers', () => {
         const ui = mount();
         applyUsersConfig(ui.section, envelope({ adminScope: 'remote', callerIsLocal: false }, true));
         expect([...ui.section.querySelectorAll<HTMLButtonElement>('button')].every((b) => !b.disabled)).toBe(true);
-        expect(ui.section.querySelector<HTMLElement>('[data-admin-unreachable-note]')!.hidden).toBe(true);
+        const note = ui.section.querySelector<HTMLElement>('[data-admin-unreachable-note]')!;
+        expect(note.hidden).toBe(true);
+        for (const item of ui.section.querySelectorAll<HTMLElement>('.settings-card > .settings-item')) {
+            if (item.contains(note)) continue;
+            expect(item.hidden, item.querySelector('.settings-label')?.textContent ?? '').toBe(false);
+        }
     });
 });
 
