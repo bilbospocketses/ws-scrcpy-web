@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-10-10
+
 ### Fixed
 - **Local HTTPS: choosing redirect to https no longer says plain http will stop answering other machines.** Both narrowed plain-http exposure modes showed the https-only notice, `plain http will stop answering other machines.`, but in redirect mode another machine's plain-http request is answered, with a redirect to the https address. Selecting **redirect to https** now says `other machines that open the plain http address are sent to the https address instead.`; **https only** keeps its sentence, and both still say this machine keeps working over localhost (`src/app/client/settings/tabs/LocalHttpsTab.ts`).
 
