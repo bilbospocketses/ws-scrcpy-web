@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs: the technical guide explains how Settings tells a refusal from a failure.** §24.0 gains a paragraph on 0.5.6's refusal handling: a 403 is classified by its body (`refusalFromBody` / `adminRefusal`), the operator refusal holds the whole dialog back (`SettingsModal.onAdminRefused`), a role refusal shows `only an admin can change these settings.` on that tab alone, a stale token keeps its retry, Embedding's own rules, and Local HTTPS's retry for a failed `/api/tls/state` read. The key-files rows for `adminGate.ts`, `settingsLayout.ts` and `remoteAdmin.ts` name the new exports. Found by the 2026-10-10 wrap-up's doc sweep: nothing in the guide was wrong, but 0.5.6 was missing from it.
+- **docs: the technical guide names the right test for the certificate-subject explainer.** §14's note on the explainer's theme bootstrap named `tests/unit/certificateSubjectHelp.test.ts`, which never existed; the test is `src/common/__tests__/certificateSubjectHelp.test.ts`. Found by the same sweep's check of every path the docs name.
+
 ## [0.5.6] - 2026-10-10
 
 ### Fixed
