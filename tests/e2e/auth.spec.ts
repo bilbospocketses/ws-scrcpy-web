@@ -52,6 +52,7 @@ import {
     setLabel,
     settingsRow,
     settingsSection,
+    settingsTabLine,
     setUserPassword,
     submitLoginFresh,
     submitLoginPage,
@@ -227,7 +228,8 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             const enableRes = await enableSeen;
             expect(enableRes.status()).toBe(409);
             expect(await enableRes.json()).toEqual({ error: 'set an admin password before enabling auth' });
-            await expect(users.locator('p.settings-status')).toHaveText(
+            // On the tab's status line, below the card (0.5.5).
+            await expect(settingsTabLine(users)).toHaveText(
                 'Add a user with an admin password first (Users → manage users)',
             );
             await expect(settings).toBeVisible();
@@ -1020,7 +1022,9 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             // 'save' is scoped to the row: an admin's Server section has a second one.
             await cpRow.getByRole('button', { name: 'save', exact: true }).click();
             expect((await badSeen).status()).toBe(400);
-            await expect(server.getByText('current password incorrect', { exact: true })).toBeVisible();
+            // The result is on the Server tab's status line, below its cards (0.5.5).
+            await expect(settingsTabLine(server)).toHaveText('current password incorrect');
+            await expect(settingsTabLine(server)).toBeVisible();
             await expect(current).toBeVisible();
 
             // UI positive.
@@ -1032,7 +1036,8 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             expect(good.status()).toBe(200);
             expect(await good.json()).toEqual({ ok: true });
             changed = true;
-            await expect(server.getByText('password changed', { exact: true })).toBeVisible();
+            await expect(settingsTabLine(server)).toHaveText('password changed');
+            await expect(settingsTabLine(server)).toBeVisible();
             await expect(current).toBeHidden();
             await expect(cpRow.getByRole('button', { name: 'change password', exact: true })).toBeVisible();
             // Changing one's password does not revoke the session that did it.

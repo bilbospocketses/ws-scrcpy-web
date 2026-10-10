@@ -181,7 +181,7 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
             await expect(install).toBeEnabled();
         } else {
             const why = status.supported
-                ? `install offered disabled (system scope where the host has scopes): ${(await service.locator('.settings-status').allTextContents()).join(' | ').trim() || 'no note rendered'}`
+                ? `install offered disabled (system scope where the host has scopes): ${(await service.locator('.settings-card .settings-status').allTextContents()).join(' | ').trim() || 'no note rendered'}`
                 : `service mode unsupported on this host (${status.unsupportedReason ?? 'no reason given'})`;
             test.info().annotations.push({
                 type: 'partial',
