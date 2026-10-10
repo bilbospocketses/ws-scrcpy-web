@@ -35,7 +35,7 @@ This is the operational runbook for cutting a release. Every step is a concrete 
    node scripts/extract-changelog.mjs vX.Y.Z
    ```
    Confirm the captured section reads correctly. While releases remain unsigned, also try `--unsigned` to preview the warning block CI will inject.
-6. **Land the bump via a PR — the tag is created for you.** `main` is protected (PR + passing checks + signed commit required), so you can **not** `git push origin main`, and you do **not** tag by hand. The `auto-release.yml` pipeline (fires on every push to `main`) does the tagging. Two ways in:
+6. **Land the bump via a PR — the tag is created for you.** `main` is protected (PR + passing checks on a branch up to date with `main` + signed commit required; CI itself runs on the PR only, not again on the merge), so you can **not** `git push origin main`, and you do **not** tag by hand. The `auto-release.yml` pipeline (fires on every push to `main`) does the tagging. Two ways in:
 
    **(a) Label-driven (preferred).** Put a `release:beta` or `release:stable` label on the feature PR before it merges. On merge, the `Auto Release` workflow computes the next version, opens an **API-signed** bump PR (web-flow-signed so it satisfies `required_signatures`), and auto-merges it; that bump-commit merge then triggers the tag push. Nothing manual after labeling.
 

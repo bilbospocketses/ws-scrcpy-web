@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **ci: CI runs on pull requests only, and a PR must be up to date with `main` to merge.** `ci.yml` no longer runs again on the push to `main`: that second ~17-minute run tested the same code and gated nothing (Auto Release and the tag's release build never wait on it). In its place, `main`'s ruleset now requires the branch to be up to date (`strict_required_status_checks_policy`), so the PR run tests exactly what lands. CodeQL still runs on `main`, which code scanning needs as its baseline. One cost: PR runs no longer get an npm cache refreshed by `main`, so a lockfile change installs cold once (`.github/workflows/ci.yml`, `docs/RELEASING.md`).
 - **test: the settings-cards e2e waits for the app's own theme write before setting its own.** Its dark-theme run set `data-theme` before the boot's `applyStoredTheme()` had landed, so that write could turn the page light again and the run measured the light colors (it failed twice on #961's CI). It now calls `waitForThemeSettled` first, the barrier the other theme specs already use (`tests/e2e/settings-cards.spec.ts`).
 
 ## [0.5.8] - 2026-10-10

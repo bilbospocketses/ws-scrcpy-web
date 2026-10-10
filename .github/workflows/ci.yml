@@ -1,8 +1,13 @@
 name: CI
 
+# Pull requests only (since 2026-10-10). A push to main used to run this whole
+# workflow again on the squash commit, ~17 minutes that gated nothing: Auto
+# Release and the tag's release.yml never wait on it. The PR run is what
+# merges, and main's ruleset requires the branch to be up to date
+# (strict_required_status_checks_policy), so the code it tested is the code
+# that lands. The cost: PR runs no longer get an npm cache refreshed on main,
+# so a lockfile change installs cold once.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -30,7 +35,6 @@ jobs:
       # Exceptions are not kept in this repo. A verbatim quote takes the inline
       # `spelling: allow` marker; an identifier used on many lines goes in the
       # gate's central allow.txt, and reaches this repo when the pin is bumped.
-      # On a push to main the base is main itself, so there is nothing to scan.
       - name: Fetch the base branch
         run: git fetch --no-tags origin "+refs/heads/${BASE}:refs/remotes/origin/${BASE}"
         env:
