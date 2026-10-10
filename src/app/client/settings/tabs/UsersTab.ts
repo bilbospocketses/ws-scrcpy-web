@@ -22,6 +22,15 @@ export const REMOTE_ADMIN_LABEL = 'Remote admin without sign-in';
 export const REMOTE_ADMIN_ON_NOTE =
     'any device that can reach this server can administer it. set up sign-in, or uncheck this, to close it.';
 
+/**
+ * The bold title over the note while the exposure is live (saved on, or forced
+ * by the environment): the home page banner's own title, which this item replaced.
+ */
+export const REMOTE_ADMIN_ON_TITLE = 'remote admin is enabled without sign-in.';
+
+/** The same title while the box is checked but not yet saved. */
+export const REMOTE_ADMIN_STAGED_TITLE = 'remote admin will be enabled without sign-in when you save.';
+
 /** Under the checkbox while it is unchecked. */
 export const REMOTE_ADMIN_OFF_NOTE = 'admin actions are limited to this machine unless sign-in is set up.';
 
@@ -209,7 +218,16 @@ function buildRemoteAdminItem(
     note.id = `settings-remote-admin-${remoteAdminDomSeq}`;
     checkbox.setAttribute('aria-describedby', note.id);
 
-    const item = buildItem(row, note);
+    // While the exposure is (or is about to be) live, the item takes the look of
+    // the home page banner it replaced (`.settings-item--alert`, modal.css): a
+    // bold warning-colored title over the note, in a bordered box.
+    const title = document.createElement('strong');
+    title.className = 'settings-alert-title';
+    title.style.gridColumn = '1 / -1';
+    title.setAttribute('data-remote-admin-title', '');
+    title.hidden = true;
+
+    const item = buildItem(row, title, note);
     item.hidden = true;
     setRowShown(row, false);
     note.hidden = true;
@@ -249,8 +267,15 @@ function buildRemoteAdminItem(
             text = REMOTE_ADMIN_OFF_NOTE;
             warn = false;
         }
+        // The banner look: forced on, or checked with sign-in off. The title says
+        // whether it is already in force or only staged.
+        const alert = forced || (!signInOn && value);
+        title.textContent = alert ? (forced || stored() ? REMOTE_ADMIN_ON_TITLE : REMOTE_ADMIN_STAGED_TITLE) : '';
+        title.hidden = !alert;
+        item.classList.toggle('settings-item--alert', alert);
         note.textContent = text;
-        note.classList.toggle('settings-status-warning', warn);
+        // In the box the title carries the warning tone and the note reads as its body.
+        note.classList.toggle('settings-status-warning', warn && !alert);
     }
 
     function register(initial: boolean): void {

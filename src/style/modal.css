@@ -721,6 +721,32 @@ dialog.settings-modal
     border-top: 1px solid var(--button-border-color);
 }
 
+/*
+ * An item that carries a live exposure (Users: remote admin without sign-in,
+ * on): the look of the home page banner it replaced (admin-scope-banner.css's
+ * `--warning` state, removed in 0.5.5) — the header background, a warning
+ * border, a bold warning-colored title, the note as plain muted body text.
+ * The negative side margin keeps its labels on the same x as the items around
+ * it. The second selector matches the dividing line's rule above, so the box's
+ * own border wins over that line.
+ */
+dialog.settings-modal .settings-item.settings-item--alert,
+dialog.settings-modal
+    .settings-item:not([hidden]):has(> :not([hidden]))
+    ~ .settings-item.settings-item--alert:not([hidden]):has(> :not([hidden])) {
+    border: 1px solid var(--warning-color);
+    border-radius: 6px;
+    background-color: var(--header-bg-color);
+    padding: 0.6rem 0.75rem;
+    margin: 0.4rem -0.75rem;
+}
+
+dialog.settings-modal .settings-alert-title {
+    color: var(--warning-color);
+    font-weight: 600;
+    font-size: 13px;
+}
+
 dialog.settings-modal .settings-row {
     display: contents;
 }
@@ -987,6 +1013,14 @@ dialog.settings-modal .settings-status.settings-tab-alert {
 dialog.settings-modal .settings-status.settings-tab-alert:empty {
     margin: 0;
     min-height: 0;
+}
+
+/* Inside an alert item (`.settings-item--alert`, above), the note is the box's
+   plain muted body text, as on the home page banner it replaced. */
+dialog.settings-modal .settings-item--alert .settings-status {
+    padding-left: 0;
+    color: var(--text-color-light);
+    font-style: normal;
 }
 
 /*

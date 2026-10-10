@@ -15,7 +15,9 @@ import {
     REMOTE_ADMIN_OFF_BOX_WARNING,
     REMOTE_ADMIN_OFF_NOTE,
     REMOTE_ADMIN_ON_NOTE,
+    REMOTE_ADMIN_ON_TITLE,
     REMOTE_ADMIN_SIGN_IN_NOTE,
+    REMOTE_ADMIN_STAGED_TITLE,
 } from '../tabs/UsersTab';
 
 /**
@@ -88,13 +90,14 @@ function mount(context: TabContext = ctx()) {
     document.body.appendChild(section);
     const checkbox = section.querySelector<HTMLInputElement>('input[data-remote-admin]')!;
     const note = section.querySelector<HTMLElement>('[data-remote-admin-note]')!;
+    const title = section.querySelector<HTMLElement>('[data-remote-admin-title]')!;
     const item = checkbox.closest<HTMLElement>('.settings-item')!;
     const line = section.querySelector<HTMLElement>(':scope > [data-settings-alert]')!;
     const toggle = (checked: boolean): void => {
         checkbox.checked = checked;
         checkbox.dispatchEvent(new Event('change', { bubbles: true }));
     };
-    return { store, section, checkbox, note, item, line, toggle };
+    return { store, section, checkbox, note, title, item, line, toggle };
 }
 
 describe('the login toggle', () => {
@@ -156,7 +159,7 @@ describe('remote admin without sign-in: what the item shows', () => {
         expect(ui.note.hidden).toBe(false);
     });
 
-    it('on: checked, with the warning that used to be on the home page', () => {
+    it('on: checked, in the home page banner look, with its title over the warning', () => {
         const ui = mount();
         applyUsersConfig(ui.section, envelope({ adminScope: 'remote' }, true));
         expect(ui.checkbox.checked).toBe(true);
@@ -164,7 +167,40 @@ describe('remote admin without sign-in: what the item shows', () => {
         expect(ui.note.textContent).toBe(
             'any device that can reach this server can administer it. set up sign-in, or uncheck this, to close it.',
         );
-        expect(ui.note.classList.contains('settings-status-warning')).toBe(true);
+        // The box carries the warning tone; the note reads as its body.
+        expect(ui.item.classList.contains('settings-item--alert')).toBe(true);
+        expect(ui.title.hidden).toBe(false);
+        expect(ui.title.textContent).toBe(REMOTE_ADMIN_ON_TITLE);
+        expect(ui.title.textContent).toBe('remote admin is enabled without sign-in.');
+        expect(ui.note.classList.contains('settings-status-warning')).toBe(false);
+    });
+
+    it('checked but not yet saved: the banner look says it applies on save', async () => {
+        vi.spyOn(RemoteAdminWarningModal, 'choose').mockResolvedValue('accept');
+        const ui = mount(ctx({ askChild: async (open) => open() }));
+        applyUsersConfig(ui.section, envelope({}, false));
+        expect(ui.item.classList.contains('settings-item--alert')).toBe(false);
+        expect(ui.title.hidden).toBe(true);
+        ui.toggle(true);
+        await flush();
+        expect(ui.item.classList.contains('settings-item--alert')).toBe(true);
+        expect(ui.title.textContent).toBe(REMOTE_ADMIN_STAGED_TITLE);
+        // Unchecked again: back to a plain item.
+        ui.toggle(false);
+        expect(ui.item.classList.contains('settings-item--alert')).toBe(false);
+        expect(ui.title.hidden).toBe(true);
+    });
+
+    it('off, and on while sign-in is on, are plain items', () => {
+        const off = mount();
+        applyUsersConfig(off.section, envelope({}, false));
+        expect(off.item.classList.contains('settings-item--alert')).toBe(false);
+        expect(off.title.hidden).toBe(true);
+
+        const signedIn = mount(ctx({ authEnabled: true }));
+        applyUsersConfig(signedIn.section, envelope({ adminScope: 'authenticated' }, true));
+        expect(signedIn.item.classList.contains('settings-item--alert')).toBe(false);
+        expect(signedIn.title.hidden).toBe(true);
     });
 
     it('forced on by the environment: checked and disabled, and says how to turn it off', () => {
@@ -176,6 +212,8 @@ describe('remote admin without sign-in: what the item shows', () => {
         expect(ui.note.textContent).toBe(
             'forced on by WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 on the server; remove the variable to turn it off.',
         );
+        expect(ui.item.classList.contains('settings-item--alert')).toBe(true);
+        expect(ui.title.textContent).toBe(REMOTE_ADMIN_ON_TITLE);
         expect(ui.store.changes()).toEqual([]);
     });
 
