@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **test: the settings-cards e2e waits for the app's own theme write before setting its own.** Its dark-theme run set `data-theme` before the boot's `applyStoredTheme()` had landed, so that write could turn the page light again and the run measured the light colors (it failed twice on #961's CI). It now calls `waitForThemeSettled` first, the barrier the other theme specs already use (`tests/e2e/settings-cards.spec.ts`).
+
 ## [0.5.8] - 2026-10-10
 
 ### Fixed
