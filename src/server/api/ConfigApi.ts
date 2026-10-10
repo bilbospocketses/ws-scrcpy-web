@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
 import { getAppVersion } from '../appVersion';
-import { callerIsLocal, requireOperator, resolveAdminScope } from '../auth/requireOperator';
+import { callerIsLocal, remoteAdminForcedByEnv, requireOperator, resolveAdminScope } from '../auth/requireOperator';
 import { Config, ConfigValidationError, validateWebPortInput } from '../Config';
 import { Logger } from '../Logger';
 import { applyUpdaterConfigChange, type UpdaterControls } from '../updaterConfigSync';
@@ -48,6 +48,7 @@ export class ConfigApi {
                         ...cfg.getFirstRunStatus(),
                         adminScope: resolveAdminScope(),
                         callerIsLocal: callerIsLocal(req),
+                        remoteAdminForced: remoteAdminForcedByEnv(),
                         appVersion: getAppVersion(),
                     },
                 };
