@@ -49,3 +49,11 @@ export function adminApiReachable(runtime: Pick<FirstRunStatus, 'adminScope' | '
     if (runtime.adminScope === 'local') return runtime.callerIsLocal === true;
     return true;
 }
+
+/**
+ * Said once on each Settings tab whose admin controls are held back because
+ * `adminApiReachable` is false for this page, and in the Dependencies table
+ * when the server refuses its read: every one of those controls would only be
+ * refused (0.5.5).
+ */
+export const ADMIN_UNREACHABLE_NOTE = 'admin changes are limited to the machine running the server.';

@@ -1,5 +1,8 @@
 import { type DependencyInfo, DependencyStatus, type UpdateResult } from '../../common/DependencyTypes';
 import { escapeHtml } from '../htmlEscape';
+import { onAdminAccessLost } from './adminAccess';
+import { ADMIN_UNREACHABLE_NOTE } from './adminGate';
+import type { TabAlert } from './settings/settingsLayout';
 import { isStaleTokenRefusal } from './staleToken';
 
 const POLL_INTERVAL_MS = 15_000;
@@ -25,14 +28,25 @@ function offersInstall(dep: DependencyInfo): boolean {
     return dep.status === DependencyStatus.Error && dep.deferInstall === true && dep.installedVersion === null;
 }
 
+/**
+ * The dependency table, hosted by Settings → Dependencies (its only home since
+ * the home page's copy became an alert badge).
+ *
+ * An install or update that fails is reported on that tab's status line
+ * (`alert`, 0.5.5), where every Settings tab reports an action's result; it
+ * used to be the browser's `alert()`. A failed load or check is the table's
+ * state, not an action's result, and stays in the table.
+ */
 export class DependencyPanel {
     private container: HTMLElement;
     private tableBody: HTMLTableSectionElement | null = null;
     private pollHandle: ReturnType<typeof setInterval> | null = null;
     private busy = false;
     private restarting = false;
+    /** Removes the admin-access-lost listener `startPolling` adds. */
+    private stopListening: (() => void) | null = null;
 
-    constructor() {
+    constructor(private readonly alert: Pick<TabAlert, 'show'>) {
         this.container = document.createElement('div');
         this.container.id = 'dependency-panel';
         this.container.className = 'home-section';
@@ -60,8 +74,8 @@ export class DependencyPanel {
         this.container.querySelector('.dep-check-all')!.addEventListener('click', () => this.checkAll());
     }
 
-    static async create(): Promise<DependencyPanel> {
-        const panel = new DependencyPanel();
+    static async create(alert: Pick<TabAlert, 'show'>): Promise<DependencyPanel> {
+        const panel = new DependencyPanel(alert);
         await panel.load();
         panel.startPolling();
         return panel;
@@ -81,6 +95,8 @@ export class DependencyPanel {
 
     private startPolling(): void {
         if (this.pollHandle !== null) return;
+        // This page lost its admin access: no tick may land on the refusal.
+        this.stopListening = onAdminAccessLost(() => this.stopPolling());
         this.pollHandle = setInterval(() => {
             if (this.busy || this.restarting) return;
             void this.load();
@@ -92,11 +108,21 @@ export class DependencyPanel {
             clearInterval(this.pollHandle);
             this.pollHandle = null;
         }
+        this.stopListening?.();
+        this.stopListening = null;
     }
 
     private async load(): Promise<void> {
         try {
             const res = await fetch('/api/dependencies');
+            if (res.status === 403) {
+                // Refused: this page is no longer an admin (another device
+                // turned remote admin off, or a session ended). Say so and
+                // stop, rather than be refused every 15 s (0.5.5).
+                this.stopPolling();
+                this.renderError(ADMIN_UNREACHABLE_NOTE);
+                return;
+            }
             const deps: DependencyInfo[] = await res.json();
             this.render(deps);
         } catch {
@@ -160,11 +186,11 @@ export class DependencyPanel {
                     this.showRestartPrompt();
                 }
             } else {
-                alert(`${install ? 'Install' : 'Update'} failed: ${result.errorMessage}`);
+                this.alert.show('error', `${install ? 'install' : 'update'} failed: ${result.errorMessage}`);
                 await this.load();
             }
         } catch {
-            alert(`${install ? 'Install' : 'Update'} request failed`);
+            this.alert.show('error', `${install ? 'install' : 'update'} failed: could not reach the server.`);
             await this.load();
         }
     }

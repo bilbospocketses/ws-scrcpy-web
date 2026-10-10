@@ -87,9 +87,16 @@ describe('Settings → Service: a declined system-scope uninstall prompt', () =>
         for (let i = 0; i < 5; i++) await flush();
 
         expect(fetchMock).toHaveBeenCalledWith('/api/service/uninstall', { method: 'POST' });
-        const error = section.querySelector<HTMLElement>('.settings-status-error');
+        // On the tab's status line, below the card (0.5.5)...
+        const error = section.querySelector<HTMLElement>(':scope > [data-settings-alert]');
         expect(error?.textContent).toBe(DECLINED);
-        expect(error?.hidden).toBe(false);
+        expect(error?.textContent).not.toBe('');
+        expect(error?.classList.contains('settings-status-error')).toBe(true);
         expect(section.textContent).not.toContain('removing the system service');
+        // ...and the card is as it was, the uninstall button back for another try.
+        expect(uninstall!.isConnected).toBe(true);
+        expect(uninstall!.disabled).toBe(false);
+        expect(uninstall!.textContent).toBe('running — uninstall?');
+        expect(section.querySelector('.settings-card .settings-status-error')).toBeNull();
     });
 });

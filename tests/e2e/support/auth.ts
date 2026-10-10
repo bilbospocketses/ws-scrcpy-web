@@ -459,6 +459,16 @@ export async function openSettingsTab(settings: Locator, title: SettingsTabTitle
     return section;
 }
 
+/**
+ * A tab's one status line (0.5.5, settingsLayout.ts `buildTabAlert`): every
+ * action result on the tab, and the dialog's own save result while the tab is
+ * on screen, is reported here, below and outside the tab's cards. Success
+ * hides after 5 s, an error after 10 s.
+ */
+export function settingsTabLine(section: Locator): Locator {
+    return section.locator('[data-settings-alert]');
+}
+
 /** Rows are `display: contents` — assert on a row's label or control, never on the row itself. */
 export function settingsRow(section: Locator, label: string): Locator {
     return section.locator('.settings-row').filter({

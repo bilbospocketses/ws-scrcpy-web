@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { refusedSubjectMessage } from '../../common/refusedSubject';
 import { buildHttpsListenerField, TlsApi } from '../api/TlsApi';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
@@ -1096,6 +1097,31 @@ describe('TlsApi', () => {
             await api.handle(r.req, r.res);
             expect(r.getStatus()).toBe(400);
             expect(svc.generate).toHaveBeenCalled();
+        });
+    });
+
+    // --- 0.5.5: the refusal names what the user typed, a name or an address ---
+
+    describe('the 400 for a refused subject follows the kind (0.5.5)', () => {
+        it.each([
+            ['hostname', 'com', 'that name could not be used for a certificate.'],
+            ['ip', '10.0.0.999', 'that address could not be used for a certificate.'],
+        ] as const)('kind %s refused: %j', async (kind, value, error) => {
+            const generate = vi
+                .fn()
+                .mockRejectedValue(new Error(`invalid certificate subject: ${JSON.stringify(value)} is no good`));
+            const { api } = makeApi({ generate });
+            const r = makeReqRes('POST', '/api/tls/generate', { kind, value });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(400);
+            // Exactly the fixed copy: never the refused value echoed back.
+            expect(r.getJson()).toEqual({ error });
+        });
+
+        // The same function the Local HTTPS tab falls back to, so the two read alike, period and all.
+        it('refusedSubjectMessage is the same copy the route sends', () => {
+            expect(refusedSubjectMessage('hostname')).toBe('that name could not be used for a certificate.');
+            expect(refusedSubjectMessage('ip')).toBe('that address could not be used for a certificate.');
         });
     });
 

@@ -52,7 +52,9 @@ const CA_RATE_LIMIT = 10; // TlsApi.ts CA_ROOT_RATE_LIMIT
 const CA_DOWNLOADED_LOG = 'CA root downloaded'; // TlsApi.ts
 const KIND_400 = { error: 'kind must be "ip" or "hostname"' }; // TlsApi.ts
 const VALUE_400 = { error: 'value is required' }; // TlsApi.ts
-const SUBJECT_400 = { error: 'that address could not be used for a certificate' }; // TlsApi.ts
+// src/common/refusedSubject.ts: a name in hostname mode, an address in ip mode (0.5.5).
+const SUBJECT_400_ADDRESS = { error: 'that address could not be used for a certificate.' };
+const SUBJECT_400_NAME = { error: 'that name could not be used for a certificate.' };
 const GENERATE_500 = { error: 'certificate generation failed; see the server logs for the cause' }; // TlsApi.ts
 const PORT_400 = { error: 'port must be an integer between 1 and 65535' }; // src/server/Config.ts validateHttpsPortInput
 
@@ -69,10 +71,8 @@ const SUB_1024_ADVISORY = 'ports below 1024 need elevated privileges on this pla
 const HTTPS_RESTART_REVIEW = 'Changing the HTTPS port will restart the server; any active streams will drop.';
 
 // src/app/client/settings/tabs/LocalHttpsTab.ts
-const EXPOSURE_NEEDS_CERT =
-    'generate a certificate first — https only and redirect only take effect once an https listener can exist.';
-const EXPOSURE_NEEDS_RESTART =
-    'restart the server first — https only and redirect only take effect once the https listener is actually running.';
+const EXPOSURE_NEEDS_CERT = 'needs a certificate first.';
+const EXPOSURE_NEEDS_RESTART = 'restart the server first.';
 const LISTENER_NOT_STARTED =
     'certificate ready, but the https listener has not started yet. restart the server to begin serving https — regenerating will not help, and destroys any ca a device has already installed.';
 const LISTENER_STALE =
@@ -86,9 +86,27 @@ const EXPIRY_SOON_RE =
 const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-certificate-establishing-trust';
 const CA_FILE_NAME = 'ws-scrcpy-web-local-ca.crt'; // src/common/CaDownload.ts
 const SUBJECT_HELP_HREF = 'help/certificate-subject.html';
-const SUBJECT_GUIDE =
-    'the certificate name must match the ip address or name that you type from the remote device/computer to reach this server. click here for help on how this works (opens in a new tab)';
-const SUBJECT_HELP_LINK = 'click here for help on how this works (opens in a new tab)';
+// The guide follows the chosen kind (0.5.5); the link's "(opens in a new tab)" is for screen readers only.
+const SUBJECT_GUIDE_IP = 'must match the address you type on the other device to reach this server. how this works ↗';
+const SUBJECT_GUIDE_NAME = 'must match the name you type on the other device to reach this server. how this works ↗';
+const SUBJECT_HELP_LINK = 'how this works ↗';
+const SUBJECT_HELP_LINK_NAME = 'how this works (opens in a new tab)';
+const TRUST_HELP = 'install it on each device that connects (firefox has its own store). install guide ↗';
+const TRUST_HELP_LINK_NAME = 'install guide (opens in a new tab)';
+const suffixWarning = (name: string) =>
+    `"${name}" is an internet domain ending, not a computer's name, so it can't be used. use something like ${name}.lan, or the name your devices use to reach this computer.`;
+
+/** A help link's href as the app writes it: the app's current theme in the query, ahead of the #hash (helpLink.ts). */
+function themedHref(href: string, theme: string): string {
+    const [path, hash] = href.split('#');
+    return `${path}?theme=${theme}${hash === undefined ? '' : `#${hash}`}`;
+}
+
+async function appTheme(page: Page): Promise<string> {
+    const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+    expect(theme).toMatch(/^(dark|light)$/);
+    return theme!;
+}
 // public/help/certificate-subject.html
 const HELP_TITLE = 'TLS Certificates: The Subject Name Explained — ws-scrcpy-web';
 const HELP_H1 = 'Understanding TLS Certificates: The "Subject Name" Explained Simply';
@@ -476,9 +494,11 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         const state = await stubTlsState(page, NONE_STATE);
         await page.goto('/');
 
-        // Before 21.1's generate: no certificate yet.
+        // Before 21.1's generate: no certificate yet, which the panel no longer
+        // spells out (0.5.5): revoke and the download are simply disabled.
         let panel = await openLocalHttpsPanel(page);
-        await expect(panel).toContainText('no certificate yet.');
+        await expect(panel).not.toContainText('no certificate yet');
+        await expect(panel.locator('[data-tls-revoke]')).toBeDisabled();
         await expectExposureGated(panel, EXPOSURE_NEEDS_CERT);
 
         // After the generate, before its restart: a certificate, no listener.
@@ -538,11 +558,125 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         const guide = panel.locator('[data-tls-trust-help] a');
         await expect(guide).toHaveCount(1);
         await expect(guide).toBeVisible();
-        await expect(guide).toHaveAttribute('href', TRUST_HELP_HREF);
+        await expect(guide).toHaveAttribute('href', themedHref(TRUST_HELP_HREF, await appTheme(page)));
         await expect(guide).toHaveAttribute('target', '_blank');
         await expect(guide).toHaveAttribute('rel', 'noopener noreferrer');
-        await expect(guide).toContainText('opens in a new tab');
+        // Short on screen (0.5.5); "(opens in a new tab)" is in its name for a screen reader.
+        await expect(panel.locator('[data-tls-trust-help]')).toHaveText(TRUST_HELP);
+        await expect(guide).toHaveAccessibleName(TRUST_HELP_LINK_NAME);
         expect(writes.writes).toEqual([]);
+    });
+
+    // 0.5.5: the subject is one line -- the radios, then one box -- and in ip
+    // mode the box is a combobox of this computer's addresses.
+    test('21.7 the certificate subject: one line; the ▾ lists every address, unfiltered; the keyboard and Escape; hostname mode, a public suffix held back, and a refusal reported under the certificate', async ({
+        page,
+    }) => {
+        const OTHER_IP = '10.20.30.40';
+        const writes = await guardTlsWrites(page, (pathname) =>
+            pathname === '/api/tls/generate'
+                ? { status: 400, json: SUBJECT_400_NAME }
+                : { status: 418, json: { error: 'blocked by the e2e write guard' } },
+        );
+        await stubTlsState(page, { ...NONE_STATE, candidateIps: [LAN_IP, OTHER_IP] });
+        await stubMkcert(page, () => 'v0.1.0');
+        await page.goto('/');
+        const panel = await openLocalHttpsPanel(page);
+        const settings = page.locator('dialog.settings-modal[open]');
+        const subject = panel.getByRole('combobox', { name: 'certificate subject' });
+        const button = panel.getByRole('button', { name: "this computer's addresses" });
+        const list = panel.getByRole('listbox');
+        const option = (name: string) => list.getByRole('option', { name, exact: true });
+        const generate = panel.locator('[data-tls-generate]');
+
+        // One line: the box sits beside the radios, and the second line is gone.
+        await expect(subject).toHaveValue(LAN_IP);
+        await expect(subject).toHaveAttribute('placeholder', 'ip address');
+        await expect(panel.locator('[data-tls-subject-fields]')).toHaveCount(0);
+        await expect(panel.locator('select')).toHaveCount(0);
+        const middle = async (l: Locator) => {
+            const box = await l.boundingBox();
+            return box ? box.y + box.height / 2 : Number.NaN;
+        };
+        const radio = panel.locator('input[name="tls-subject-kind"][value="ip"]');
+        expect(Math.abs((await middle(subject)) - (await middle(radio)))).toBeLessThan(4);
+        // The ▾ is attached to the box's right edge.
+        const boxRight = await subject.boundingBox();
+        const buttonBox = await button.boundingBox();
+        expect(Math.abs(boxRight!.x + boxRight!.width - buttonBox!.x)).toBeLessThan(2);
+
+        // The ▾ lists every address, the current one ticked.
+        await button.click();
+        await expect(list).toBeVisible();
+        await expect(subject).toHaveAttribute('aria-expanded', 'true');
+        await expect(list.getByRole('option')).toHaveText([LAN_IP, OTHER_IP]);
+        await expect(option(LAN_IP)).toHaveAttribute('aria-selected', 'true');
+        await option(OTHER_IP).click();
+        await expect(list).toBeHidden();
+        await expect(subject).toHaveValue(OTHER_IP);
+        await expect(subject).toBeFocused();
+
+        // Never filtered by what is typed (a native datalist would be).
+        await subject.fill('10.');
+        await subject.press('ArrowDown');
+        await expect(list).toBeVisible();
+        await expect(list.getByRole('option')).toHaveCount(2);
+        // Up/Down and Enter pick.
+        await subject.press('ArrowDown');
+        await subject.press('Enter');
+        await expect(subject).toHaveValue(OTHER_IP);
+        await expect(list).toBeHidden();
+
+        // Escape closes the list and leaves the dialog open.
+        await subject.press('ArrowDown');
+        await expect(list).toBeVisible();
+        await subject.press('Escape');
+        await expect(list).toBeHidden();
+        await expect(settings).toBeVisible();
+        // A click outside closes it too.
+        await button.click();
+        await expect(list).toBeVisible();
+        await panel.locator('[data-tls-trust-help]').click({ position: { x: 2, y: 2 } });
+        await expect(list).toBeHidden();
+
+        // hostname: no ▾, a plain box asking for a name, and the guide says "name".
+        await panel.locator('input[name="tls-subject-kind"][value="hostname"]').check();
+        await expect(button).toBeHidden();
+        await expect(subject).toHaveAttribute('placeholder', 'hostname or domain name');
+        await expect(panel.locator('[data-tls-subject-guide]')).toHaveText(SUBJECT_GUIDE_NAME);
+
+        // A real internet TLD is called out while typed, and generate waits for a real name.
+        const warning = panel.locator('[data-tls-subject-suffix-warning]');
+        for (const tld of ['com', 'de', 'Media']) {
+            await subject.fill(tld);
+            await expect(warning, tld).toBeVisible();
+            await expect(warning, tld).toHaveText(suffixWarning(tld));
+            await expect(generate, tld).toBeDisabled();
+        }
+        // A one-word name that is not a TLD is fine.
+        await subject.fill('e2enas');
+        await expect(warning).toBeHidden();
+        await expect(generate).toBeEnabled();
+
+        // The ip value came back intact through the flip and back.
+        await panel.locator('input[name="tls-subject-kind"][value="ip"]').check();
+        await expect(subject).toHaveValue(OTHER_IP);
+        await panel.locator('input[name="tls-subject-kind"][value="hostname"]').check();
+        await expect(subject).toHaveValue('e2enas');
+
+        // A refused generate reports in the tab's one place for results: at the
+        // bottom, below and outside every card, never inside Exposure's.
+        await generate.click();
+        const alert = panel.locator('[data-tls-alert]');
+        await expect(alert).toBeVisible();
+        await expect(alert).toHaveText(SUBJECT_400_NAME.error);
+        await expect(panel.locator('.settings-card [data-tls-alert]')).toHaveCount(0);
+        const lastCard = await panel.locator('.settings-card').last().boundingBox();
+        const alertBox = await alert.boundingBox();
+        expect(alertBox!.y).toBeGreaterThanOrEqual(lastCard!.y + lastCard!.height);
+        expect(writes.writes).toEqual([
+            { method: 'POST', pathname: '/api/tls/generate', body: { kind: 'hostname', value: 'e2enas' } },
+        ]);
     });
 });
 
@@ -558,12 +692,14 @@ test.describe('local https fast tier: the help page (smoke §21.16)', () => {
         const panel = await openLocalHttpsPanel(page);
 
         // Under the subject radios: one short line and a link to the explainer,
-        // in the wording chosen after 0.5.3 ("click here", lowercase).
-        await expect(panel.locator('[data-tls-subject-guide]')).toHaveText(SUBJECT_GUIDE);
+        // the line following the chosen kind (0.5.5; ip address here).
+        await expect(panel.locator('[data-tls-subject-guide]')).toHaveText(SUBJECT_GUIDE_IP);
         const subjectLink = panel.locator('[data-tls-subject-guide] a');
         await expect(subjectLink).toHaveCount(1);
         await expect(subjectLink).toHaveText(SUBJECT_HELP_LINK);
-        await expect(subjectLink).toHaveAttribute('href', SUBJECT_HELP_HREF);
+        await expect(subjectLink).toHaveAccessibleName(SUBJECT_HELP_LINK_NAME);
+        const theme = await appTheme(page);
+        await expect(subjectLink).toHaveAttribute('href', themedHref(SUBJECT_HELP_HREF, theme));
         await expect(subjectLink).toHaveAttribute('target', '_blank');
         await expect(subjectLink).toHaveAttribute('rel', 'noopener noreferrer');
 
@@ -571,11 +707,14 @@ test.describe('local https fast tier: the help page (smoke §21.16)', () => {
         await subjectLink.click();
         let popup = await popupPromise;
         await popup.waitForLoadState();
-        expect(popup.url()).toBe(`${baseURL}/${SUBJECT_HELP_HREF}`);
+        expect(popup.url()).toBe(`${baseURL}/${themedHref(SUBJECT_HELP_HREF, theme)}`);
         await expect(popup).toHaveTitle(HELP_TITLE);
         await expect(popup.locator('h1')).toHaveText(HELP_H1);
-        // Themed before paint from the app's own key, like subnets.html.
-        await expect(popup.locator('html')).toHaveAttribute('data-theme', /^(dark|light)$/);
+        // Themed before paint from the link's ?theme= (0.5.5): the app's theme,
+        // not a localStorage key nothing writes any more. And the app's favicon.
+        await expect(popup.locator('html')).toHaveAttribute('data-theme', theme);
+        await expect(popup.locator('link[rel="icon"]')).toHaveAttribute('href', '../favicon.png');
+        expect((await popup.request.get(`${baseURL}/favicon.png`)).status(), 'the favicon it links').toBe(200);
         await expect(popup.locator('h2')).toHaveCount(5);
         for (const h2 of await popup.locator('h2').all()) await expect(h2).toHaveAttribute('id', /.+/);
         // The explainer's own link lands on section 4.
@@ -584,11 +723,16 @@ test.describe('local https fast tier: the help page (smoke §21.16)', () => {
         await popup.close();
 
         // Under the download: the install guide, opened straight at section 4.
+        // The theme is decided when the link is followed: switched while the
+        // dialog stays open, the guide opens in the new one.
+        const other = theme === 'dark' ? 'light' : 'dark';
+        await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), other);
         popupPromise = context.waitForEvent('page');
         await panel.locator('[data-tls-trust-help] a').click();
         popup = await popupPromise;
         await popup.waitForLoadState();
-        expect(popup.url()).toBe(`${baseURL}/${TRUST_HELP_HREF}`);
+        expect(popup.url()).toBe(`${baseURL}/${themedHref(TRUST_HELP_HREF, other)}`);
+        await expect(popup.locator('html')).toHaveAttribute('data-theme', other);
         // An attribute selector: `#4-…` is not valid CSS (an id selector cannot start with a digit).
         await expect(popup.locator('[id="4-installing-a-certificate-establishing-trust"]')).toBeInViewport();
         for (const id of [
@@ -701,7 +845,8 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
         expect((await tlsState(api))['httpsListener']).toEqual(NONE_STATE.httpsListener);
         const view = await openPrivatePanel(browser, A.baseURL);
         try {
-            await expect(view.panel).toContainText('no certificate yet.');
+            await expect(view.panel).not.toContainText('no certificate yet');
+            await expect(view.panel.locator('[data-tls-revoke]')).toBeDisabled();
             await expectExposureGated(view.panel, EXPOSURE_NEEDS_CERT);
         } finally {
             await view.close();
@@ -764,42 +909,59 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
             {
                 name: 'a name under kind ip',
                 body: { kind: 'ip', value: 'e2e164e-not-an-ip.lan' },
-                expected: SUBJECT_400,
+                expected: SUBJECT_400_ADDRESS,
                 echoes: ['e2e164e'],
                 logged: `kind 'ip' but "e2e164e-not-an-ip.lan" is not an IP address`,
             },
             {
                 name: 'an IP under kind hostname',
                 body: { kind: 'hostname', value: '10.164.9.8' },
-                expected: SUBJECT_400,
+                expected: SUBJECT_400_NAME,
                 echoes: ['10.164.9.8'],
                 logged: `kind 'hostname' but "10.164.9.8" is an IP address`,
             },
+            // One-word names that are not delegated pass since 0.5.5 (the next
+            // row generates one); a real internet TLD is refused, `de` and
+            // `media` as surely as `com`.
             {
-                name: 'a single-label hostname',
-                body: { kind: 'hostname', value: 'e2e164esingle' },
-                expected: SUBJECT_400,
-                echoes: ['e2e164e'],
-                logged: '"e2e164esingle" is too short, or a public suffix',
+                name: 'a single-label TLD',
+                body: { kind: 'hostname', value: 'com' },
+                expected: SUBJECT_400_NAME,
+                echoes: [],
+                logged: '"com" is an internet TLD or public suffix',
+            },
+            {
+                name: 'a country-code TLD',
+                body: { kind: 'hostname', value: 'de' },
+                expected: SUBJECT_400_NAME,
+                echoes: [],
+                logged: '"de" is an internet TLD or public suffix',
+            },
+            {
+                name: 'a word that is a TLD',
+                body: { kind: 'hostname', value: 'MEDIA' },
+                expected: SUBJECT_400_NAME,
+                echoes: [],
+                logged: '"MEDIA" is an internet TLD or public suffix',
             },
             {
                 name: 'a public suffix',
                 body: { kind: 'hostname', value: 'co.uk' },
-                expected: SUBJECT_400,
+                expected: SUBJECT_400_NAME,
                 echoes: ['co.uk'],
-                logged: '"co.uk" is too short, or a public suffix',
+                logged: '"co.uk" is an internet TLD or public suffix',
             },
             {
                 name: 'a subject with a port',
                 body: { kind: 'ip', value: '10.164.9.9:8443' },
-                expected: SUBJECT_400,
+                expected: SUBJECT_400_ADDRESS,
                 echoes: ['10.164.9.9'],
                 logged: 'invalid certificate subject: "10.164.9.9:8443"',
             },
             {
                 name: 'markup',
                 body: { kind: 'hostname', value: '<b>e2e164e</b>' },
-                expected: SUBJECT_400,
+                expected: SUBJECT_400_NAME,
                 echoes: ['<b>', 'e2e164e'],
                 logged: 'invalid certificate subject: "<b>e2e164e</b>"',
             },
@@ -831,6 +993,14 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
         expect(res.status(), text).toBe(500);
         expect(JSON.parse(text)).toEqual(GENERATE_500);
         expectGenericBody(text, [subject, A.mkcertExe, 'bad option'], 'mkcert failure');
+
+        // A one-word hostname gets as far as mkcert too (0.5.5: allowed, where
+        // it was refused as too short), so it fails the same way, not with a 400.
+        const oneWord = await api.post('/api/tls/generate', { data: { kind: 'hostname', value: 'e2e164enas' } });
+        const oneWordText = await oneWord.text();
+        expect(oneWord.status(), oneWordText).toBe(500);
+        expect(JSON.parse(oneWordText)).toEqual(GENERATE_500);
+        expectGenericBody(oneWordText, ['e2e164enas', A.mkcertExe], 'one-word mkcert failure');
 
         const line = readServerLog(A)
             .split(/\r?\n/)

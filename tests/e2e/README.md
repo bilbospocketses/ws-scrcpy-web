@@ -217,7 +217,7 @@ so a leftover server or data root names the file it came from:
 |---|---|---|---|
 | `server-api.spec.ts` | 8151–8157 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports` |
 | `config-overrides.spec.ts` | 8158–8159 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports`, `tlsFixtures` |
-| `auth-admin.spec.ts` | 8161–8169, 8196 | `ws-scrcpy-web-e2e-164b-*` | `ownedServer` (`OwnedServer`), `sessions`, `rawHttp` (`lanAddress`) |
+| `auth-admin.spec.ts` | 8161–8169, 8196, 8199 | `ws-scrcpy-web-e2e-164b-*` | `ownedServer` (`OwnedServer`), `sessions`, `rawHttp` (`lanAddress`) |
 | `settings-dialog.spec.ts` | 8171–8175 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `pendingSettings` |
 | `first-run-and-reminders.spec.ts` | 8176–8179 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `ports` |
 | `embed-trust.spec.ts` | 8181, 8184 (its adb daemon), 8188–8189 (embedding pages) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `rawHttp` (`serveHtml`) |
@@ -226,8 +226,8 @@ so a leftover server or data root names the file it came from:
 | `mkcert-provenance.spec.ts` | 8197, 8198 (its fixture release server) | `ws-scrcpy-web-e2e-164b-21-12` | `ownedServer` |
 | `dependencies-restart.spec.ts` | 8145, 8146 (its fixture nodejs.org) | `ws-scrcpy-web-e2e-deps-restart` | `privateServer`, `serverLog` |
 
-8140 is `container-user.spec.ts`'s, 8142 is `lifecycle.spec.ts`'s (12.10), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180, 8190 and
-8199 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
+8140 is `container-user.spec.ts`'s, 8142 is `lifecycle.spec.ts`'s (12.10), 8199 is `auth-admin.spec.ts`'s 18.13 (0.5.5), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180 and
+8190 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
 item 164 batches used through `WSSW_E2E_PORT` while writing these specs in parallel;
 nothing binds them in a normal run). `lockedServer` can give a server an **adb daemon of its own**
 (`ANDROID_ADB_SERVER_PORT`, mDNS off): a developer's daemon on 5037 auto-connects

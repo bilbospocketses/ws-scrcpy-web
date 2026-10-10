@@ -3,14 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="../favicon.png">
 <title>Subnet &amp; CIDR Cheat Sheet — ws-scrcpy-web</title>
 <script>
-// Apply stored theme before paint to avoid flash. Shares the main app's
-// localStorage key so switching themes in the app carries over on reload.
+// Apply the theme before paint to avoid a flash. The app keeps its theme in
+// the server's settings, out of this static page's reach, so its links here
+// pass the theme it is showing as ?theme=light|dark (src/app/client/helpLink.ts).
+// Opened any other way, the page follows the OS setting.
 (function() {
     try {
-        var t = localStorage.getItem('ws-scrcpy-web-theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+        var q = new URLSearchParams(location.search).get('theme');
+        var t = q === 'light' || q === 'dark' ? q : (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', t);
     } catch (e) {
         document.documentElement.setAttribute('data-theme', 'dark');
     }

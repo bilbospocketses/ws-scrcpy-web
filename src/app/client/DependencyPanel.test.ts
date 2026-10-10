@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DependencyInfo, DependencyStatus } from '../../common/DependencyTypes';
 import { DEPENDENCY_INSTALLED_EVENT, DependencyPanel } from './DependencyPanel';
 
+/** A tab line that is not looked at, for the tests about something else. */
+const noAlert = { show: () => undefined };
+
 const dep = (o: Partial<DependencyInfo>): DependencyInfo => ({
     name: 'adb',
     displayName: 'ADB',
@@ -18,7 +21,7 @@ const dep = (o: Partial<DependencyInfo>): DependencyInfo => ({
 
 describe('DependencyPanel XSS', () => {
     it('escapes a malicious displayName/description instead of injecting markup', () => {
-        const panel = new DependencyPanel();
+        const panel = new DependencyPanel(noAlert);
         (panel as any).render([
             dep({ displayName: '<img src=x onerror=alert(1)>', description: '<svg onload=alert(2)>' }),
         ]);
@@ -29,7 +32,7 @@ describe('DependencyPanel XSS', () => {
     });
 
     it('escapes a malicious errorMessage in the status title attribute', () => {
-        const panel = new DependencyPanel();
+        const panel = new DependencyPanel(noAlert);
         (panel as any).render([
             dep({ status: DependencyStatus.Error, errorMessage: 'x"><img src=y onerror=alert(1)>' }),
         ]);
@@ -40,7 +43,7 @@ describe('DependencyPanel XSS', () => {
 
 describe('DependencyPanel Latest cell', () => {
     const latestCell = (d: DependencyInfo): HTMLTableCellElement => {
-        const panel = new DependencyPanel();
+        const panel = new DependencyPanel(noAlert);
         (panel as any).render([d]);
         return panel.getElement().querySelectorAll<HTMLTableCellElement>('tbody td.dep-version')[1]!;
     };
@@ -94,7 +97,7 @@ describe('DependencyPanel install button for a first-use dependency', () => {
         });
 
     const rowFor = (d: DependencyInfo): HTMLTableRowElement => {
-        const panel = new DependencyPanel();
+        const panel = new DependencyPanel(noAlert);
         (panel as any).render([d]);
         return panel.getElement().querySelector<HTMLTableRowElement>('tbody tr.dep-row')!;
     };
@@ -159,7 +162,7 @@ describe('DependencyPanel install button for a first-use dependency', () => {
             };
         });
         vi.stubGlobal('fetch', fetchMock);
-        const panel = new DependencyPanel();
+        const panel = new DependencyPanel(noAlert);
         document.body.appendChild(panel.getElement());
         const announced = vi.fn();
         document.body.addEventListener(DEPENDENCY_INSTALLED_EVENT, (e) => announced((e as CustomEvent).detail));
@@ -180,7 +183,7 @@ describe('DependencyPanel install button for a first-use dependency', () => {
         panel.getElement().remove();
     });
 
-    it('a failed install says install failed, re-reads, and announces nothing', async () => {
+    it('a failed install says install failed on the tab line, re-reads, and announces nothing', async () => {
         vi.stubGlobal(
             'fetch',
             vi.fn(async (url: string) =>
@@ -196,8 +199,11 @@ describe('DependencyPanel install button for a first-use dependency', () => {
                     : { ok: true, json: async () => [mkcert({ status: DependencyStatus.Error })] },
             ),
         );
+        // The browser's alert() is no longer used: the failure goes to the
+        // Settings tab's status line (0.5.5).
         const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
-        const panel = new DependencyPanel();
+        const tabLine = { show: vi.fn() };
+        const panel = new DependencyPanel(tabLine);
         const announced = vi.fn();
         panel.getElement().addEventListener(DEPENDENCY_INSTALLED_EVENT, announced);
         (panel as any).render([mkcert()]);
@@ -205,7 +211,8 @@ describe('DependencyPanel install button for a first-use dependency', () => {
         panel.getElement().querySelector<HTMLButtonElement>('button[data-install]')!.click();
         await new Promise((r) => setTimeout(r, 0));
 
-        expect(alertSpy).toHaveBeenCalledWith('Install failed: no attestation');
+        expect(tabLine.show).toHaveBeenCalledWith('error', 'install failed: no attestation');
+        expect(alertSpy).not.toHaveBeenCalled();
         expect(announced).not.toHaveBeenCalled();
         // Still missing, so the install button is back as the retry.
         expect(panel.getElement().querySelector('button[data-install]')).not.toBeNull();
@@ -240,7 +247,7 @@ describe('DependencyPanel restart poll', () => {
         Object.defineProperty(window, 'location', { value: originalLocation, writable: true, configurable: true });
     });
 
-    const startPoll = () => (new DependencyPanel() as any).pollForRestart();
+    const startPoll = () => (new DependencyPanel(noAlert) as any).pollForRestart();
 
     it('reloads once the server answers', async () => {
         fetchMock.mockResolvedValue(reply(200, []));
@@ -292,7 +299,7 @@ describe('DependencyPanel polling lifecycle (#36)', () => {
     });
 
     it('stops polling after destroy() — the interval no longer fires load()', () => {
-        const panel = new DependencyPanel();
+        const panel = new DependencyPanel(noAlert);
         (panel as any).startPolling();
         const loadSpy = vi.spyOn(panel as any, 'load');
 
@@ -309,7 +316,7 @@ describe('DependencyPanel polling lifecycle (#36)', () => {
     });
 
     it('destroy() is idempotent / safe to call without polling started', () => {
-        const panel = new DependencyPanel();
+        const panel = new DependencyPanel(noAlert);
         expect(() => panel.destroy()).not.toThrow();
     });
 });

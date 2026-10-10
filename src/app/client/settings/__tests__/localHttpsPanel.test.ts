@@ -8,6 +8,7 @@ import {
     fetchMkcertInstalled,
     listenerStatusNotice,
     MKCERT_MISSING_NOTICE,
+    publicSuffixWarning,
     recheckLocalHttpsMkcert,
     SUBJECT_HELP_HREF,
     TLS_CERT_CHANGED_EVENT,
@@ -214,25 +215,30 @@ describe('local https panel', () => {
             candidateIps: ['192.168.86.3'],
         });
         // 0.5.3: one short line plus a link to the explainer page, replacing the
-        // two-sentence "ip address: … hostname: …" summary.
-        for (const el of [elIp, elHost]) {
+        // two-sentence "ip address: … hostname: …" summary. 0.5.5: the line
+        // follows the chosen kind -- an address in ip mode, a name in hostname
+        // mode -- and the link says "how this works ↗", with "(opens in a new
+        // tab)" kept for a screen reader only.
+        const expected: Array<[HTMLElement, string]> = [
+            [elIp, 'must match the address you type on the other device to reach this server. how this works ↗'],
+            [elHost, 'must match the name you type on the other device to reach this server. how this works ↗'],
+        ];
+        for (const [el, text] of expected) {
             const note = el.querySelector<HTMLElement>('[data-tls-subject-guide]');
             expect(note).not.toBeNull();
             expect(note!.hidden).toBe(false);
-            // After 0.5.3: the wording the user chose, and "click here" kept
-            // lowercase like every other line in the app.
-            expect(note!.textContent).toBe(
-                'the certificate name must match the ip address or name that you type from the remote ' +
-                    'device/computer to reach this server. click here for help on how this works (opens in a new tab)',
-            );
+            expect(note!.textContent).toBe(text);
             expect(note!.textContent).not.toMatch(/dns resolves to this computer/);
             const links = note!.querySelectorAll<HTMLAnchorElement>('a');
             expect(links).toHaveLength(1);
-            expect(links[0]!.getAttribute('href')).toBe(SUBJECT_HELP_HREF);
+            // The help page, carrying the app's theme (helpLink.ts; jsdom's
+            // document has no data-theme, which reads as dark).
+            expect(links[0]!.getAttribute('href')).toBe(`${SUBJECT_HELP_HREF}?theme=dark`);
             expect(SUBJECT_HELP_HREF).toBe('help/certificate-subject.html');
             expect(links[0]!.target).toBe('_blank');
             expect(links[0]!.rel).toBe('noopener noreferrer');
-            expect(links[0]!.textContent).toBe('click here for help on how this works (opens in a new tab)');
+            expect(links[0]!.textContent).toBe('how this works ↗');
+            expect(links[0]!.getAttribute('aria-label')).toBe('how this works (opens in a new tab)');
         }
         // The old note named `allowedHosts`, a config.json key no control here
         // is labelled with (0.5.1). It must not come back in another wording.
@@ -319,9 +325,10 @@ describe('local https panel', () => {
         expect(el.querySelector<HTMLInputElement>('[data-exposure="open"]')!.checked).toBe(true);
     });
 
-    // After 0.5.3: the fields drop to a row of their own under the radios,
-    // each with a small label that follows the chosen kind.
-    it('puts the subject fields on a row below the radios, each with a label that follows the radio', async () => {
+    // 0.5.5: the subject is ONE line -- the two radios, then one box beside
+    // them -- where 0.5.3/0.5.4 had a second line with a select of this
+    // computer's addresses and a small label over each field.
+    it('puts the subject on one line: the radios, then one box with an accessible name of its own', async () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3', '10.0.0.5'],
@@ -329,45 +336,56 @@ describe('local https panel', () => {
         const subjectRow = [...el.querySelectorAll<HTMLElement>('.settings-row')].find(
             (r) => r.querySelector('.settings-label')?.textContent === 'certificate subject',
         )!;
-        const fieldsRow = el.querySelector<HTMLElement>('[data-tls-subject-fields]')!;
-        expect(subjectRow.nextElementSibling).toBe(fieldsRow);
-        expect(fieldsRow.querySelector('.settings-label')!.textContent).toBe('');
-        // The radios stay on the subject row; the fields are not there any more.
-        expect(subjectRow.querySelectorAll('input[name="tls-subject-kind"]')).toHaveLength(2);
-        expect(subjectRow.querySelector('[data-tls-subject], [data-tls-candidate-select]')).toBeNull();
+        const subject = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
+        const radios = [...subjectRow.querySelectorAll<HTMLInputElement>('input[name="tls-subject-kind"]')];
+        expect(radios).toHaveLength(2);
+        expect(subjectRow.contains(subject)).toBe(true);
+        // After the radios.
+        expect(radios[1]!.compareDocumentPosition(subject) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        // The second line, its select and its small labels are gone.
+        expect(el.querySelector('[data-tls-subject-fields]')).toBeNull();
+        expect(el.querySelector('select')).toBeNull();
+        expect(el.querySelector('.settings-field, .settings-field-label')).toBeNull();
+        expect(el.querySelectorAll('[data-tls-subject]')).toHaveLength(1);
+        // It lost its visible label, so it is named for assistive tech.
+        expect(subject.getAttribute('aria-label')).toBe('certificate subject');
+        expect(subject.placeholder).toBe('ip address');
+    });
 
-        const subject = fieldsRow.querySelector<HTMLInputElement>('[data-tls-subject]')!;
-        const select = fieldsRow.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!;
-        const labelOf = (control: HTMLElement): HTMLLabelElement =>
-            fieldsRow.querySelector<HTMLLabelElement>(`label[for="${control.id}"]`)!;
-        expect(subject.id).not.toBe('');
-        expect(select.id).not.toBe('');
-        // The picker first, then the box it fills.
-        expect(select.compareDocumentPosition(subject) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    it('makes the box a combobox of this computer addresses in ip mode, and a plain box in hostname mode', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3', '10.0.0.5'],
+        });
+        const subject = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
+        const button = el.querySelector<HTMLButtonElement>('[data-tls-candidate-button]')!;
+        const list = el.querySelector<HTMLElement>('[data-tls-candidate-list]')!;
+        expect(subject.getAttribute('role')).toBe('combobox');
+        expect(subject.getAttribute('aria-controls')).toBe(list.id);
+        expect(list.getAttribute('role')).toBe('listbox');
+        expect(button.hidden).toBe(false);
+        expect(button.getAttribute('aria-label')).toBe("this computer's addresses");
 
-        // ip address: both fields, labeled.
-        expect(labelOf(select).textContent).toBe("this computer's addresses");
-        expect(labelOf(subject).textContent).toBe('ip address');
-        expect(labelOf(select).closest<HTMLElement>('.settings-field')!.hidden).toBe(false);
-        expect(labelOf(select).classList.contains('settings-field-label')).toBe(true);
-        // A real association: the label names the field.
-        expect(subject.labels?.[0]?.textContent).toBe('ip address');
-
-        // hostname: the picker goes, the box is relabeled.
         const [ipRadio, hostRadio] = [...el.querySelectorAll<HTMLInputElement>('input[name="tls-subject-kind"]')];
+        button.click();
+        expect(list.hidden).toBe(false);
+        // hostname: no list, no ▾, and the box asks for a name.
         hostRadio!.click();
-        expect(labelOf(select).closest<HTMLElement>('.settings-field')!.hidden).toBe(true);
-        expect(select.hidden).toBe(true);
-        expect(labelOf(subject).textContent).toBe('hostname or domain name');
-        expect(subject.labels?.[0]?.textContent).toBe('hostname or domain name');
+        expect(button.hidden).toBe(true);
+        expect(list.hidden).toBe(true);
+        expect(subject.getAttribute('aria-expanded')).toBe('false');
+        expect(subject.placeholder).toBe('hostname or domain name');
+        // ArrowDown does not open a list hostname mode does not have.
+        subject.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        expect(list.hidden).toBe(true);
 
         // And back.
         ipRadio!.click();
-        expect(labelOf(select).closest<HTMLElement>('.settings-field')!.hidden).toBe(false);
-        expect(labelOf(subject).textContent).toBe('ip address');
+        expect(button.hidden).toBe(false);
+        expect(subject.placeholder).toBe('ip address');
     });
 
-    it('starts on the hostname labels for a hostname certificate, and hides the picker with no candidates', async () => {
+    it('starts in hostname mode for a hostname certificate, and has no ▾ in ip mode with no candidates', async () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(
                 async () =>
@@ -380,13 +398,428 @@ describe('local https panel', () => {
             candidateIps: [],
         });
         const subject = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
-        expect(subject.labels?.[0]?.textContent).toBe('hostname or domain name');
-        const ipRadio = el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="ip"]')!;
-        ipRadio.click();
-        // ip address, but nothing to pick from: the picker field stays hidden.
-        const select = el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!;
-        expect(select.closest<HTMLElement>('.settings-field')!.hidden).toBe(true);
-        expect(subject.labels?.[0]?.textContent).toBe('ip address');
+        const button = el.querySelector<HTMLButtonElement>('[data-tls-candidate-button]')!;
+        expect(subject.placeholder).toBe('hostname or domain name');
+        expect(button.hidden).toBe(true);
+        el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="ip"]')!.click();
+        // ip address, but nothing to pick from: still no ▾.
+        expect(button.hidden).toBe(true);
+        expect(subject.placeholder).toBe('ip address');
+    });
+
+    it('keeps what each kind held across a flip and back, picks included', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3', '10.0.0.5'],
+        });
+        const subject = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
+        const [ipRadio, hostRadio] = [...el.querySelectorAll<HTMLInputElement>('input[name="tls-subject-kind"]')];
+        el.querySelector<HTMLButtonElement>('[data-tls-candidate-button]')!.click();
+        const second = [...el.querySelectorAll<HTMLElement>('[data-tls-candidate-list] [role="option"]')][1]!;
+        second.click();
+        expect(subject.value).toBe('10.0.0.5');
+
+        hostRadio!.click();
+        expect(subject.value).toBe('');
+        subject.value = 'nas';
+        ipRadio!.click();
+        expect(subject.value).toBe('10.0.0.5');
+        hostRadio!.click();
+        expect(subject.value).toBe('nas');
+    });
+
+    // 0.5.5: the two busy tabs are split into cards, each under its own heading.
+    it('lays the panel out as three cards -- Certificate, Trust, Exposure -- under a hidden tab title', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready', subject: '10.0.0.5' })))),
+            candidateIps: ['192.168.86.3'],
+        });
+        const title = el.querySelector<HTMLElement>(':scope > h3.settings-section-heading')!;
+        expect(title.textContent).toBe('Local HTTPS');
+        expect(title.classList.contains('visually-hidden')).toBe(true);
+        const headings = [...el.querySelectorAll<HTMLElement>(':scope > h4.settings-card-heading')];
+        expect(headings.map((h) => h.textContent)).toEqual(['Certificate', 'Trust', 'Exposure']);
+        const cards = headings.map((h) => h.nextElementSibling as HTMLElement);
+        for (const card of cards) expect(card.classList.contains('settings-card')).toBe(true);
+
+        const labelsOf = (card: HTMLElement) =>
+            [...card.querySelectorAll(':scope > .settings-item')].map(
+                (item) => item.querySelector('.settings-label')?.textContent,
+            );
+        expect(labelsOf(cards[0]!)).toEqual(['certificate subject', 'certificate']);
+        expect(labelsOf(cards[1]!)).toEqual(['root ca']);
+        expect(labelsOf(cards[2]!)).toEqual(['plain http exposure']);
+
+        // Every notice sits in the item of the control it is about.
+        const itemOf = (hook: string) => el.querySelector(`[${hook}]`)!.closest('.settings-item');
+        const [subjectItem, certificateItem] = [...cards[0]!.querySelectorAll(':scope > .settings-item')];
+        expect(itemOf('data-tls-subject-guide')).toBe(subjectItem);
+        expect(itemOf('data-tls-subject-suffix-warning')).toBe(subjectItem);
+        for (const hook of [
+            'data-tls-current-subject',
+            'data-tls-listener-notice',
+            'data-tls-ca-trust-notice',
+            'data-tls-mismatch-notice',
+            'data-tls-hostname-notice',
+            'data-tls-allowed-host-notice',
+            'data-tls-expiry-notice',
+            'data-tls-ca-restore-notice',
+        ]) {
+            expect(itemOf(hook), hook).toBe(certificateItem);
+        }
+        expect(itemOf('data-tls-trust-help')).toBe(cards[1]!.firstElementChild);
+        for (const hook of [
+            'data-exposure-lockout-notice',
+            'data-exposure-restart-notice',
+            'data-exposure-unavailable-notice',
+        ]) {
+            expect(itemOf(hook), hook).toBe(cards[2]!.firstElementChild);
+        }
+    });
+
+    it('labels the exposure radios one word or phrase each', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3'],
+        });
+        const labels = [...el.querySelectorAll<HTMLInputElement>('input[name="tls-exposure"]')].map(
+            (r) => r.closest('label')?.textContent,
+        );
+        expect(labels).toEqual(['open', 'https only', 'redirect to https']);
+    });
+
+    // 0.5.5: "no certificate yet." said nothing the disabled revoke and download did not.
+    it('shows no certificate line without a certificate, and the subject once there is one', async () => {
+        const elNone = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3'],
+        });
+        expect(elNone.textContent).not.toContain('no certificate yet');
+        const summaryNone = elNone.querySelector<HTMLElement>('[data-tls-current-subject]');
+        expect(summaryNone).toBeNull();
+        const certificateItem = elNone.querySelector('[data-tls-generate]')!.closest('.settings-item')!;
+        const lines = [...certificateItem.querySelectorAll<HTMLElement>(':scope > p.settings-status')];
+        expect(lines.filter((p) => !p.hidden)).toEqual([]);
+
+        const elReady = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready', subject: '10.0.0.5' })))),
+            candidateIps: ['192.168.86.3'],
+        });
+        const summary = elReady.querySelector<HTMLElement>('[data-tls-current-subject]')!.parentElement!;
+        expect(summary.hidden).toBe(false);
+        expect(summary.textContent).toBe('current certificate: 10.0.0.5');
+    });
+});
+
+// 0.5.5: one-word names are allowed unless they are a real internet TLD (or a
+// public suffix like co.uk) -- said while typing, with generate held back.
+describe('local https panel: internet TLDs and public suffixes', () => {
+    async function build(fetchFn: typeof fetch = vi.fn(async () => new Response(JSON.stringify(state())))) {
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
+        const subject = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
+        const type = (value: string) => {
+            subject.value = value;
+            subject.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        return {
+            el,
+            subject,
+            type,
+            warning: el.querySelector<HTMLElement>('[data-tls-subject-suffix-warning]')!,
+            generate: el.querySelector<HTMLButtonElement>('[data-tls-generate]')!,
+            hostname: () =>
+                el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="hostname"]')!.click(),
+            ip: () => el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="ip"]')!.click(),
+        };
+    }
+
+    it('warns about a public suffix in hostname mode, any case and spacing, and holds generate back until it changes', async () => {
+        const p = await build();
+        p.hostname();
+        expect(p.warning.hidden).toBe(true);
+        p.type('  COM ');
+        expect(p.warning.hidden).toBe(false);
+        expect(p.warning.textContent).toBe(
+            '"COM" is an internet domain ending, not a computer\'s name, so it can\'t be used. use something like COM.lan, or the name your devices use to reach this computer.',
+        );
+        expect(p.warning.classList.contains('settings-status-warning')).toBe(true);
+        expect(p.warning.style.gridColumn).toBe('1 / -1');
+        expect(p.generate.disabled).toBe(true);
+
+        p.type('co.uk');
+        expect(p.warning.hidden).toBe(false);
+        expect(p.generate.disabled).toBe(true);
+
+        p.type('nas');
+        expect(p.warning.hidden).toBe(true);
+        expect(p.generate.disabled).toBe(false);
+    });
+
+    it.each(['de', 'media', 'dev', 'app', 'io', 'De', 'MEDIA', 'xn--p1ai', 'XN--P1AI', 'org.uk'])(
+        'refuses the real TLD or suffix "%s", any case, and holds generate back',
+        async (name) => {
+            const p = await build();
+            p.hostname();
+            p.type(name);
+            expect(p.warning.hidden).toBe(false);
+            expect(p.warning.textContent).toBe(publicSuffixWarning(name));
+            expect(p.generate.disabled).toBe(true);
+        },
+    );
+
+    it.each(['htpc', 'nas', 'lan', 'local', 'home', 'localhost', 'media.lan', 'devices.lan'])(
+        'lets the name "%s" through',
+        async (name) => {
+            const p = await build();
+            p.hostname();
+            p.type(name);
+            expect(p.warning.hidden).toBe(true);
+            expect(p.generate.disabled).toBe(false);
+        },
+    );
+
+    it('never warns in ip mode, and a flip to ip lifts a hostname refusal', async () => {
+        const p = await build();
+        p.type('com');
+        expect(p.warning.hidden).toBe(true);
+        expect(p.generate.disabled).toBe(false);
+        p.hostname();
+        p.type('net');
+        expect(p.generate.disabled).toBe(true);
+        p.ip();
+        expect(p.warning.hidden).toBe(true);
+        expect(p.generate.disabled).toBe(false);
+        // Flipping back restores the hostname value, and with it the refusal.
+        p.hostname();
+        expect(p.subject.value).toBe('net');
+        expect(p.warning.hidden).toBe(false);
+        expect(p.generate.disabled).toBe(true);
+    });
+
+    it('a click on the held-back generate sends nothing', async () => {
+        const fetchFn = vi.fn(async () => new Response(JSON.stringify(state()))) as unknown as typeof fetch &
+            ReturnType<typeof vi.fn>;
+        const p = await build(fetchFn);
+        p.hostname();
+        p.type('org');
+        // Bypass the disabled attribute: the handler's own guard is what is under test.
+        p.generate.dispatchEvent(new MouseEvent('click'));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(fetchFn.mock.calls.map((c) => c[0])).not.toContain('/api/tls/generate');
+    });
+
+    it('does not re-enable a generate that mkcert holds, when the name becomes usable', async () => {
+        const fetchFn = vi.fn(async (url: string) =>
+            url === '/api/dependencies'
+                ? new Response(JSON.stringify([{ name: 'mkcert', installedVersion: null, status: 'not-installed' }]))
+                : new Response(JSON.stringify(state())),
+        ) as unknown as typeof fetch;
+        const p = await build(fetchFn);
+        expect(p.generate.disabled).toBe(true);
+        // The radios are disabled with mkcert missing; drive the check through the box.
+        p.el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="hostname"]')!.checked = true;
+        p.type('com');
+        expect(p.generate.disabled).toBe(true);
+        p.type('nas');
+        // The name is fine now, but mkcert still is not installed.
+        expect(p.generate.disabled).toBe(true);
+    });
+
+    it('does not re-enable a generate in flight, when the name becomes usable meanwhile', async () => {
+        let answer: (r: Response) => void = () => undefined;
+        const fetchFn = vi.fn((url: string) =>
+            url === '/api/tls/generate'
+                ? new Promise<Response>((r) => {
+                      answer = r;
+                  })
+                : Promise.resolve(new Response(JSON.stringify(state()))),
+        ) as unknown as typeof fetch;
+        const p = await build(fetchFn);
+        p.hostname();
+        p.type('nas');
+        p.generate.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(p.generate.disabled).toBe(true);
+        // A refusal and then a usable name while the request is out: still held.
+        p.type('com');
+        p.type('htpc');
+        expect(p.generate.disabled).toBe(true);
+
+        answer(new Response(JSON.stringify({ status: 'ready', kind: 'hostname', subject: 'nas' })));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(p.generate.disabled).toBe(false);
+    });
+
+    it('says "name" when a hostname generate is refused without a reason, and "address" for an ip one -- the copy the server sends', async () => {
+        const refuse = vi.fn(async (url: RequestInfo | URL) =>
+            url === '/api/tls/generate'
+                ? new Response('not json', { status: 400 })
+                : new Response(JSON.stringify(state())),
+        ) as unknown as typeof fetch;
+        const host = await build(refuse);
+        host.hostname();
+        host.type('nas');
+        host.generate.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(host.el.querySelector('[data-tls-alert]')!.textContent).toBe(
+            'that name could not be used for a certificate.',
+        );
+
+        const ip = await build(refuse);
+        ip.generate.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(ip.el.querySelector('[data-tls-alert]')!.textContent).toBe(
+            'that address could not be used for a certificate.',
+        );
+    });
+
+    it('shows the server reason for a refused generate as given (it already names a name or an address)', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) =>
+            url === '/api/tls/generate'
+                ? new Response(JSON.stringify({ error: 'that name could not be used for a certificate.' }), {
+                      status: 400,
+                  })
+                : new Response(JSON.stringify(state())),
+        ) as unknown as typeof fetch;
+        const p = await build(fetchFn);
+        p.hostname();
+        p.type('nas');
+        p.generate.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(p.el.querySelector('[data-tls-alert]')!.textContent).toBe(
+            'that name could not be used for a certificate.',
+        );
+    });
+
+    it('keeps "enter an ip address or hostname first." for an empty box', async () => {
+        const p = await build();
+        p.type('   ');
+        p.generate.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(p.el.querySelector('[data-tls-alert]')!.textContent).toBe('enter an ip address or hostname first.');
+    });
+
+    it('publicSuffixWarning quotes the name as typed', () => {
+        expect(publicSuffixWarning('net')).toBe(
+            '"net" is an internet domain ending, not a computer\'s name, so it can\'t be used. use something like net.lan, or the name your devices use to reach this computer.',
+        );
+    });
+});
+
+// The one transient alert stays in ONE place: the bottom of the tab, below and
+// outside all three cards, whichever action raised it (user decision after the
+// 0.5.5 review; a version that moved it beside each action was reverted).
+describe('local https panel: where the transient alert shows', () => {
+    beforeEach(() => {
+        HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+            this.setAttribute('open', '');
+        });
+        HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+            this.removeAttribute('open');
+        });
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+        document.body.replaceChildren();
+        vi.restoreAllMocks();
+    });
+
+    async function build() {
+        // Every action refused, each with its own reason, so the alert's text says which one put it there.
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/generate') return new Response(JSON.stringify({ error: 'nope' }), { status: 400 });
+            if (url === '/api/tls/ca-root') {
+                return new Response(JSON.stringify({ error: 'slow down' }), { status: 429 });
+            }
+            if (url === '/api/tls/exposure') {
+                return new Response(JSON.stringify({ error: 'refused' }), { status: 403 });
+            }
+            if (url === '/api/tls/revoke') return new Response(JSON.stringify({ error: 'not here' }), { status: 403 });
+            return new Response(
+                JSON.stringify(
+                    state({ status: 'ready', kind: 'ip', subject: '10.0.0.5', httpsListener: { bound: true } }),
+                ),
+            );
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['10.0.0.5'] });
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        return { el, alert };
+    }
+
+    /** Where the alert is: the tab's last element, after every card, in no card or item. */
+    function expectAtTheBottom(el: HTMLElement, alert: HTMLElement): void {
+        expect(alert.parentElement).toBe(el);
+        expect(el.lastElementChild).toBe(alert);
+        expect(alert.closest('.settings-card, .settings-item')).toBeNull();
+        const cards = el.querySelectorAll('.settings-card');
+        expect(cards).toHaveLength(3);
+        expect(cards[2]!.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+
+    it('is the last element of the tab, after the Exposure card, and starts empty', async () => {
+        const { el, alert } = await build();
+        expect(alert.textContent).toBe('');
+        expectAtTheBottom(el, alert);
+        expect(el.querySelectorAll('[data-tls-alert]')).toHaveLength(1);
+    });
+
+    it.each([
+        ['generate', '[data-tls-generate]', 'nope'],
+        ['download ca', '[data-tls-download]', 'slow down'],
+        ['exposure ok', '[data-exposure-ok]', 'refused'],
+    ])('%s: reports there, an error held for 10 s and not a moment more', async (_label, button, text) => {
+        vi.useFakeTimers();
+        const { el, alert } = await build();
+        el.querySelector<HTMLButtonElement>(button)!.click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(alert.textContent).not.toBe('');
+        expect(alert.textContent).toBe(text);
+        expectAtTheBottom(el, alert);
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(alert.textContent).not.toBe('');
+        await vi.advanceTimersByTimeAsync(2);
+        expect(alert.textContent).toBe('');
+    });
+
+    it('revoke: reports there too', async () => {
+        const { el, alert } = await build();
+        el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        const ok = [...document.querySelectorAll<HTMLButtonElement>('dialog button')].find(
+            (b) => b.textContent === 'ok',
+        )!;
+        ok.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(alert.textContent).toBe('not here');
+        expectAtTheBottom(el, alert);
+    });
+});
+
+describe('local https panel: help links carry the theme', () => {
+    afterEach(() => document.documentElement.removeAttribute('data-theme'));
+
+    it('puts the current theme in both links, before the hash, decided when the link is followed', async () => {
+        document.documentElement.setAttribute('data-theme', 'light');
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3'],
+        });
+        const subjectLink = el.querySelector<HTMLAnchorElement>('[data-tls-subject-guide] a')!;
+        const trustLink = el.querySelector<HTMLAnchorElement>('[data-tls-trust-help] a')!;
+        expect(subjectLink.getAttribute('href')).toBe('help/certificate-subject.html?theme=light');
+        expect(trustLink.getAttribute('href')).toBe(
+            'help/certificate-subject.html?theme=light#4-installing-a-certificate-establishing-trust',
+        );
+
+        // The theme changes while the dialog is open: the next follow carries the new one.
+        document.documentElement.setAttribute('data-theme', 'dark');
+        subjectLink.addEventListener('click', (e) => e.preventDefault());
+        subjectLink.click();
+        expect(subjectLink.getAttribute('href')).toBe('help/certificate-subject.html?theme=dark');
+        trustLink.dispatchEvent(new MouseEvent('auxclick', { bubbles: true }));
+        expect(trustLink.getAttribute('href')).toBe(
+            'help/certificate-subject.html?theme=dark#4-installing-a-certificate-establishing-trust',
+        );
     });
 });
 
@@ -412,7 +845,7 @@ describe('local https panel: generate waits for mkcert', () => {
         return {
             generate: el.querySelector<HTMLButtonElement>('[data-tls-generate]')!,
             subject: el.querySelector<HTMLInputElement>('[data-tls-subject]')!,
-            candidates: el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!,
+            candidates: el.querySelector<HTMLButtonElement>('[data-tls-candidate-button]')!,
             radios: [...el.querySelectorAll<HTMLInputElement>('input[name="tls-subject-kind"]')],
             notice: el.querySelector<HTMLElement>('[data-tls-mkcert-notice]')!,
             revoke: el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!,
@@ -451,8 +884,11 @@ describe('local https panel: generate waits for mkcert', () => {
         expect(heading.textContent).toBe('Local HTTPS');
         expect(notice.nextElementSibling).toBe(heading);
         expect(notice.classList.contains('settings-callout')).toBe(true);
-        // Not inside the section body any more.
-        expect(el.querySelector('.settings-section-body [data-tls-mkcert-notice]')).toBeNull();
+        // Not inside any card: above all three.
+        expect(el.querySelector('.settings-card [data-tls-mkcert-notice]')).toBeNull();
+        expect(
+            notice.compareDocumentPosition(el.querySelector('.settings-card')!) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
         // Exactly one such note.
         expect(el.querySelectorAll('[data-tls-mkcert-notice]')).toHaveLength(1);
     });
@@ -637,9 +1073,10 @@ describe('pure notification helpers', () => {
 });
 
 describe('local https panel — transient alert convention', () => {
-    // This repo's rule: transient outcomes get ONE bottom-of-panel alert
-    // (5s success / 10s error), never a status line scattered next to
-    // whichever control caused it. Each test below pins both that the alert
+    // This repo's rule: transient outcomes get ONE alert in one place at the
+    // bottom of the tab (5s success / 10s error), never a status line per
+    // control (the describe above pins where). Each test below pins both that
+    // the alert
     // fires with the right text AND that it stops existing at the wrong
     // moment — a version with no timer (always visible) or an immediate hide
     // (never visible) each fail one of the two assertions.
@@ -666,13 +1103,13 @@ describe('local https panel — transient alert convention', () => {
             await vi.advanceTimersByTimeAsync(0);
 
             const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             expect(alert.textContent).toMatch(/certificate generated/i);
 
             await vi.advanceTimersByTimeAsync(4_999);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             await vi.advanceTimersByTimeAsync(2);
-            expect(alert.hidden).toBe(true);
+            expect(alert.textContent).toBe('');
         } finally {
             vi.useRealTimers();
         }
@@ -735,11 +1172,11 @@ describe('local https panel — transient alert convention', () => {
             // this is the assertion that would catch a copy-paste of the wrong
             // constant into the error branch.
             await vi.advanceTimersByTimeAsync(5_000);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             await vi.advanceTimersByTimeAsync(4_999);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             await vi.advanceTimersByTimeAsync(2);
-            expect(alert.hidden).toBe(true);
+            expect(alert.textContent).toBe('');
         } finally {
             vi.useRealTimers();
         }
@@ -755,11 +1192,11 @@ describe('local https panel — transient alert convention', () => {
         const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         el.querySelector<HTMLButtonElement>('[data-exposure-ok]')!.click();
         await new Promise((r) => setTimeout(r, 0));
-        // Scoped to the alert element and its visibility, not whole-panel
-        // textContent -- mechanical rule: if the thing under test can be
-        // hidden, assert `hidden`, not text.
+        // Scoped to the alert element, not whole-panel textContent. The line
+        // is never `hidden` (0.5.5: a live region stays in the accessibility
+        // tree), so its text IS whether it shows.
         const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
-        expect(alert.hidden).toBe(false);
+        expect(alert.textContent).not.toBe('');
         expect(alert.textContent).toMatch(/does not support saving this setting yet/i);
     });
 
@@ -772,8 +1209,9 @@ describe('local https panel — transient alert convention', () => {
         // showed a transient alert, so no timer was ever armed, and
         // textContent still matches a HIDDEN element in jsdom. Neither half
         // of that was actually exercising persistence. This version drives a
-        // real transient alert through its own window and asserts `.hidden`
-        // on both elements, so it fails if the persistent notice were ever
+        // real transient alert through its own window and asserts the notice's
+        // `.hidden` and the alert's text (empty when idle: the line is never
+        // hidden since 0.5.5), so it fails if the persistent notice were ever
         // wired through the SAME timer as the transient one.
         vi.useFakeTimers();
         try {
@@ -794,15 +1232,15 @@ describe('local https panel — transient alert convention', () => {
             const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
 
             expect(mismatch.hidden).toBe(false);
-            expect(alert.hidden).toBe(true); // nothing transient has happened yet
+            expect(alert.textContent).toBe(''); // nothing transient has happened yet
 
             el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
             await vi.advanceTimersByTimeAsync(0);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
 
-            // Past the transient alert's own 10s (error) window: IT hides...
+            // Past the transient alert's own 10s (error) window: IT empties...
             await vi.advanceTimersByTimeAsync(10_001);
-            expect(alert.hidden).toBe(true);
+            expect(alert.textContent).toBe('');
             // ...but the persistent condition is untouched by that timer.
             expect(mismatch.hidden).toBe(false);
             expect(mismatch.textContent).toMatch(/no longer an address of this machine/i);
@@ -856,13 +1294,13 @@ describe('local https panel — transient alert convention', () => {
             // hidden despite the second alert still being well within its
             // own window.
             await vi.advanceTimersByTimeAsync(4_001);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             expect(alert.textContent).toMatch(/too many ca downloads/i);
 
             // t=11001: past the SECOND alert's own 10s deadline (measured
             // from ITS start at t=1000) -- now it hides.
             await vi.advanceTimersByTimeAsync(6_000);
-            expect(alert.hidden).toBe(true);
+            expect(alert.textContent).toBe('');
         } finally {
             vi.useRealTimers();
         }
@@ -1037,13 +1475,19 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         const links = line.querySelectorAll<HTMLAnchorElement>('a');
         expect(links).toHaveLength(1);
         const link = links[0]!;
-        expect(link.getAttribute('href')).toBe(TRUST_HELP_HREF);
+        // The section's hash stays last, after the theme (helpLink.ts).
+        expect(link.getAttribute('href')).toBe(
+            'help/certificate-subject.html?theme=dark#4-installing-a-certificate-establishing-trust',
+        );
         expect(TRUST_HELP_HREF).toBe('help/certificate-subject.html#4-installing-a-certificate-establishing-trust');
         expect(link.target).toBe('_blank');
         expect(link.rel).toBe('noopener noreferrer');
-        expect(link.textContent).toMatch(/opens in a new tab/);
-        // Firefox's own store is still named, since the guide covers it separately.
-        expect(line.textContent).toMatch(/firefox/);
+        // 0.5.5: shorter, with "(opens in a new tab)" for a screen reader only.
+        expect(line.textContent).toBe(
+            'install it on each device that connects (firefox has its own store). install guide ↗',
+        );
+        expect(link.textContent).toBe('install guide ↗');
+        expect(link.getAttribute('aria-label')).toBe('install guide (opens in a new tab)');
     });
 
     it('saves the CA as ws-scrcpy-web-local-ca.crt (0.5.3; it was .pem)', async () => {
@@ -1077,34 +1521,48 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
     });
     // ---- I7: every candidate IP, not an arbitrary one ----
 
-    it('lists every candidate ip in a picker, not just one (I7)', async () => {
+    it('lists every candidate ip in the subject list, not just one, whatever the box holds (I7)', async () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3', '10.0.0.5', '172.16.4.9'],
         });
-        const select = el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!;
-        const optionValues = Array.from(select.options).map((o) => o.value);
-        expect(optionValues).toEqual(['192.168.86.3', '10.0.0.5', '172.16.4.9']);
-        expect(select.hidden).toBe(false); // ip mode is the default
+        const button = el.querySelector<HTMLButtonElement>('[data-tls-candidate-button]')!;
+        const list = el.querySelector<HTMLElement>('[data-tls-candidate-list]')!;
+        const subjectInput = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
+        const options = () => [...list.querySelectorAll<HTMLElement>('[role="option"]')];
+        expect(button.hidden).toBe(false); // ip mode is the default
+        button.click();
+        expect(options().map((o) => o.textContent)).toEqual(['192.168.86.3', '10.0.0.5', '172.16.4.9']);
+        // The current value ticked.
+        expect(options().map((o) => o.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+
+        // Never filtered by what is typed (a native datalist would be).
+        button.click();
+        subjectInput.value = '10.0';
+        subjectInput.dispatchEvent(new Event('input'));
+        button.click();
+        expect(options()).toHaveLength(3);
     });
 
-    it('selecting a candidate fills the subject field, and the picker hides in hostname mode (I7)', async () => {
+    it('picking a candidate fills the subject box and closes the list; hostname mode has no list (I7)', async () => {
         const el = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3', '10.0.0.5'],
         });
-        const select = el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!;
+        const button = el.querySelector<HTMLButtonElement>('[data-tls-candidate-button]')!;
+        const list = el.querySelector<HTMLElement>('[data-tls-candidate-list]')!;
         const subjectInput = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
 
-        select.value = '10.0.0.5';
-        select.dispatchEvent(new Event('change'));
+        button.click();
+        [...list.querySelectorAll<HTMLElement>('[role="option"]')][1]!.click();
         expect(subjectInput.value).toBe('10.0.0.5');
+        expect(list.hidden).toBe(true);
 
         el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="hostname"]')!.click();
-        expect(select.hidden).toBe(true);
+        expect(button.hidden).toBe(true);
 
         el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="ip"]')!.click();
-        expect(select.hidden).toBe(false);
+        expect(button.hidden).toBe(false);
     });
 
     // ---- I11: narrowed exposure needs a certificate to mean anything ----
@@ -1119,7 +1577,8 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         expect(elNone.querySelector<HTMLInputElement>('[data-exposure="open"]')!.disabled).toBe(false);
         const notice = elNone.querySelector<HTMLElement>('[data-exposure-unavailable-notice]')!;
         expect(notice.hidden).toBe(false);
-        expect(notice.textContent).toMatch(/generate a certificate first/i);
+        // 0.5.5: short, under the disabled radios it explains.
+        expect(notice.textContent).toBe('needs a certificate first.');
 
         const elReady = await buildLocalHttpsPanel({
             fetchFn: vi.fn(
@@ -1154,7 +1613,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         expect(el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.disabled).toBe(true);
         const notice = el.querySelector<HTMLElement>('[data-exposure-unavailable-notice]')!;
         expect(notice.hidden).toBe(false);
-        expect(notice.textContent).toMatch(/restart the server first/i);
+        expect(notice.textContent).toBe('restart the server first.');
     });
 
     it('a generate response with a bound listener re-enables the narrowed exposure modes; one without keeps them disabled (I11/N2)', async () => {

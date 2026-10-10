@@ -15,6 +15,7 @@ import { ServiceOperationModal } from '../../ServiceOperationModal';
 import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { isStaleTokenRefusal } from '../../staleToken';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
+import { buildDynamicLabelRow, buildItem, buildRow, buildSection, buildTabAlert } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /**
@@ -145,61 +146,6 @@ export function buildServiceInfoRow(message: string): HTMLElement {
     return p;
 }
 
-/** Local copy — see EmbeddingTab.ts's `buildSection` for why it isn't shared. */
-function buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
-    section.appendChild(body);
-    return { section, body };
-}
-
-/** Local copy — see EmbeddingTab.ts's `buildRow` for why it isn't shared. */
-function buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-
-    const label = document.createElement('span');
-    label.className = 'settings-label';
-    label.textContent = labelText;
-    row.appendChild(label);
-
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-
-    return row;
-}
-
-/**
- * Local copy — same shape as `buildRow` but exposes the label element for live
- * updates (status text that changes underneath a retry button). See
- * EmbeddingTab.ts's `buildSection` for why these are not shared; `UpdatesTab`
- * carries the only other copy of this one.
- */
-function buildDynamicLabelRow(
-    labelText: string,
-    control: HTMLElement | DocumentFragment,
-): { row: HTMLElement; labelEl: HTMLSpanElement } {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-    const labelEl = document.createElement('span');
-    labelEl.className = 'settings-label';
-    labelEl.textContent = labelText;
-    row.appendChild(labelEl);
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-    return { row, labelEl };
-}
-
 /**
  * The Service tab's hooks back into `SettingsModal` — the one seam this move
  * couldn't close. `renderServiceState` (below) is the single place that learns
@@ -247,9 +193,24 @@ const refreshers = new WeakMap<HTMLElement, (callbacks: ServiceTabCallbacks) => 
  * `refreshService()`, exactly like the class method it replaces, so the
  * container-mode and role/reachability gating in `SettingsModal` (which decide
  * WHEN to call it) keep working unchanged.
+ *
+ * An install or uninstall that fails says so on the tab's status line, below
+ * the card, and leaves the card as it was, button and all, so the user can try
+ * again (0.5.5; it used to replace the card with the error and a retry). One
+ * that HAPPENED but whose hand-off was not seen to finish (the install's
+ * take-over timed out, or no fresh instance turned up after an uninstall) is
+ * not a failure: the button would repeat an action that already ran, so the
+ * card is read again instead and shows the service as it now is, with the
+ * message on the line (`settleAction`). What stays IN the card is state: the
+ * status read's own failure, which has nothing else to show, and the note
+ * after a system-scope uninstall.
  */
 export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
-    const { section, body } = buildSection('Service');
+    // `body` is the tab's card: everything below renders into it, one item per setting.
+    const { section, card: body } = buildSection('Service');
+    // The tab's one status line. Built now, but below the card all the same:
+    // `body` is the section's only card, and only its contents are redrawn.
+    const tabAlert = buildTabAlert(section);
     const placeholder = document.createElement('p');
     placeholder.className = 'settings-status';
     placeholder.style.gridColumn = '1 / -1';
@@ -259,7 +220,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
     // now entirely external/gated (see the class doc above) and this placeholder
     // is genuinely the only thing `buildServiceTab` can render synchronously.
     placeholder.textContent = 'loading install/uninstall status…';
-    body.appendChild(placeholder);
+    body.appendChild(buildItem(placeholder));
 
     // Replaces the instance fields `this.servicePlatform` / `this.serviceScopeSystemRadio`
     // used to hold. Set by renderServiceState, read by onInstallService/onUninstallService —
@@ -276,7 +237,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         retryBtn.addEventListener('click', onRetry);
         const { row, labelEl } = buildDynamicLabelRow(msg, retryBtn);
         labelEl.classList.add('settings-status-error');
-        body.appendChild(row);
+        body.appendChild(buildItem(row));
     }
 
     /**
@@ -286,7 +247,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
      */
     function renderServiceInfo(msg: string): void {
         body.replaceChildren();
-        body.appendChild(buildServiceInfoRow(msg));
+        body.appendChild(buildItem(buildServiceInfoRow(msg)));
     }
 
     function renderServiceState(resp: ServiceStatusResponse, callbacks: ServiceTabCallbacks): void {
@@ -303,7 +264,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             notice.style.gridColumn = '1 / -1';
             notice.textContent =
                 resp.unsupportedReason || 'service mode is currently windows-only. linux support arrives later in SP3.';
-            body.appendChild(notice);
+            body.appendChild(buildItem(notice));
             return;
         }
 
@@ -356,7 +317,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             if (st.locked) lockScopeRadioControl(sysLabel, sysRadio);
             scopeFrag.appendChild(sysLabel);
 
-            body.appendChild(buildRow('service scope', scopeFrag));
+            body.appendChild(buildItem(buildRow('service scope', scopeFrag)));
             // serviceScopeSystemRadio feeds the install request body; null it
             // out when locked so the install handler (unreachable in that state
             // anyway) can't accidentally consume a stale value.
@@ -384,7 +345,9 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                 void onUninstallService(btn, callbacks);
             });
         }
-        body.appendChild(buildRow('installs/uninstalls server service', btn));
+        // The install row's item; the system-scope gate note below joins it.
+        const installItem = buildItem(buildRow('installs/uninstalls server service', btn));
+        body.appendChild(installItem);
 
         // Linux: gate the system-scope install button on a prior machine-wide
         // (/opt) install — the root service execs the shared /opt binary, which
@@ -399,13 +362,32 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             gateNote.className = 'settings-status';
             gateNote.style.gridColumn = '1 / -1';
             gateNote.hidden = true;
-            body.appendChild(gateNote);
+            installItem.appendChild(gateNote);
             const applyGate = (): void =>
                 applySystemInstallGate(btn, gateNote, systemRadio.checked, machineWideInstalled);
             systemRadio.addEventListener('change', applyGate);
             scopeUserRadio?.addEventListener('change', applyGate);
             applyGate();
         }
+    }
+
+    /** An install or uninstall did not happen: give the button back and say why on the tab's line. */
+    function failAction(btn: HTMLButtonElement, prevText: string | null, msg: string): void {
+        btn.disabled = false;
+        btn.textContent = prevText;
+        tabAlert.show('error', msg);
+    }
+
+    /**
+     * An install or uninstall that DID happen, but whose hand-off was not seen
+     * to finish. Its button must not come back, since clicking it would repeat
+     * the action: say so on the tab's line and read the status again, so the
+     * card shows the service as it is now (or the read's own failure, with its
+     * retry, if this page's server has gone).
+     */
+    function settleAction(msg: string, callbacks: ServiceTabCallbacks): void {
+        tabAlert.show('error', msg);
+        void runRefresh(callbacks);
     }
 
     async function runRefresh(callbacks: ServiceTabCallbacks): Promise<void> {
@@ -415,7 +397,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         loading.style.gridColumn = '1 / -1';
         // Matches the build-time placeholder's wording — see the comment there.
         loading.textContent = 'loading install/uninstall status…';
-        body.appendChild(loading);
+        body.appendChild(buildItem(loading));
 
         const retry = (): void => void runRefresh(callbacks);
         let resp: ServiceStatusResponse | null = null;
@@ -472,9 +454,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                         ? reasonToUserMessage(data.reason, data.error)
                         : `install failed (${r.status})`;
                 modal.close();
-                btn.disabled = false;
-                btn.textContent = prevText;
-                renderServiceError(errMsg, () => void runRefresh(callbacks));
+                failAction(btn, prevText, errMsg);
                 return;
             }
 
@@ -504,16 +484,13 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                 },
                 onTimeout: () => {
                     modal.close();
-                    btn.disabled = false;
-                    btn.textContent = prevText;
-                    renderServiceError(INSTALL_HANDOFF_TIMEOUT_MESSAGE, () => void runRefresh(callbacks));
+                    // The install ran; only the take-over was not seen.
+                    settleAction(INSTALL_HANDOFF_TIMEOUT_MESSAGE, callbacks);
                 },
             });
         } catch {
             modal.close();
-            btn.disabled = false;
-            btn.textContent = prevText;
-            renderServiceError("couldn't reach server", () => void runRefresh(callbacks));
+            failAction(btn, prevText, "couldn't reach server");
         }
     }
 
@@ -544,9 +521,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                         ? reasonToUserMessage(data.reason, data.error)
                         : `uninstall failed (${r.status})`;
                 modal.close();
-                btn.disabled = false;
-                btn.textContent = prevText;
-                renderServiceError(errMsg, () => void runRefresh(callbacks));
+                failAction(btn, prevText, errMsg);
                 return;
             }
             if (data.status === 'shutting-down') {
@@ -561,19 +536,23 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                     // saying "removed". Poll /api/service/status until the service is
                     // actually gone, and surface a failure if it never does.
                     modal.close();
-                    renderServiceInfo('removing the system service…');
+                    // In progress: on the tab's line until the outcome replaces it.
+                    tabAlert.show('busy', 'removing the system service…');
                     const outcome = await pollServiceUninstalled();
-                    btn.disabled = false;
-                    btn.textContent = prevText;
                     // 'stopped' is this page's own server going quiet: the service
                     // served this page and nothing relaunches after a system-scope
                     // uninstall, so that IS success (D11, item 157).
                     if (outcome === 'uninstalled' || outcome === 'stopped') {
+                        btn.disabled = false;
+                        btn.textContent = prevText;
+                        tabAlert.clear();
+                        // A standing state, not a result: it stays in the card.
                         renderServiceInfo(uninstallFollowupMessage());
                     } else {
-                        renderServiceError(
+                        failAction(
+                            btn,
+                            prevText,
                             'the system service is still running — uninstall may not have completed. check the service logs and try again.',
-                            () => void runRefresh(callbacks),
                         );
                     }
                     return;
@@ -595,12 +574,8 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                     if (iterations > maxIterations) {
                         clearInterval(poll);
                         modal.close();
-                        btn.disabled = false;
-                        btn.textContent = prevText;
-                        renderServiceError(
-                            'service uninstalled but fresh instance not detected. try reloading.',
-                            () => void runRefresh(callbacks),
-                        );
+                        // The uninstall ran; only the relaunch was not seen.
+                        settleAction('service uninstalled but fresh instance not detected. try reloading.', callbacks);
                         return;
                     }
                     try {
@@ -645,9 +620,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             await runRefresh(callbacks);
         } catch {
             modal.close();
-            btn.disabled = false;
-            btn.textContent = prevText;
-            renderServiceError("couldn't reach server", () => void runRefresh(callbacks));
+            failAction(btn, prevText, "couldn't reach server");
         }
     }
 

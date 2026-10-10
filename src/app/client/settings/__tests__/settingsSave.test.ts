@@ -33,6 +33,16 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
+/**
+ * The status line of the tab on screen, where a save's result is reported
+ * (0.5.5; it used to be a line in the dialog's footer).
+ */
+function activeTabLine(): HTMLElement | null {
+    return document.querySelector<HTMLElement>(
+        'dialog.settings-modal .settings-tab-panel > :not([hidden]) [data-settings-alert]',
+    );
+}
+
 /** A `fetch` stub answering with one canned status + JSON body. */
 function stubFetch(status: number, body: unknown): void {
     vi.stubGlobal(
@@ -880,14 +890,14 @@ describe('the restart redirect actually navigates', () => {
         // The batch has come back and the notice is up, but the page has NOT
         // moved yet — navigating before the supervisor rebinds the port gets a
         // connection refused.
-        expect(
-            document.querySelector('dialog.settings-modal .settings-save-status')?.textContent,
-            'the notice while waiting',
-        ).toBe('restarting → redirecting…');
+        expect(activeTabLine()?.textContent, 'the notice while waiting').toBe('restarting → redirecting…');
+        expect(activeTabLine()?.textContent, 'the notice is showing').not.toBe('');
         expect(navigate, 'before any time passes').not.toHaveBeenCalled();
 
         await vi.advanceTimersByTimeAsync(RESTART_REDIRECT_DELAY_MS - 1);
         expect(navigate, 'one millisecond before the delay elapses').not.toHaveBeenCalled();
+        // A busy message: nothing hides it while the page waits to leave.
+        expect(activeTabLine()?.textContent, 'the notice is still up').not.toBe('');
 
         await vi.advanceTimersByTimeAsync(1);
 
@@ -1216,10 +1226,11 @@ describe('the dialog-level Save button', () => {
         saveButton()?.click();
         await flush();
 
-        expect(
-            document.querySelector('dialog.settings-modal .settings-save-status')?.textContent,
-            'the refusal, named and explained',
-        ).toBe("couldn't save HTTP port: port 9000 is in use");
+        expect(activeTabLine()?.textContent, 'the refusal, named and explained').toBe(
+            "couldn't save HTTP port: port 9000 is in use",
+        );
+        expect(activeTabLine()?.classList.contains('settings-status-error'), 'in the error tone').toBe(true);
+        expect(document.querySelector('.settings-save-status'), 'no line in the footer any more').toBeNull();
         expect(document.querySelector('dialog.settings-modal')?.hasAttribute('open'), 'the dialog').toBe(true);
         expect(saveButton()?.disabled, 'Save after a refusal').toBe(false);
 

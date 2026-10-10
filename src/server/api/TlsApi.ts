@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { networkInterfaces } from 'os';
 import { CA_ROOT_DOWNLOAD_FILE_NAME } from '../../common/CaDownload';
+import { refusedSubjectMessage } from '../../common/refusedSubject';
 import { requireAdmin } from '../auth/requireAdmin';
 import { requireOperator } from '../auth/requireOperator';
 import { Config, DEFAULT_HTTPS_PORT, validateHttpsPortInput } from '../Config';
@@ -382,7 +383,7 @@ export class TlsApi {
                         // is what makes a rejected subject diagnosable at all.
                         log.warn(`generate refused: ${message}`);
                         res.writeHead(400);
-                        res.end(JSON.stringify({ error: 'that address could not be used for a certificate' }));
+                        res.end(JSON.stringify({ error: refusedSubjectMessage(kind) }));
                         return true;
                     }
                     // Same no-echo constraint as the 400 branch above: mkcert's

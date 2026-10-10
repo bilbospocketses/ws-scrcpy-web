@@ -26,11 +26,13 @@ import {
     openSettingsTab,
     openUsersModal,
     settingsRow,
+    settingsSection,
+    settingsTabLine,
     userByName,
     userRow,
 } from './support/auth';
 import { apiContext, lockDown, OwnedServer, REMOTE_ADMIN_ENV } from './support/ownedServer';
-import { withTimeout } from './support/privateServer';
+import { readConfigFile, withTimeout } from './support/privateServer';
 import { lanAddress } from './support/rawHttp';
 import { readServerLog } from './support/serverLog';
 import {
@@ -44,17 +46,18 @@ import {
     signIn,
     socketState,
 } from './support/sessions';
+import { footerSave, reviewDialog, reviewLines } from './support/settingsUi';
 
 /**
- * Smoke rows 12.8 and 18.16–18.22 — who may administer the server, and what
+ * Smoke rows 12.8, 18.13 and 18.16–18.22 — who may administer the server, and what
  * happens to a login's live surfaces when it ends. Fast tier only.
  *
  * Every row runs on a server this file owns (`OwnedServer`, support/ownedServer.ts), one port per
- * test in 8161–8169 and 8196, never on the shared server: these rows lock servers down,
+ * test in 8161–8169, 8196 and 8199, never on the shared server: these rows lock servers down,
  * stop them, rewrite their session clocks and flip their admin posture, and the
  * shared server must stay in open mode with its users untouched for every spec
  * file that runs after this one. (8169 is the second 18.17 test's, 8196 the
- * off-box 12.8 test's.)
+ * off-box 12.8 test's, 8199 18.13's, remote admin on the Users tab.)
  *
  * The same lockout rules as `auth.spec.ts` hold here: no row ever sends a wrong
  * password and no login is retried (`signIn` sends one request and throws on
@@ -81,6 +84,7 @@ const PORT = {
     r18_22: 8168,
     r18_17_open: 8169,
     r12_8_offbox: 8196,
+    r18_13: 8199,
 } as const;
 
 /**
@@ -143,7 +147,7 @@ function isNavigationTo(pathname: string) {
         r.request().isNavigationRequest() && new URL(r.url()).pathname === pathname;
 }
 
-test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
+test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('12.8 shutdown from this machine with login on: a signed-in non-admin is refused 403 forbidden, logs nothing and the server stays up; a signed-in admin is the control that stops it', async () => {
         test.setTimeout(150_000);
         // Finding 12.12 (fixed 2026-10-05): /api/server/shutdown is allow-listed,
@@ -741,9 +745,25 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             const refused = await refusedSeen;
             expect(refused.status()).toBe(409);
             expect(await refused.json()).toEqual({ error: 'set an admin password before enabling auth' });
-            await expect(users.locator('p.settings-status')).toHaveText(
-                'Add a user with an admin password first (Users → manage users)',
+            // The result is on the tab's ONE status line (0.5.5): below the
+            // card, outside it, in the error tone, and gone again after an
+            // error's 10 s. Not beside the button any more.
+            const line = settingsTabLine(users);
+            await expect(line).toHaveText('Add a user with an admin password first (Users → manage users)');
+            await expect(line).toBeVisible();
+            await expect(line).toHaveAttribute('role', 'status');
+            await expect(line).toHaveClass(/settings-status-error/);
+            await expect(users.locator('.settings-card [data-settings-alert]')).toHaveCount(0);
+            const lineBox = await line.boundingBox();
+            const cardBox = await users.locator('.settings-card').boundingBox();
+            expect(lineBox && cardBox && lineBox.y >= cardBox.y + cardBox.height, 'the line is below the card').toBe(
+                true,
             );
+            expect(
+                await line.evaluate((el) => el.parentElement?.lastElementChild === el),
+                'the last thing in the tab',
+            ).toBe(true);
+            await expect(line).toBeHidden({ timeout: 15_000 });
             await expect(settings).toBeVisible();
             expect(await page.evaluate(() => (window as unknown as { __e2e_18_20?: string }).__e2e_18_20)).toBe(
                 'armed',
@@ -881,7 +901,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
         }
     });
 
-    test('18.22 admin-scope banner: on this machine three actions, from another machine read-only with Dismiss only; Dismiss persists per user and reset brings it back, only the explicit accept widens exposure, and remote admin on reads as a warning with no Dismiss on both', async ({
+    test('18.22 admin-scope banner: on this machine three actions, from another machine read-only with Dismiss only; Dismiss persists per user and reset brings it back, only the explicit accept widens exposure, and with remote admin on the home page shows no banner on either', async ({
         browser,
     }) => {
         test.setTimeout(180_000);
@@ -1045,7 +1065,9 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
                 await expectLocalActionable();
             }
 
-            // --- the explicit accept widens it, and the banner turns into the warning.
+            // --- the explicit accept widens it, and the banner goes away: the
+            // warning lives on Settings -> Users since 0.5.5, under the
+            // checkbox that turns it off (18.13).
             await openWarning();
             const accepted = page.waitForResponse(
                 (r) => r.request().method() === 'PATCH' && new URL(r.url()).pathname === '/api/config',
@@ -1055,21 +1077,22 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             expect(acceptRes.status()).toBe(200);
             expect(configWrites).toEqual([{ allowRemoteAdmin: true }]);
             expect(await scope()).toEqual({ adminScope: 'remote', callerIsLocal: true, allowRemoteAdmin: true });
-            const expectRemoteWarning = async (p: Page) => {
+            const expectNoBanner = async (p: Page) => {
                 const b = p.locator('.admin-scope-banner');
-                await expect(b).toBeVisible();
-                await expect(b).toHaveAttribute('data-state', 'remote-warning');
-                await expect(b.locator('strong')).toHaveText('Remote admin is enabled without sign-in.');
-                await expect(b.getByRole('button')).toHaveCount(0);
+                await expect(b).toBeHidden();
+                await expect(b).not.toHaveAttribute('data-state');
+                await expect(b.locator('strong')).toHaveCount(0);
+                await expect(p.getByText('Remote admin is enabled without sign-in.')).toHaveCount(0);
             };
-            await expectRemoteWarning(page);
-            // On reload, in both browsers and on the other machine.
-            await page.reload();
-            await expectRemoteWarning(page);
-            await secondPage.reload();
-            await expectRemoteWarning(secondPage);
-            await remotePage.reload();
-            await expectRemoteWarning(remotePage);
+            await expectNoBanner(page);
+            // On reload, in both browsers and on the other machine: anchored to
+            // the config read, since hidden is also the state before it.
+            await loadSettled(page, 'reload');
+            await expectNoBanner(page);
+            await loadSettled(secondPage, 'reload');
+            await expectNoBanner(secondPage);
+            await loadSettled(remotePage, 'reload');
+            await expectNoBanner(remotePage);
 
             // --- and off again.
             const offRes = await probe.patch('/api/config', { data: { allowRemoteAdmin: false } });
@@ -1082,6 +1105,246 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
         } finally {
             await closeAll(remote, second, context, probe);
             await server.dispose('18.22');
+        }
+    });
+
+    test('18.13 remote admin without sign-in is a checkbox on Settings → Users: turning it on goes through the warning and Save, it survives a restart and an unrelated save, another machine turning it off is warned and loses admin, and an environment that forces it shows it checked and disabled', async ({
+        browser,
+    }) => {
+        test.setTimeout(240_000);
+        const server = await OwnedServer.start('18-13', PORT.r18_13);
+        let probe: APIRequestContext | undefined;
+        let offBox: APIRequestContext | undefined;
+        let context: BrowserContext | undefined;
+        let remote: BrowserContext | undefined;
+        let forcedContext: BrowserContext | undefined;
+        try {
+            probe = await apiContext(server.baseURL);
+            await dismissPromptsFor(probe);
+            const scope = async (ctx: APIRequestContext) => {
+                const env = await readConfig(ctx);
+                return {
+                    adminScope: env.runtime.adminScope,
+                    callerIsLocal: env.runtime.callerIsLocal,
+                    allowRemoteAdmin: env.config.allowRemoteAdmin === true,
+                };
+            };
+            expect(await scope(probe)).toEqual({ adminScope: 'local', callerIsLocal: true, allowRemoteAdmin: false });
+            const batchSeen = (p: Page) =>
+                p.waitForResponse(
+                    (r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings/batch',
+                );
+            const remoteAdminBox = (section: ReturnType<typeof settingsSection>) =>
+                section.getByRole('checkbox', { name: 'remote admin without sign-in', exact: true });
+
+            // --- on this machine: the box is off, with what holds.
+            context = await browser.newContext({ baseURL: server.baseURL });
+            const page = await context.newPage();
+            const writes: string[] = [];
+            page.on('request', (r) => {
+                const path = new URL(r.url()).pathname;
+                // The two routes that write allowRemoteAdmin. (A per-user
+                // PATCH /api/settings, the theme, may go by; it is not this.)
+                if (
+                    (r.method() === 'POST' && path === '/api/settings/batch') ||
+                    (r.method() === 'PATCH' && path === '/api/config')
+                ) {
+                    writes.push(`${r.method()} ${path}`);
+                }
+            });
+            await page.goto('/');
+            let settings = await openSettings(page);
+            let users = await openSettingsTab(settings, 'Users');
+            let box = remoteAdminBox(users);
+            let note = users.locator('[data-remote-admin-note]');
+            await expect(box).not.toBeChecked();
+            await expect(box).toBeEnabled();
+            await expect(note).toHaveText('admin actions are limited to this machine unless sign-in is set up.');
+
+            // --- checking it raises the warning; leaving it any other way stages nothing.
+            const warning = page.locator('dialog.remote-admin-warning-modal[open]');
+            await box.click();
+            await expect(warning).toBeVisible();
+            await page.keyboard.press('Escape');
+            await expect(warning).toBeHidden();
+            await expect(box).not.toBeChecked();
+            await expect(footerSave(settings)).toBeDisabled();
+            // "Set up sign-in instead" opens manage users over Settings, not a second Settings.
+            await box.click();
+            await expect(warning).toBeVisible();
+            await warning.getByRole('button', { name: 'Set up sign-in instead', exact: true }).click();
+            const usersModal = page.locator('dialog.users-modal[open]');
+            await expect(usersModal).toBeVisible();
+            await expect(page.locator('dialog.settings-modal[open]')).toHaveCount(1);
+            await closeTopModal(page, usersModal);
+            await expect(box).not.toBeChecked();
+            await expect(footerSave(settings)).toBeDisabled();
+            // The accept STAGES it: nothing is written until Save.
+            await box.click();
+            await warning.getByRole('button', { name: 'I understand — allow remote admin', exact: true }).click();
+            await expect(warning).toBeHidden();
+            await expect(box).toBeChecked();
+            await expect(note).toHaveText(
+                'any device that can reach this server can administer it. set up sign-in, or uncheck this, to close it.',
+            );
+            // Checked but not yet saved: the item takes the home page banner's look,
+            // its title saying it applies on save; the note reads as the box's body.
+            const item = users.locator('.settings-item:has(input[data-remote-admin])');
+            await expect(item).toHaveClass(/settings-item--alert/);
+            await expect(users.locator('[data-remote-admin-title]')).toHaveText(
+                'remote admin will be enabled without sign-in when you save.',
+            );
+            await expect(note).not.toHaveClass(/settings-status-warning/);
+            expect(writes).toEqual([]);
+            expect((await scope(probe)).allowRemoteAdmin).toBe(false);
+
+            // --- Save: the review lists it, and the batch applies it.
+            let batch = batchSeen(page);
+            await footerSave(settings).click();
+            let review = reviewDialog(page);
+            await expect(review).toBeVisible();
+            await expect(reviewLines(review)).toHaveText(['Remote admin without sign-in: off → on']);
+            await review.getByRole('button', { name: 'Save', exact: true }).click();
+            let res = await batch;
+            expect(res.status()).toBe(200);
+            expect(await res.json()).toEqual({ ok: true, applied: ['allowRemoteAdmin'] });
+            await expect(settings).toBeHidden();
+            expect(await scope(probe)).toEqual({ adminScope: 'remote', callerIsLocal: true, allowRemoteAdmin: true });
+            expect(readConfigFile(server.paths)['allowRemoteAdmin']).toBe(true);
+            // ...and the home page says nothing about it (18.22).
+            const configRead = page.waitForResponse(
+                (r) => r.request().method() === 'GET' && new URL(r.url()).pathname === '/api/config',
+            );
+            await page.reload();
+            await configRead;
+            await page.waitForLoadState('networkidle');
+            await expect(page.locator('.admin-scope-banner')).toBeHidden();
+
+            // --- 18.13 (a): it survives a restart, read from another machine.
+            await probe.dispose();
+            probe = undefined;
+            await context.close();
+            context = undefined;
+            await server.restart();
+            probe = await apiContext(server.baseURL);
+            offBox = await apiContext(offBoxURL(server.paths.port));
+            expect(await scope(offBox)).toEqual({ adminScope: 'remote', callerIsLocal: false, allowRemoteAdmin: true });
+            expect(readConfigFile(server.paths)['allowRemoteAdmin']).toBe(true);
+            // (b) ...and an unrelated config save, which rewrites config.json.
+            const unrelated = await probe.patch('/api/config', { data: { firstRunComplete: true } });
+            expect(unrelated.status()).toBe(200);
+            expect(readConfigFile(server.paths)['allowRemoteAdmin']).toBe(true);
+            expect((await scope(offBox)).adminScope).toBe('remote');
+
+            // --- another machine turns it off from the Users tab, warned that
+            // saving ends its admin access, and Settings reopens without it.
+            remote = await browser.newContext({ baseURL: offBoxURL(server.paths.port) });
+            const remotePage = await remote.newPage();
+            // A controllable clock, installed before the page loads so every
+            // poller's timer is on it. Time still runs as normal until
+            // `runFor` jumps it past their ticks below.
+            await remotePage.clock.install();
+            // Every request this page makes, and every refusal it gets, from
+            // the moment the batch goes out: the transition must produce none.
+            let batchSent = false;
+            const afterSave: string[] = [];
+            const refusedAfterSave: string[] = [];
+            remotePage.on('request', (r) => {
+                const path = new URL(r.url()).pathname;
+                if (batchSent) afterSave.push(`${r.method()} ${path}`);
+                if (r.method() === 'POST' && path === '/api/settings/batch') batchSent = true;
+            });
+            remotePage.on('response', (r) => {
+                if (batchSent && r.status() === 403) refusedAfterSave.push(new URL(r.url()).pathname);
+            });
+            await remotePage.goto('/');
+            settings = await openSettings(remotePage);
+            users = await openSettingsTab(settings, 'Users');
+            box = remoteAdminBox(users);
+            note = users.locator('[data-remote-admin-note]');
+            await expect(box).toBeChecked();
+            await expect(box).toBeEnabled();
+            await box.click();
+            // Unchecking asks nothing.
+            await expect(remotePage.locator('dialog.remote-admin-warning-modal[open]')).toHaveCount(0);
+            await expect(box).not.toBeChecked();
+            await expect(note).toHaveText('you are on another device: saving this ends your admin access from here.');
+            batch = batchSeen(remotePage);
+            await footerSave(settings).click();
+            review = reviewDialog(remotePage);
+            await expect(reviewLines(review)).toHaveText(['Remote admin without sign-in: on → off']);
+            await expect(review.locator('.settings-summary__warning')).toHaveText(
+                'you are on another device: saving this ends your admin access from here.',
+            );
+            await review.getByRole('button', { name: 'Save', exact: true }).click();
+            res = await batch;
+            expect(res.status()).toBe(200);
+            // Back to the local policy, and the key is gone from config.json.
+            expect(await scope(probe)).toEqual({ adminScope: 'local', callerIsLocal: true, allowRemoteAdmin: false });
+            expect(readConfigFile(server.paths)).not.toHaveProperty('allowRemoteAdmin');
+            expect((await scope(offBox)).callerIsLocal).toBe(false);
+            // Settings opens again on Users, in the view that cannot act from here.
+            const reopened = remotePage.locator('dialog.settings-modal[open]');
+            await expect(reopened).toHaveCount(1);
+            const reUsers = settingsSection(reopened, 'Users');
+            await expect(reUsers).toBeVisible();
+            await expect(remoteAdminBox(reUsers)).not.toBeChecked();
+            await expect(remoteAdminBox(reUsers)).toBeDisabled();
+            await expect(reUsers.locator('[data-admin-unreachable-note]')).toHaveText(
+                'admin changes are limited to the machine running the server.',
+            );
+            // Past every poller's next tick: the home page's dependency badge
+            // and first-run banner (15 s), the update pill (30 s), the
+            // embed-request watch (5 s). Each was told to stop before the batch
+            // went out (adminAccess.ts), so none of them asks.
+            await remotePage.clock.runFor(31_000);
+            await remotePage.waitForLoadState('networkidle');
+            // Nothing operator-gated was asked after the batch, and nothing was refused.
+            const gated =
+                /^(GET|POST|PATCH|PUT|DELETE) \/api\/(service|updates|tls|dependencies|embed-origins|embed-request|users|settings\/batch)(\/|$)/;
+            expect(afterSave.filter((r) => gated.test(r))).toEqual([]);
+            expect(refusedAfterSave).toEqual([]);
+            // The control: the page did keep talking to the server meanwhile.
+            expect(afterSave).toContain('GET /api/config');
+
+            // --- forced on by the environment: checked and disabled, and the
+            // server refuses an attempt to turn it off.
+            await closeAll(offBox, remote, probe);
+            offBox = undefined;
+            remote = undefined;
+            probe = undefined;
+            await server.restart({ [REMOTE_ADMIN_ENV]: '1' });
+            probe = await apiContext(server.baseURL);
+            const forcedEnv = await readConfig(probe);
+            expect(forcedEnv.runtime['remoteAdminForced']).toBe(true);
+            expect(forcedEnv.runtime.adminScope).toBe('remote');
+            forcedContext = await browser.newContext({ baseURL: server.baseURL });
+            const forcedPage = await forcedContext.newPage();
+            await forcedPage.goto('/');
+            settings = await openSettings(forcedPage);
+            users = await openSettingsTab(settings, 'Users');
+            await expect(remoteAdminBox(users)).toBeChecked();
+            await expect(remoteAdminBox(users)).toBeDisabled();
+            await expect(users.locator('[data-remote-admin-note]')).toHaveText(
+                'forced on by WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 on the server; remove the variable to turn it off.',
+            );
+            const forcedOff = await probe.post('/api/settings/batch', {
+                data: {
+                    changes: [{ id: 'allowRemoteAdmin', label: 'Remote admin without sign-in', from: true, to: false }],
+                },
+            });
+            expect(forcedOff.status()).toBe(409);
+            expect(await forcedOff.json()).toEqual({
+                ok: false,
+                applied: [],
+                failed: {
+                    id: 'allowRemoteAdmin',
+                    error: 'forced on by WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 on the server; remove the variable to turn it off.',
+                },
+            });
+        } finally {
+            await closeAll(forcedContext, remote, context, offBox, probe);
+            await server.dispose('18.13');
         }
     });
 });

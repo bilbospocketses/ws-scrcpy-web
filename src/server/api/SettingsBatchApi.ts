@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { FRAME_ANCESTORS_ADD_ID, IPV6_EMBEDDER_ERROR } from '../../common/embedderOrigin';
+import { REMOTE_ADMIN_FORCED_MESSAGE, REMOTE_ADMIN_ID } from '../../common/remoteAdmin';
 import { resolveUserId } from '../auth/currentUser';
-import { requireOperator } from '../auth/requireOperator';
+import { remoteAdminForcedByEnv, requireOperator } from '../auth/requireOperator';
 import { Config, validateHttpsPortInput, validateWebPortInput } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
 import { Logger } from '../Logger';
@@ -43,6 +44,16 @@ export const HTTPS_PORT_ID = 'httpsPort';
  * `POST /api/tls/https-port` uses), validated by `validateHttpsPortInput`, and
  * a container refuses it with the `/api/tls/*` copy, since Local HTTPS does not
  * exist there.
+ *
+ * `allowRemoteAdmin` (0.5.5) is Settings → Users' "remote admin without
+ * sign-in" checkbox, until then settable only from the home page banner's
+ * PATCH /api/config. It IS an `AppConfig` key and goes through
+ * `updateAppConfig` like the updater's settings, so turning it off removes the
+ * key from config.json as that route always has (`Config.saveToDisk`). A
+ * container allows it, as PATCH /api/config does: it is not a host-only key
+ * (containerGuard.ts). Turning it off while WS_SCRCPY_ALLOW_REMOTE_ADMIN=1
+ * forces it on is refused (`remoteAdminRefusal`): the save could not change
+ * what the server does.
  */
 export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'webPort',
@@ -52,6 +63,7 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'updateCheckIntervalMinutes',
     'githubOwner',
     FRAME_ANCESTORS_ADD_ID,
+    REMOTE_ADMIN_ID,
 ]);
 
 /**
@@ -82,6 +94,18 @@ export function frameAncestorsAddRefusal(to: unknown): string | null {
             return `not an http(s) origin with no path: ${JSON.stringify(entry)}`;
         }
     }
+    return null;
+}
+
+/**
+ * Why an `allowRemoteAdmin` value cannot be saved, with the status to answer,
+ * or null when it can. Not a boolean: 400, as `validateField` would refuse it.
+ * `false` while the environment forces it on: 409, since the value is fine and
+ * the server's state is what stands in the way. Checked before the WAL row.
+ */
+export function remoteAdminRefusal(to: unknown, forced: boolean): { status: number; error: string } | null {
+    if (typeof to !== 'boolean') return { status: 400, error: `${REMOTE_ADMIN_ID} must be a boolean` };
+    if (forced && to === false) return { status: 409, error: REMOTE_ADMIN_FORCED_MESSAGE };
     return null;
 }
 
@@ -219,6 +243,22 @@ export class SettingsBatchApi {
                 log.warn(`refusing batch: ${embed.id} ${refusal}`);
                 res.writeHead(400, { 'content-type': 'application/json' });
                 res.end(JSON.stringify({ ok: false, applied: [], failed: { id: embed.id, error: refusal } }));
+                return true;
+            }
+        }
+
+        // Remote admin, in the same rejected-apply shape and also before the
+        // WAL row: a value that is not a boolean, or an attempt to turn it off
+        // while the environment forces it on. Every one in the batch, as the
+        // embedder check above does: a crafted batch can name it twice.
+        for (const remoteAdmin of changes.filter((c) => c.id === REMOTE_ADMIN_ID)) {
+            const refusal = remoteAdminRefusal(remoteAdmin.to, remoteAdminForcedByEnv());
+            if (refusal) {
+                log.warn(`refusing batch: ${REMOTE_ADMIN_ID} ${refusal.error}`);
+                res.writeHead(refusal.status, { 'content-type': 'application/json' });
+                res.end(
+                    JSON.stringify({ ok: false, applied: [], failed: { id: REMOTE_ADMIN_ID, error: refusal.error } }),
+                );
                 return true;
             }
         }

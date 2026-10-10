@@ -86,6 +86,14 @@ export interface FirstRunStatus {
      */
     callerIsLocal?: boolean;
     /**
+     * True when WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 forces remote admin on, whatever
+     * config.json says. Settings → Users then shows its remote-admin checkbox
+     * checked and disabled, since nothing it saves can turn the setting off.
+     * Optional so an older server and a newer frontend interoperate -- absent
+     * reads as not forced.
+     */
+    remoteAdminForced?: boolean;
+    /**
      * The running app's version (package.json, via `getAppVersion()`), for the
      * Settings dialog's footer. Composed by ConfigApi like `adminScope`.
      *

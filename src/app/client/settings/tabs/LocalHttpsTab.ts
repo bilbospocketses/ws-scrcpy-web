@@ -1,40 +1,22 @@
 import { CA_ROOT_DOWNLOAD_FILE_NAME } from '../../../../common/CaDownload';
 import { DependencyStatus } from '../../../../common/DependencyTypes';
+import { isPublicSuffix } from '../../../../common/publicSuffix';
+import { refusedSubjectMessage } from '../../../../common/refusedSubject';
 import type { ServiceStatusResponse } from '../../../../common/ServiceEvents';
 import { ConfirmModal } from '../../ConfirmModal';
+import { themeHelpLink } from '../../helpLink';
+import { buildCombobox } from '../Combobox';
+import {
+    addCard,
+    buildItem,
+    buildRow,
+    buildSection,
+    buildSplitSection,
+    buildTabAlert,
+    destroyTabAlerts,
+    type TabAlertPart,
+} from '../settingsLayout';
 import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
-
-/** Local copy — see EmbeddingTab.ts's `buildSection` for why it isn't shared. */
-function buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
-    section.appendChild(body);
-    return { section, body };
-}
-
-/** Local copy — see EmbeddingTab.ts's `buildRow` for why it isn't shared. */
-function buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-
-    const label = document.createElement('span');
-    label.className = 'settings-label';
-    label.textContent = labelText;
-    row.appendChild(label);
-
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-
-    return row;
-}
 
 // ---------------------------------------------------------------------------
 // Local HTTPS panel (Settings → Local HTTPS; until 0.5.3 a section of the
@@ -163,14 +145,6 @@ export interface LocalHttpsPanelDeps {
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXPIRY_WARNING_DAYS = 30;
 
-// This repo's established convention for transient save/status feedback: ONE
-// bottom-of-panel alert, never scattered inline next to whichever control
-// caused it (a user who just clicked something looks in one place for the
-// result). Success auto-hides sooner than an error, which may need reading
-// and acting on.
-const TRANSIENT_ALERT_SUCCESS_MS = 5_000;
-const TRANSIENT_ALERT_ERROR_MS = 10_000;
-
 /**
  * `candidateLanIps()` (the source of `candidateIps`, via TlsApi's
  * `getCandidateIps`) enumerates ONLY RFC1918 IPv4 addresses. It can positively
@@ -284,12 +258,59 @@ export const TRUST_HELP_HREF = 'help/certificate-subject.html#4-installing-a-cer
 /** The certificate-subject explainer the subject radios link to (0.5.3); same page, from the top. */
 export const SUBJECT_HELP_HREF = 'help/certificate-subject.html';
 
-/** The always-shown guide under the certificate subject; SUBJECT_HELP_LINK_TEXT follows it. */
-export const SUBJECT_GUIDE_TEXT =
-    'the certificate name must match the ip address or name that you type from the remote device/computer to reach this server. ';
+/**
+ * The always-shown guide under the certificate subject, which follows the
+ * chosen kind (0.5.5): what has to match is the ADDRESS the other device types
+ * in ip mode, and the NAME in hostname mode. SUBJECT_HELP_LINK_TEXT follows it.
+ */
+export const SUBJECT_GUIDE_IP_TEXT = 'must match the address you type on the other device to reach this server. ';
+export const SUBJECT_GUIDE_HOSTNAME_TEXT = 'must match the name you type on the other device to reach this server. ';
 
 /** The guide's link to SUBJECT_HELP_HREF. */
-export const SUBJECT_HELP_LINK_TEXT = 'click here for help on how this works (opens in a new tab)';
+export const SUBJECT_HELP_LINK_TEXT = 'how this works ↗';
+
+/** The line under the root ca download; TRUST_HELP_LINK_TEXT follows it. */
+export const TRUST_HELP_TEXT = 'install it on each device that connects (firefox has its own store). ';
+
+/** The trust line's link to TRUST_HELP_HREF. */
+export const TRUST_HELP_LINK_TEXT = 'install guide ↗';
+
+/**
+ * Said to a screen reader at the end of each help link's name. Not on screen
+ * since 0.5.5: the ↗ says it to the eye, and the words made both lines long.
+ */
+const NEW_TAB_SUFFIX = ' (opens in a new tab)';
+
+/**
+ * A link to a help page, in a new tab, carrying the app's theme (helpLink.ts).
+ * Its accessible name is the visible text without the ↗ glyph, which a screen
+ * reader would read out as "north east arrow", plus NEW_TAB_SUFFIX.
+ */
+function buildHelpLink(href: string, text: string): HTMLAnchorElement {
+    const link = document.createElement('a');
+    link.className = 'settings-help-link';
+    themeHelpLink(link, href);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = text;
+    link.setAttribute('aria-label', `${text.replace(/\s*↗$/, '')}${NEW_TAB_SUFFIX}`);
+    return link;
+}
+
+/**
+ * The warning under the subject guide while hostname mode holds a real
+ * internet TLD or public suffix (0.5.5; the lists are `src/common/publicSuffix.ts`,
+ * which the server refuses from too). It offers the same word under `.lan`,
+ * which is not delegated. `value` is what the user typed, trimmed; it only
+ * ever reaches the page as text.
+ */
+export function publicSuffixWarning(value: string): string {
+    return `"${value}" is an internet domain ending, not a computer's name, so it can't be used. use something like ${value}.lan, or the name your devices use to reach this computer.`;
+}
+
+/** The exposure-unavailable notice (I11) with no certificate, and with one but no https listener yet. */
+export const EXPOSURE_NEEDS_CERTIFICATE = 'needs a certificate first.';
+export const EXPOSURE_NEEDS_RESTART = 'restart the server first.';
 
 /** The Dependencies tab's id in the Settings dialog (SettingsModal.ts), where mkcert is installed. */
 export const DEPENDENCIES_TAB_ID = 'dependencies';
@@ -383,25 +404,6 @@ function buildMkcertCallout(showTab: ((id: string) => void) | undefined): HTMLPa
     return callout;
 }
 
-/** Gives each panel's subject fields their own ids, for their `<label for>`. */
-let subjectFieldSeq = 0;
-
-/** A field with a small label above it (the certificate subject's second line). */
-function buildLabeledField(
-    control: HTMLInputElement | HTMLSelectElement,
-    labelText: string,
-): { field: HTMLElement; label: HTMLLabelElement } {
-    const field = document.createElement('div');
-    field.className = 'settings-field';
-    const label = document.createElement('label');
-    label.className = 'settings-field-label';
-    if (!control.id) control.id = `tls-subject-field-${++subjectFieldSeq}`;
-    label.htmlFor = control.id;
-    label.textContent = labelText;
-    field.append(label, control);
-    return { field, label };
-}
-
 /**
  * Dispatched (bubbling) from the panel's section after a certificate is
  * generated or revoked. The Settings dialog listens for it on itself and has
@@ -458,10 +460,16 @@ async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
  *   route existed -- harmless now, and cheap insurance against a client
  *   talking to an older server.)
  *
+ * Three cards since 0.5.5, under their own headings in place of the tab
+ * title: Certificate (the subject, then the certificate and every notice about
+ * it), Trust (the root ca download and its help line) and Exposure (the
+ * plain-http mode and its notices). The mkcert callout stays above them all.
+ *
  * Every notice in here is one of two kinds, and each renders differently
- * (this repo's convention -- see TRANSIENT_ALERT_*_MS above):
+ * (this repo's convention -- see `buildTabAlert` in settingsLayout.ts):
  * - TRANSIENT OUTCOMES (a generate/download/exposure-save result) -- one
- *   shared alert at the bottom of this panel, auto-hiding after 5s/10s.
+ *   shared alert at the bottom of the tab, below the cards, auto-hiding
+ *   after 5s/10s.
  * - PERSISTENT CONDITIONS and PRE-ACTION WARNINGS (notifications 2-9 from the
  *   spec table) -- rendered in place, beside the control they describe, and
  *   stay up for exactly as long as the condition holds (2/3/4/8/9) or until
@@ -489,16 +497,19 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     let mkcertReadSeq = 0;
     const candidateIpsFor = (s: TlsCertState): string[] => s.candidateIps ?? deps.candidateIps;
 
-    const { section, body } = buildSection('Local HTTPS');
+    const { section } = buildSplitSection('Local HTTPS');
+    const certificateCard = addCard(section, 'Certificate');
+    const trustCard = addCard(section, 'Trust');
+    const exposureCard = addCard(section, 'Exposure');
 
     // 0.5.1: generate needs mkcert, and installing it is the Dependencies
     // tab's job (its install button). Until then generate and the subject
     // controls that only feed it are disabled (applyMkcertGate below), and this
     // says why. It is the first thing a user without mkcert needs to read, so
-    // it is the tab's FIRST element: a boxed callout above the "Local HTTPS"
-    // heading, in the warning (orange) tone, whose "dependencies tab" words
-    // take them to that tab. Revoke, the ca download and the exposure modes
-    // need no mkcert, so they stay as they are.
+    // it is the tab's FIRST element: a boxed callout above the cards (and the
+    // tab's hidden title), in the warning (orange) tone, whose "dependencies
+    // tab" words take them to that tab. Revoke, the ca download and the
+    // exposure modes need no mkcert, so they stay as they are.
     const mkcertNotice = buildMkcertCallout(deps.showTab);
     section.insertBefore(mkcertNotice, section.firstChild);
 
@@ -507,6 +518,10 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     subjectInput.type = 'text';
     subjectInput.className = 'settings-input';
     subjectInput.setAttribute('data-tls-subject', '');
+    // Its small visible label went with the subject's second line (0.5.5);
+    // the row's "certificate subject" names it to the eye, this to everyone.
+    subjectInput.setAttribute('aria-label', 'certificate subject');
+    subjectInput.spellcheck = false;
 
     const ipLabel = document.createElement('label');
     ipLabel.className = 'settings-radio-label';
@@ -537,10 +552,14 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // WSL, VirtualBox adapters all show up here too), and only one is
     // reachable from the phone that needs the certificate -- prefilling
     // `[0]` with no way to see or pick another issues a cert nobody on the
-    // LAN can use, exactly the failure spec §6 warns about. Selecting an
-    // option here only fills `subjectInput`, which stays the single source
-    // of truth for generate/validation/notification 4, so nothing
-    // downstream changes.
+    // LAN can use, exactly the failure spec §6 warns about. Picking an
+    // option only fills `subjectInput`, which stays the single source of
+    // truth for generate/validation/notification 4, so nothing downstream
+    // changes.
+    //
+    // Since 0.5.5 the box itself is the picker: a combobox whose ▾ lists every
+    // candidate, whatever the box holds (Combobox.ts says why a native
+    // datalist would not do), in place of a separate select on a second line.
     //
     // This code makes NO assumption about the ORDER `candidateIps` arrives
     // in -- it renders whatever order it receives and defaults to the first
@@ -550,44 +569,13 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // the response this panel reads (see `TlsCertState.candidateIps`'s own
     // doc comment) -- that can change its ordering with zero changes needed
     // here.
-    const candidateSelect = document.createElement('select');
-    candidateSelect.className = 'settings-input';
-    candidateSelect.setAttribute('data-tls-candidate-select', '');
-    for (const ip of initialCandidateIps) {
-        const opt = document.createElement('option');
-        opt.value = ip;
-        opt.textContent = ip;
-        candidateSelect.appendChild(opt);
-    }
-    if (initialCandidateIps.includes(subjectInput.value)) {
-        candidateSelect.value = subjectInput.value;
-    }
-    candidateSelect.addEventListener('change', () => {
-        subjectInput.value = candidateSelect.value;
-        lastIpValue = candidateSelect.value;
-    });
-
-    // The second line of the subject row: each field with a small label above
-    // it, real `<label for>`s so the fields keep their accessible names. What
-    // the text box's label says follows the radios (`updateSubjectFields`).
-    const candidateField = buildLabeledField(candidateSelect, "this computer's addresses");
-    const subjectField = buildLabeledField(subjectInput, 'ip address');
-
-    /**
-     * Fit the second line to the chosen kind: with ip address, the candidate
-     * picker (when there are candidates) and a box labeled `ip address`; with
-     * hostname, no picker and a box labeled `hostname or domain name`.
-     */
-    function updateSubjectFields(): void {
-        const showCandidates = ipRadio.checked && initialCandidateIps.length > 0;
-        candidateSelect.hidden = !showCandidates;
-        candidateField.field.hidden = !showCandidates;
-        subjectField.label.textContent = ipRadio.checked ? 'ip address' : 'hostname or domain name';
-    }
-    updateSubjectFields();
+    const subjectCombo = buildCombobox({ input: subjectInput, buttonLabel: "this computer's addresses" });
+    subjectCombo.list.setAttribute('data-tls-candidate-list', '');
+    subjectCombo.button.setAttribute('data-tls-candidate-button', '');
+    subjectCombo.setOptions(initialCandidateIps);
 
     // Remembers each mode's last value across a radio flip, so switching kind
-    // and back doesn't lose what was typed.
+    // and back doesn't lose what was typed (or picked).
     let lastIpValue = initialKind === 'ip' ? subjectInput.value : (initialCandidateIps[0] ?? '');
     let lastHostValue = initialKind === 'hostname' ? subjectInput.value : '';
     // 'click', not 'change': a radio's activation behavior (flipping
@@ -600,28 +588,20 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         if (!ipRadio.checked) return;
         lastHostValue = subjectInput.value;
         subjectInput.value = lastIpValue;
-        updateSubjectFields();
+        updateSubjectMode();
     });
     hostRadio.addEventListener('click', () => {
         if (!hostRadio.checked) return;
         lastIpValue = subjectInput.value;
         subjectInput.value = lastHostValue;
-        updateSubjectFields();
+        updateSubjectMode();
     });
+    subjectInput.addEventListener('input', () => updateSubjectCheck());
 
-    // The radios keep the "certificate subject" row; the fields drop to a row
-    // of their own directly below, with an empty label cell so they line up
-    // under the radios in the controls column.
+    // One line since 0.5.5: the radios, then the one box beside them.
     const subjectFrag = document.createDocumentFragment();
-    subjectFrag.appendChild(ipLabel);
-    subjectFrag.appendChild(hostLabel);
-    body.appendChild(buildRow('certificate subject', subjectFrag));
-    const subjectFieldsFrag = document.createDocumentFragment();
-    subjectFieldsFrag.appendChild(candidateField.field);
-    subjectFieldsFrag.appendChild(subjectField.field);
-    const subjectFieldsRow = buildRow('', subjectFieldsFrag);
-    subjectFieldsRow.setAttribute('data-tls-subject-fields', '');
-    body.appendChild(subjectFieldsRow);
+    subjectFrag.append(ipLabel, hostLabel, subjectCombo.root);
+    const subjectRow = buildRow('certificate subject', subjectFrag);
 
     // Notification 2 — ALWAYS shown, beside the subject controls: what each
     // subject choice means, in the terms of the two radios just above. Until
@@ -635,16 +615,23 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     subjectGuideNotice.setAttribute('data-tls-subject-guide', '');
     // 0.5.3: one short line and a link to a page with room to explain it
     // (public/help/certificate-subject.html), instead of a two-sentence
-    // summary squeezed under the radios. Relative, like TRUST_HELP_HREF.
-    subjectGuideNotice.appendChild(document.createTextNode(SUBJECT_GUIDE_TEXT));
-    const subjectHelpLink = document.createElement('a');
-    subjectHelpLink.className = 'settings-help-link';
-    subjectHelpLink.href = SUBJECT_HELP_HREF;
-    subjectHelpLink.target = '_blank';
-    subjectHelpLink.rel = 'noopener noreferrer';
-    subjectHelpLink.textContent = SUBJECT_HELP_LINK_TEXT;
-    subjectGuideNotice.appendChild(subjectHelpLink);
-    body.appendChild(subjectGuideNotice);
+    // summary squeezed under the radios. Relative, like TRUST_HELP_HREF. Its
+    // lead follows the chosen kind (updateSubjectMode).
+    const subjectGuideLead = document.createTextNode(SUBJECT_GUIDE_IP_TEXT);
+    subjectGuideNotice.append(subjectGuideLead, buildHelpLink(SUBJECT_HELP_HREF, SUBJECT_HELP_LINK_TEXT));
+
+    // 0.5.5: one-word names are allowed unless they are a real internet TLD;
+    // a TLD, or a public suffix like co.uk, is the one name the server refuses
+    // for being too broad (src/common/publicSuffix.ts, the lists the server
+    // uses). Said while it is typed, and generate waits for a usable name,
+    // rather than a round trip ending in "that name could not be used" with no
+    // reason given.
+    const subjectSuffixWarning = buildNoticeRow();
+    subjectSuffixWarning.setAttribute('data-tls-subject-suffix-warning', '');
+    // Set by updateSubjectCheck; one of generate's three gates (applyGenerateGate).
+    let subjectRefused = false;
+
+    certificateCard.appendChild(buildItem(subjectRow, subjectGuideNotice, subjectSuffixWarning));
 
     // The https port that sat here until after 0.5.3 is on the Server tab now,
     // staged for the dialog's Save beside the http port (ServerTab.ts).
@@ -670,27 +657,67 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     const certActionsFrag = document.createDocumentFragment();
     certActionsFrag.appendChild(generateBtn);
     certActionsFrag.appendChild(revokeBtn);
-    body.appendChild(buildRow('certificate', certActionsFrag));
+    // The certificate's item: the row, then every notice about the certificate
+    // (appended below as each is built).
+    const certificateItem = buildItem(buildRow('certificate', certActionsFrag));
+    certificateCard.appendChild(certificateItem);
 
     // A generate in flight holds its button down; a re-check landing
     // meanwhile must not release it.
     let generating = false;
+    /**
+     * Generate's three gates in ONE expression -- mkcert missing, a generate
+     * in flight, a public-suffix name -- so lifting one can never re-enable a
+     * button another still holds. Every path that changes any of them ends
+     * here rather than setting `disabled` itself.
+     */
+    function applyGenerateGate(): void {
+        generateBtn.disabled = mkcertMissing || generating || subjectRefused;
+    }
     function applyMkcertGate(): void {
-        generateBtn.disabled = mkcertMissing || generating;
+        applyGenerateGate();
         ipRadio.disabled = mkcertMissing;
         hostRadio.disabled = mkcertMissing;
         subjectInput.disabled = mkcertMissing;
-        candidateSelect.disabled = mkcertMissing;
+        subjectCombo.button.disabled = mkcertMissing;
+        if (mkcertMissing) subjectCombo.close();
         // Shown and hidden, never emptied: its text, link and all, is fixed.
         mkcertNotice.hidden = !mkcertMissing;
     }
+
+    /**
+     * Show or clear the public-suffix warning for what the box holds now
+     * (never in ip mode: an address is no suffix), and re-apply generate's gates.
+     */
+    function updateSubjectCheck(): void {
+        const value = subjectInput.value.trim();
+        const refused = hostRadio.checked && isPublicSuffix(value);
+        subjectRefused = refused;
+        setNotice(subjectSuffixWarning, refused ? publicSuffixWarning(value) : null);
+        applyGenerateGate();
+    }
+
+    /**
+     * Fit the subject to the chosen kind: with ip address, the box offers this
+     * computer's addresses (its ▾, when there are any) and asks for an
+     * address; with hostname, a plain box asking for a name. The guide's lead
+     * and the public-suffix check follow.
+     */
+    function updateSubjectMode(): void {
+        const ip = ipRadio.checked;
+        subjectCombo.setListAvailable(ip);
+        subjectInput.placeholder = ip ? 'ip address' : 'hostname or domain name';
+        subjectGuideLead.textContent = ip ? SUBJECT_GUIDE_IP_TEXT : SUBJECT_GUIDE_HOSTNAME_TEXT;
+        updateSubjectCheck();
+    }
+    updateSubjectMode();
     applyMkcertGate();
 
     // ---- current-certificate summary + notifications 3, 4, 8, 9 ----
     const certSummary = document.createElement('p');
     certSummary.className = 'settings-status';
     certSummary.style.gridColumn = '1 / -1';
-    body.appendChild(certSummary);
+    certificateItem.appendChild(certSummary);
 
     // C1: listener truth, ahead of everything else about the certificate --
     // this is the thing that was silently wrong. See listenerStatusNotice's
@@ -698,17 +725,17 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // nothing rather than guessing.
     const listenerStatusNoticeEl = buildNoticeRow();
     listenerStatusNoticeEl.setAttribute('data-tls-listener-notice', '');
-    body.appendChild(listenerStatusNoticeEl);
+    certificateItem.appendChild(listenerStatusNoticeEl);
 
     const untrustedCaNotice = buildNoticeRow();
     untrustedCaNotice.setAttribute('data-tls-ca-trust-notice', '');
-    body.appendChild(untrustedCaNotice);
+    certificateItem.appendChild(untrustedCaNotice);
     const mismatchNotice = buildNoticeRow();
     mismatchNotice.setAttribute('data-tls-mismatch-notice', '');
-    body.appendChild(mismatchNotice);
+    certificateItem.appendChild(mismatchNotice);
     const hostnameGuideNotice = buildNoticeRow();
     hostnameGuideNotice.setAttribute('data-tls-hostname-notice', '');
-    body.appendChild(hostnameGuideNotice);
+    certificateItem.appendChild(hostnameGuideNotice);
     // I9: the allowedHosts write (Resolved Decision 2) is a STANDING fact
     // about the current cert, not a one-time event -- the transient alert
     // below confirms the edit happened at generate time, but a user who
@@ -721,13 +748,13 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     allowedHostPersistentNotice.style.gridColumn = '1 / -1';
     allowedHostPersistentNotice.setAttribute('data-tls-allowed-host-notice', '');
     allowedHostPersistentNotice.hidden = true;
-    body.appendChild(allowedHostPersistentNotice);
+    certificateItem.appendChild(allowedHostPersistentNotice);
     const expiryNotice = buildNoticeRow();
     expiryNotice.setAttribute('data-tls-expiry-notice', '');
-    body.appendChild(expiryNotice);
+    certificateItem.appendChild(expiryNotice);
     const caRestoreNotice = buildNoticeRow();
     caRestoreNotice.setAttribute('data-tls-ca-restore-notice', '');
-    body.appendChild(caRestoreNotice);
+    certificateItem.appendChild(caRestoreNotice);
 
     // ---- download CA (a .crt holding the PEM, since 0.5.3) ----
     const downloadBtn = document.createElement('button');
@@ -735,7 +762,6 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     downloadBtn.className = 'settings-btn';
     downloadBtn.textContent = 'download ca certificate';
     downloadBtn.setAttribute('data-tls-download', '');
-    body.appendChild(buildRow('root ca', downloadBtn));
 
     // 0.5.3: the per-device install steps moved to the help page (section 4 of
     // certificate-subject.html), which has room for each OS's real steps and
@@ -744,24 +770,18 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     trustHelp.className = 'settings-status';
     trustHelp.style.gridColumn = '1 / -1';
     trustHelp.setAttribute('data-tls-trust-help', '');
-    trustHelp.appendChild(
-        document.createTextNode(
-            'to trust the certificate, install it on each device that connects (firefox has its own store): ',
-        ),
-    );
-    const trustHelpLink = document.createElement('a');
-    trustHelpLink.className = 'settings-help-link';
-    trustHelpLink.href = TRUST_HELP_HREF;
-    trustHelpLink.target = '_blank';
-    trustHelpLink.rel = 'noopener noreferrer';
-    trustHelpLink.textContent = 'step-by-step install guide (opens in a new tab)';
-    trustHelp.appendChild(trustHelpLink);
-    body.appendChild(trustHelp);
+    trustHelp.append(TRUST_HELP_TEXT, buildHelpLink(TRUST_HELP_HREF, TRUST_HELP_LINK_TEXT));
+    const trustItem = buildItem(buildRow('root ca', downloadBtn), trustHelp);
+    trustCard.appendChild(trustItem);
 
     function renderCertState(state: TlsCertState): void {
         const candidateIps = candidateIpsFor(state);
         if (state.status !== 'ready') {
-            certSummary.textContent = 'no certificate yet.';
+            // Nothing to say without a certificate: the line is for one's
+            // details, and "no certificate yet." told the user nothing the
+            // disabled revoke and download did not (0.5.5).
+            certSummary.textContent = '';
+            certSummary.hidden = true;
             downloadBtn.disabled = true;
             revokeBtn.disabled = true;
             setNotice(listenerStatusNoticeEl, null);
@@ -780,6 +800,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         // markup — `subject` is server round-tripped user input (test:
         // "uses textContent for the subject").
         certSummary.textContent = '';
+        certSummary.hidden = false;
         certSummary.appendChild(document.createTextNode('current certificate: '));
         const subjectSpan = document.createElement('span');
         subjectSpan.setAttribute('data-tls-current-subject', '');
@@ -862,52 +883,26 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         updateExposureAvailability();
     }
 
-    // One shared bottom-of-panel alert for every transient outcome (generate
-    // succeeded/failed, CA download succeeded/failed, exposure save
-    // succeeded/failed) -- see the class doc above for why this is one
-    // element rather than a status line per button.
-    const transientAlert = document.createElement('p');
-    transientAlert.className = 'settings-status';
-    transientAlert.style.gridColumn = '1 / -1';
-    transientAlert.setAttribute('data-tls-alert', '');
-    transientAlert.hidden = true;
-    let transientAlertTimer: ReturnType<typeof setTimeout> | null = null;
-
-    /**
-     * `parts` are text nodes, or `{ echo }` for a value round-tripped from the
-     * server (the generated subject) -- appended via a `<span>.textContent`
-     * exactly like `renderCertState`'s subject span, never string
-     * interpolation into markup.
-     */
-    function showTransientAlert(kind: 'success' | 'error', ...parts: Array<string | { echo: string }>): void {
-        transientAlert.textContent = '';
-        for (const part of parts) {
-            if (typeof part === 'string') {
-                transientAlert.appendChild(document.createTextNode(part));
-            } else {
-                const span = document.createElement('span');
-                span.textContent = part.echo;
-                transientAlert.appendChild(span);
-            }
-        }
-        transientAlert.hidden = false;
-        transientAlert.classList.toggle('settings-status-error', kind === 'error');
-        transientAlert.classList.toggle('settings-status-ready', kind === 'success');
-        if (transientAlertTimer !== null) clearTimeout(transientAlertTimer);
-        transientAlertTimer = setTimeout(
-            () => {
-                transientAlert.hidden = true;
-                transientAlertTimer = null;
-            },
-            kind === 'success' ? TRANSIENT_ALERT_SUCCESS_MS : TRANSIENT_ALERT_ERROR_MS,
-        );
-    }
+    // One shared alert for every transient outcome (generate succeeded/failed,
+    // revoke, CA download succeeded/failed, exposure save succeeded/failed) --
+    // see the class doc above for why this is one element rather than a
+    // status line per button. It sits in ONE fixed place, the bottom of the
+    // tab, below and outside all three cards, so it never reads as part of the
+    // last card (Exposure) whichever action raised it. Every tab's line is
+    // built the same way since 0.5.5 (`buildTabAlert`); this one also keeps
+    // its own `data-tls-alert` hook, which the e2e suites find it by.
+    // Last: every card is already in the section (they are added above, before any is filled).
+    const tabAlert = buildTabAlert(section);
+    tabAlert.element.setAttribute('data-tls-alert', '');
+    const showTransientAlert = (kind: 'success' | 'error', ...parts: TabAlertPart[]): void =>
+        tabAlert.show(kind, ...parts);
 
     generateBtn.addEventListener('click', () => {
         void (async () => {
-            // The button is disabled while mkcert is missing; a click queued
-            // before the gate applied must not send anyway.
-            if (mkcertMissing) return;
+            // The button is disabled while mkcert is missing or the name is a
+            // public suffix; a click queued before the gate applied must not
+            // send anyway.
+            if (mkcertMissing || subjectRefused) return;
             const kind: 'ip' | 'hostname' = hostRadio.checked ? 'hostname' : 'ip';
             const value = subjectInput.value.trim();
             if (!value) {
@@ -915,7 +910,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 return;
             }
             generating = true;
-            generateBtn.disabled = true;
+            applyGenerateGate();
             const prevText = generateBtn.textContent;
             generateBtn.textContent = 'generating…';
             try {
@@ -928,7 +923,10 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                     | (TlsCertState & { allowedHostAdded?: boolean; error?: string })
                     | null;
                 if (!res.ok || !data) {
-                    showTransientAlert('error', data?.error ?? 'that address could not be used for a certificate.');
+                    // The server's own reason, which names a name or an address
+                    // by `kind`; when it gave none, the very copy it sends for a
+                    // refused subject (src/common/refusedSubject.ts).
+                    showTransientAlert('error', data?.error ?? refusedSubjectMessage(kind));
                     return;
                 }
                 // NF-3: MERGE, don't replace. `POST /api/tls/generate`'s
@@ -951,7 +949,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // the transient alert, not a persistent in-panel notice. It
                 // says what the edit does for the user, not the config key's
                 // name (no control in Settings is labeled allowedHosts).
-                const allowedHostSuffix: Array<string | { echo: string }> =
+                const allowedHostSuffix: TabAlertPart[] =
                     data.allowedHostAdded && data.subject
                         ? [' this server now also accepts connections addressed to ', { echo: data.subject }, '.']
                         : [];
@@ -995,7 +993,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 showTransientAlert('error', 'could not reach the server.');
             } finally {
                 generating = false;
-                generateBtn.disabled = mkcertMissing;
+                applyGenerateGate();
                 generateBtn.textContent = prevText;
             }
         })();
@@ -1103,9 +1101,10 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // ---- plain-HTTP exposure -- POSTs to POST /api/tls/exposure (task 11) ----
     const exposureFrag = document.createDocumentFragment();
     const exposureModes: Array<{ value: 'open' | 'httpsOnly' | 'redirect'; label: string }> = [
-        { value: 'open', label: 'open (plain http answers every machine)' },
+        // One line each (0.5.5): the row's label and the notices below say the rest.
+        { value: 'open', label: 'open' },
         { value: 'httpsOnly', label: 'https only' },
-        { value: 'redirect', label: 'redirect http to https' },
+        { value: 'redirect', label: 'redirect to https' },
     ];
     // I5: pre-select the radio matching the SERVER's current mode (read from
     // `GET /api/tls/state`'s `httpExposure`, commit `861a5902`), not a
@@ -1137,14 +1136,16 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     okBtn.textContent = 'ok';
     okBtn.setAttribute('data-exposure-ok', '');
     exposureFrag.appendChild(okBtn);
-    body.appendChild(buildRow('plain http exposure', exposureFrag));
+    // The exposure's item: the row and its three notices.
+    const exposureItem = buildItem(buildRow('plain http exposure', exposureFrag));
+    exposureCard.appendChild(exposureItem);
 
     const exposureLockoutNotice = buildNoticeRow();
     exposureLockoutNotice.setAttribute('data-exposure-lockout-notice', '');
-    body.appendChild(exposureLockoutNotice);
+    exposureItem.appendChild(exposureLockoutNotice);
     const exposureRestartNotice = buildNoticeRow();
     exposureRestartNotice.setAttribute('data-exposure-restart-notice', '');
-    body.appendChild(exposureRestartNotice);
+    exposureItem.appendChild(exposureRestartNotice);
     // I11: narrowing plain HTTP toward an HTTPS listener that does not exist
     // yet does nothing at runtime (`findHttpsPort()` returns `undefined` and
     // every mode fails open -- the correct, deliberate lockout guarantee,
@@ -1154,7 +1155,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // exists, and this note explains why.
     const exposureUnavailableNotice = buildNoticeRow();
     exposureUnavailableNotice.setAttribute('data-exposure-unavailable-notice', '');
-    body.appendChild(exposureUnavailableNotice);
+    exposureItem.appendChild(exposureUnavailableNotice);
 
     /**
      * I11: disable the narrowing exposure modes (not 'open', which is always
@@ -1175,13 +1176,10 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         for (const radio of exposureRadios) {
             if (radio.value !== 'open') radio.disabled = !listenerBound;
         }
+        // Short since 0.5.5: the radios it explains are right above it, disabled.
         setNotice(
             exposureUnavailableNotice,
-            listenerBound
-                ? null
-                : hasCert
-                  ? 'restart the server first — https only and redirect only take effect once the https listener is actually running.'
-                  : 'generate a certificate first — https only and redirect only take effect once an https listener can exist.',
+            listenerBound ? null : hasCert ? EXPOSURE_NEEDS_RESTART : EXPOSURE_NEEDS_CERTIFICATE,
         );
     }
 
@@ -1262,24 +1260,6 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         })();
     });
 
-    // Bottom-of-panel: appended LAST so it always sits below every control,
-    // per this repo's convention for transient outcomes (see the class doc).
-    //
-    // M5: appended DIRECTLY into `body`, never through `buildRow()` --
-    // deliberately, not by accident. `modal.css`'s
-    // `.settings-row:has(.settings-status-error) { display: flex; ... }`
-    // targets `.settings-row`, and `transientAlert` toggles
-    // `.settings-status-error` on itself (see `showTransientAlert`). Wrapping
-    // this element in a `.settings-row` the way every other control here is
-    // wrapped would make that rule match it on an error, overriding this
-    // row's normal `display: contents` and changing its layout -- a
-    // near-miss on the same "a rule silently starts matching an element it
-    // wasn't written for" class of bug the `[hidden]` reassertion above
-    // guards against. If a future change wraps this in a row, that CSS rule
-    // needs handling at the same time, not discovered by an unexplained
-    // layout shift the next time an error fires.
-    body.appendChild(transientAlert);
-
     renderCertState(initialState);
     // Unknown (`null`) leaves the gate where it is: a failed read is no news.
     function applyMkcertAnswer(installed: boolean | null): void {
@@ -1307,14 +1287,17 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
  * (since beta.164). The panel is never built there, so nothing here asks.
  */
 export function buildLocalHttpsContainerNote(): HTMLElement {
-    const { section, body } = buildSection('Local HTTPS');
+    const { section, card } = buildSection('Local HTTPS');
     section.setAttribute('data-local-https-container-note', '');
     const note = document.createElement('p');
     note.className = 'settings-status';
     note.style.gridColumn = '1 / -1';
     note.textContent =
         "local HTTPS doesn't apply in a container. serve HTTPS from a reverse proxy in front of the container — that is the only supported way to add HTTPS to the image.";
-    body.appendChild(note);
+    card.appendChild(buildItem(note));
+    // Its own status line, like every tab: the dialog's save reports there
+    // when this is the tab on screen.
+    buildTabAlert(section);
     return section;
 }
 
@@ -1364,7 +1347,10 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
     loading.className = 'settings-status';
     loading.style.gridColumn = '1 / -1';
     loading.textContent = 'loading…';
-    placeholder.body.appendChild(loading);
+    const loadingItem = buildItem(loading);
+    placeholder.card.appendChild(loadingItem);
+    // The tab's status line until the panel (which has its own) replaces it.
+    buildTabAlert(placeholder.section);
     root.appendChild(placeholder.section);
 
     // Set once the panel or the container note has replaced the placeholder;
@@ -1378,6 +1364,7 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
     function applyContainerMode(): void {
         if (decided) return;
         decided = true;
+        destroyTabAlerts(root);
         root.replaceChildren(buildLocalHttpsContainerNote());
     }
 
@@ -1401,6 +1388,7 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
             ...(ctx.showTab ? { showTab: ctx.showTab } : {}),
         }).then((built) => {
             panel = built;
+            destroyTabAlerts(root);
             root.replaceChildren(built);
         });
     }
@@ -1422,12 +1410,12 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
         retryBtn.textContent = 'retry';
         retryBtn.setAttribute('data-local-https-retry', '');
         retryBtn.addEventListener('click', () => {
-            placeholder.body.replaceChildren(loading);
+            placeholder.card.replaceChildren(loadingItem);
             retry();
         });
         const row = buildRow("couldn't reach server", retryBtn);
         row.querySelector('.settings-label')?.classList.add('settings-status-error');
-        placeholder.body.replaceChildren(row);
+        placeholder.card.replaceChildren(buildItem(row));
     }
 
     /**

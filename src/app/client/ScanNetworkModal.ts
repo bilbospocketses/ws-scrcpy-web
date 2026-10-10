@@ -1,5 +1,6 @@
 import { Modal } from '../ui/Modal';
 import { AddSubnetModal } from './AddSubnetModal';
+import { SUBNETS_HELP_HREF, themeHelpLink } from './helpLink';
 import { LargeSubnetWarningModal } from './LargeSubnetWarningModal';
 import type { SettingsService } from './SettingsService';
 
@@ -116,10 +117,16 @@ export class ScanNetworkModal extends Modal {
         addBtn.addEventListener('click', () => this.openAddSubnet());
         container.appendChild(addBtn);
 
+        // Built node by node rather than from a markup string, so the link can
+        // carry the app's current theme to the cheat sheet (helpLink.ts).
         const cheatLink = document.createElement('p');
         cheatLink.style.cssText = 'font-size: 12px; color: var(--text-color-light);';
-        cheatLink.innerHTML =
-            'New to CIDR? See the <a href="help/subnets.html" target="_blank" rel="noopener">subnet cheat sheet</a>.';
+        const link = document.createElement('a');
+        themeHelpLink(link, SUBNETS_HELP_HREF);
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'subnet cheat sheet';
+        cheatLink.append('New to CIDR? See the ', link, '.');
         container.appendChild(cheatLink);
     }
 

@@ -17,12 +17,21 @@ export function hasAuthenticatedUser(req: IncomingMessage): boolean {
  * it. The value must be exactly '1' — a loose truthiness check would let an empty string or the
  * string 'false' through.
  *
- * The config key is what the banner's confirmation modal writes, and that PATCH is itself
- * operator-gated, so the switch cannot be thrown from off-box.
+ * The config key is what Settings → Users saves (and the home page banner's confirmation modal
+ * writes), and both routes are themselves operator-gated, so the switch cannot be thrown from
+ * off-box.
  */
 export function allowRemoteAdmin(): boolean {
-    if (process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] === '1') return true;
+    if (remoteAdminForcedByEnv()) return true;
     return Config.getInstance().getAppConfig().allowRemoteAdmin === true;
+}
+
+/**
+ * Is remote admin forced on by the environment? Then config.json's value does not matter, and
+ * nothing the settings batch saves can turn it off (SettingsBatchApi refuses the attempt).
+ */
+export function remoteAdminForcedByEnv(): boolean {
+    return process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] === '1';
 }
 
 /**

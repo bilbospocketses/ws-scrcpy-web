@@ -84,6 +84,16 @@ function actionStatusOf(el: HTMLElement): HTMLElement {
     return btn!.closest('.settings-row')!.querySelector('.settings-label') as HTMLElement;
 }
 
+/**
+ * The tab's status line, below the card (0.5.5): where a check or an apply
+ * that failed says so. The action row's label keeps to the update state.
+ */
+const tabLineOf = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>('[data-settings-alert]')!;
+
+/** The line under the interval field, and the one under the owner field: where each says why it refused a value. */
+const intervalNoteOf = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>('[data-updates-interval-note]')!;
+const ownerNoteOf = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>('[data-updates-owner-note]')!;
+
 describe('UpdatesTab', () => {
     it('toggling auto-update stages it and sends NOTHING', async () => {
         const { el, store, fetchSpy } = await mountUpdatesTab();
@@ -214,9 +224,14 @@ describe('UpdatesTab', () => {
         input.dispatchEvent(new Event('blur'));
 
         expect(store.changes()).toEqual([]);
-        const line = actionStatusOf(el);
+        // Under the field it is about, in its item (0.5.5); the status label
+        // keeps showing the update state.
+        const line = intervalNoteOf(el);
+        expect(line.hidden).toBe(false);
         expect(line.textContent).toBe('interval must be between 5 and 1440 minutes');
         expect(line.classList.contains('settings-status-error')).toBe(true);
+        expect(line.closest('.settings-item')).toBe(input.closest('.settings-item'));
+        expect(actionStatusOf(el).textContent).toBe('up to date: v0.1.30');
         // The refused value STAYS on screen — `ServerTab`'s web-port guard has
         // always worked this way and this one now matches it. Snapping back to
         // 60 here (the old behaviour) would erase the entry the user has to look
@@ -265,14 +280,13 @@ describe('UpdatesTab', () => {
         const input = intervalInputOf(el);
         input.value = '4';
         input.dispatchEvent(new Event('blur'));
-        expect(actionStatusOf(el).textContent).toBe('interval must be between 5 and 1440 minutes');
+        expect(intervalNoteOf(el).textContent).toBe('interval must be between 5 and 1440 minutes');
 
         input.value = '90';
         input.dispatchEvent(new Event('blur'));
 
-        const line = actionStatusOf(el);
-        expect(line.textContent).toBe('up to date: v0.1.30');
-        expect(line.classList.contains('settings-status-error')).toBe(false);
+        expect(intervalNoteOf(el).hidden).toBe(true);
+        expect(intervalNoteOf(el).textContent).toBe('');
         // And the good value still staged — the clear must not cost the stage.
         expect(store.changes().map((c) => c.to)).toEqual([90]);
     });
@@ -409,9 +423,12 @@ describe('UpdatesTab', () => {
         await flush();
 
         expect(store.changes()).toEqual([]);
-        const line = actionStatusOf(el);
+        const line = ownerNoteOf(el);
+        expect(line.hidden).toBe(false);
         expect(line.textContent).toBe('github owner cannot be empty');
         expect(line.classList.contains('settings-status-error')).toBe(true);
+        expect(line.closest('.settings-item')).toBe(owner.closest('.settings-item'));
+        expect(actionStatusOf(el).textContent).toBe('up to date: v0.1.30');
         // Left on screen, exactly as the interval and web-port guards leave a
         // refused number. The old behaviour snapped this field back to the last
         // known owner and said nothing at all.
@@ -425,14 +442,13 @@ describe('UpdatesTab', () => {
         const owner = ownerInputOf(el);
         owner.value = '';
         owner.dispatchEvent(new Event('blur'));
-        expect(actionStatusOf(el).textContent).toBe('github owner cannot be empty');
+        expect(ownerNoteOf(el).textContent).toBe('github owner cannot be empty');
 
         owner.value = 'someone-else';
         owner.dispatchEvent(new Event('blur'));
 
-        const line = actionStatusOf(el);
-        expect(line.textContent).toBe('up to date: v0.1.30');
-        expect(line.classList.contains('settings-status-error')).toBe(false);
+        expect(ownerNoteOf(el).hidden).toBe(true);
+        expect(ownerNoteOf(el).textContent).toBe('');
         // And the good value still staged — the clear must not cost the stage.
         expect(store.changes().map((c) => c.to)).toEqual(['someone-else']);
     });
@@ -440,8 +456,8 @@ describe('UpdatesTab', () => {
     /**
      * Smoke 14.10: cancelling the machine-wide update's polkit prompt answers
      * 403 `uac-declined`. Nothing changed and the update is still ready, so the
-     * line says privileges were declined (not "apply failed (403)") and stays
-     * there, with the apply button back for another try.
+     * tab's line says privileges were declined (not "apply failed (403)"), with
+     * the apply button back for another try.
      */
     describe('apply: a declined elevation prompt', () => {
         const ready = status({ status: 'ready', availableVersion: '0.2.0' });
@@ -478,9 +494,11 @@ describe('UpdatesTab', () => {
             await flush();
             await flush();
 
-            const line = actionStatusOf(el);
+            const line = tabLineOf(el);
             expect(line.textContent).toBe('Administrative privileges were declined. Try again and approve the prompt.');
             expect(line.classList.contains('settings-status-error')).toBe(true);
+            // The label is back on the state it showed before the click.
+            expect(actionStatusOf(el).textContent).toBe('update: v0.2.0');
             const btn = applyBtnOf(el);
             expect(btn.disabled).toBe(false);
             expect(btn.textContent).toBe('apply v0.2.0');
@@ -504,7 +522,7 @@ describe('UpdatesTab', () => {
             applyBtnOf(el).click();
             await flush();
 
-            expect(actionStatusOf(el).textContent).toBe('apply failed: update download failed: boom');
+            expect(tabLineOf(el).textContent).toBe('apply failed: update download failed: boom');
             expect(f.mock.calls.map((c) => String(c[0]))).toContain('/api/updates/status');
         });
 
@@ -522,10 +540,10 @@ describe('UpdatesTab', () => {
             await flush();
             await flush();
 
-            expect(actionStatusOf(el).textContent).toBe('apply failed (500)');
+            expect(tabLineOf(el).textContent).toBe('apply failed (500)');
         });
 
-        it('the "apply failed" line survives the follow-up refresh', async () => {
+        it('the "apply failed" line survives the follow-up refresh, which shows the state', async () => {
             const { el } = await mountUpdatesTab(ready);
             const f = stubApply(() =>
                 Promise.resolve({
@@ -544,8 +562,10 @@ describe('UpdatesTab', () => {
             const btn = applyBtnOf(el);
             expect(btn.disabled).toBe(false);
             expect(btn.textContent).toBe('apply v0.2.0');
-            // ...but the reason the apply failed is still on screen.
-            const line = actionStatusOf(el);
+            // ...and the label shows the state it found...
+            expect(actionStatusOf(el).textContent).toBe('update: v0.2.0');
+            // ...but the reason the apply failed is still on screen, below the card.
+            const line = tabLineOf(el);
             expect(line.textContent).toBe('apply failed: boom');
             expect(line.classList.contains('settings-status-error')).toBe(true);
         });
@@ -564,31 +584,54 @@ describe('UpdatesTab', () => {
                 await vi.advanceTimersByTimeAsync(32_000);
 
                 expect(applyBtnOf(el).textContent).toBe('apply v0.2.0');
-                expect(actionStatusOf(el).textContent).toBe("couldn't reach server");
+                expect(tabLineOf(el).textContent).toBe("couldn't reach server");
             } finally {
                 vi.useRealTimers();
             }
         });
 
-        it('the next action on the tab replaces the kept failure line', async () => {
-            const { el } = await mountUpdatesTab(ready);
-            stubApply(() =>
-                Promise.resolve({
-                    ok: false,
-                    status: 500,
-                    json: () => Promise.resolve({ ok: false, error: 'boom' }),
-                }),
+        it("the failure line hides after 10 s, an error's time", async () => {
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            try {
+                const { el } = await mountUpdatesTab(ready);
+                stubApply(() =>
+                    Promise.resolve({
+                        ok: false,
+                        status: 500,
+                        json: () => Promise.resolve({ ok: false, error: 'boom' }),
+                    }),
+                );
+                applyBtnOf(el).click();
+                await vi.advanceTimersByTimeAsync(0);
+                expect(tabLineOf(el).textContent).not.toBe('');
+
+                await vi.advanceTimersByTimeAsync(9_999);
+                expect(tabLineOf(el).textContent).not.toBe('');
+                await vi.advanceTimersByTimeAsync(1);
+                expect(tabLineOf(el).textContent).toBe('');
+                expect(actionStatusOf(el).textContent).toBe('update: v0.2.0');
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('a check that fails says so on the tab line and leaves the label on the state', async () => {
+            const { el } = await mountUpdatesTab(status());
+            vi.stubGlobal(
+                'fetch',
+                vi.fn((url: string) =>
+                    url === '/api/updates/check'
+                        ? Promise.resolve({ ok: false, status: 502, json: () => Promise.resolve({}) })
+                        : new Promise(() => undefined),
+                ),
             );
-            applyBtnOf(el).click();
+            [...el.querySelectorAll('button')].find((b) => /check for updates/i.test(b.textContent ?? ''))?.click();
             await flush();
-            await flush();
-            expect(actionStatusOf(el).textContent).toBe('apply failed: boom');
 
-            const owner = ownerInputOf(el);
-            owner.value = 'someone-else';
-            owner.dispatchEvent(new Event('blur'));
-
-            expect(actionStatusOf(el).textContent).toBe('update: v0.2.0');
+            expect(tabLineOf(el).textContent).toBe('check failed (502)');
+            expect(tabLineOf(el).textContent).not.toBe('');
+            expect(actionStatusOf(el).textContent).toBe('up to date: v0.1.30');
+            expect(actionStatusOf(el).classList.contains('settings-status-error')).toBe(false);
         });
     });
 
@@ -698,7 +741,7 @@ describe('UpdatesTab', () => {
         it('a lost apply that ends in an error says why, not "apply failed (504)"', async () => {
             const el = await loseApplyThenEnd({ ...ready, status: 'error', errorMessage: 'feed unreachable' });
 
-            const line = actionStatusOf(el);
+            const line = tabLineOf(el);
             expect(line.textContent).toBe('apply failed: feed unreachable');
             expect(line.classList.contains('settings-status-error')).toBe(true);
         });
@@ -711,13 +754,13 @@ describe('UpdatesTab', () => {
                 lastApplyError: 'update download failed: 503',
             });
 
-            expect(actionStatusOf(el).textContent).toBe('apply failed: update download failed: 503');
+            expect(tabLineOf(el).textContent).toBe('apply failed: update download failed: 503');
         });
 
         it('a lost apply that ends with no reason keeps "apply failed (504)"', async () => {
             const el = await loseApplyThenEnd({ ...ready, status: 'error' });
 
-            expect(actionStatusOf(el).textContent).toBe('apply failed (504)');
+            expect(tabLineOf(el).textContent).toBe('apply failed (504)');
         });
 
         it('a failed install recorded by the server is shown on a tab opened after it', async () => {
@@ -743,11 +786,14 @@ describe('UpdatesTab', () => {
                 json: () => Promise.resolve({ ok: false, error: 'update download failed: 503' }),
             });
             await vi.advanceTimersByTimeAsync(0);
-            // The refresh found the check running: the reason stays up.
-            expect(actionStatusOf(el).textContent).toBe('apply failed: update download failed: 503');
+            // The refresh found the check running: the label says so, and the
+            // reason is on the tab's line.
+            expect(actionStatusOf(el).textContent).toBe('checking for updates…');
+            expect(tabLineOf(el).textContent).toBe('apply failed: update download failed: 503');
 
             server.status = { ...ready, lastApplyError: 'update download failed: 503' };
             await vi.advanceTimersByTimeAsync(2_000);
+            // The failed install the server recorded is its state now.
             expect(actionStatusOf(el).textContent).toBe('apply failed: update download failed: 503');
             const btn = applyBtnOf(el);
             expect(btn.textContent).toBe('apply v0.2.0');

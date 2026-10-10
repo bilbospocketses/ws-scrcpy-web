@@ -70,11 +70,17 @@ Neither, and the route answers `403 {"error":"admin actions are limited to this 
 
 ### Opting out: `WS_SCRCPY_ALLOW_REMOTE_ADMIN`
 
-Set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` in the server's environment, or `"allowRemoteAdmin": true` in `config.json`, to allow admin from off-box **while running without sign-in**.
+Check **remote admin without sign-in** on Settings → Users and save, set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` in the server's environment, or put `"allowRemoteAdmin": true` in `config.json`, to allow admin from off-box **while running without sign-in**. The checkbox is staged like every other setting: checking it shows a red warning first, the review screen lists it, and nothing changes until Save. It turns the opt-out off the same way (unchecking asks nothing), which removes the key from `config.json`. Saving it is an admin write like any other, so it can only be turned on from this machine or by an admin who is already allowed in.
 
-Be plain about what this does: **it makes anyone who can reach the server an administrator.** They can create and delete users, change configuration, and shut the server down, with nothing protected by a password. Only do it on a network you fully control. **Enabling sign-in is the supported alternative**, and the in-app banner leads with it for that reason.
+Be plain about what this does: **it makes anyone who can reach the server an administrator.** They can create and delete users, change configuration, and shut the server down, with nothing protected by a password. Only do it on a network you fully control. **Enabling sign-in is the supported alternative**: the warning leads with it for that reason, and the note under the checked box says so for as long as it is on. (Until 0.5.5 that warning was a banner on the home page that nobody could dismiss or act on, and nothing in the app could turn the opt-out off.)
 
-The opt-out is **ignored entirely once sign-in is on** — then a session is the proof, and a flag left set from an earlier run cannot open a route around the login.
+The environment variable **wins over the checkbox**: while it is set the box shows checked and disabled, says the variable forces it, and the server refuses turning it off with `409`, from Settings' save and from `PATCH /api/config` alike. Remove the variable to turn it off.
+
+A device on another machine that is an admin **only because of** the opt-out can turn it off too, and is told first, under the box and on the review screen, that saving ends its admin access from there; after the save Settings reopens without the controls it can no longer use, and the page's background reads of admin routes stop before the save goes out, so the change produces no refused request.
+
+Wherever the admin API will not answer a page (another machine with sign-in off and the opt-out off), Settings disables every admin control and says `admin changes are limited to the machine running the server.` on each tab it affects, so nothing on screen can be clicked into a `403`.
+
+The opt-out is **ignored entirely once sign-in is on** — then a session is the proof, and a flag left set from an earlier run cannot open a route around the login. A stored `true` comes back into force if sign-in is ever turned off, so the checkbox stays visible and editable while sign-in is on, to clear it.
 
 ### Containers
 

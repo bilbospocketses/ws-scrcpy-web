@@ -2,16 +2,19 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FRAME_ANCESTORS_ADD_ID } from '../../../../common/embedderOrigin';
+import { ADMIN_UNREACHABLE_NOTE } from '../../adminGate';
 import { performDirtyClose, performStagedSave, type SaveDeps } from '../../SettingsModal';
 import type { BatchResult } from '../SaveRunner';
 import { type Change, StagedSettingsStore } from '../StagedSettingsStore';
 import {
     applyEmbeddingContainerMode,
+    applyEmbeddingHeldBack,
     askUnbound,
     buildEmbeddingTab,
     embedHttpsNote,
     formatEmbedAdditions,
     pendingEmbedOrigins,
+    refreshEmbedding,
 } from '../tabs/EmbeddingTab';
 
 /**
@@ -74,6 +77,8 @@ async function flush(): Promise<void> {
 async function buildTab(store = new StagedSettingsStore()) {
     const section = buildEmbeddingTab(ctx(), store);
     document.body.appendChild(section);
+    // The read the dialog makes once it knows this page may (0.5.5).
+    void refreshEmbedding(section);
     await flush();
     const q = <T extends Element>(sel: string): T => {
         const el = section.querySelector<T>(sel);
@@ -111,21 +116,70 @@ function writes(): string[] {
     return calls.filter((c) => !c.startsWith('GET '));
 }
 
+describe('the read waits for the dialog (0.5.5)', () => {
+    it('makes no read when it is built: only the dialog knows whether this page may', async () => {
+        const section = buildEmbeddingTab(ctx(), new StagedSettingsStore());
+        await flush();
+        expect(calls).toEqual([]);
+        expect(section.textContent).toContain('loading…');
+    });
+
+    it('held back, it reads nothing, says why, and offers no add or revoke', async () => {
+        approved = ['https://frame.example'];
+        const section = buildEmbeddingTab(ctx(), new StagedSettingsStore());
+        document.body.appendChild(section);
+        applyEmbeddingHeldBack(section);
+        await flush();
+        expect(calls).toEqual([]);
+        const list = section.querySelector<HTMLElement>('[data-embed-list]')!;
+        expect(list.textContent).toBe(ADMIN_UNREACHABLE_NOTE);
+        expect(list.textContent).toBe('admin changes are limited to the machine running the server.');
+        expect(section.querySelector<HTMLElement>('[data-embed-add]')!.hidden).toBe(true);
+        expect([...section.querySelectorAll('button')].filter((b) => !b.closest('[hidden]'))).toEqual([]);
+    });
+});
+
 describe('the add row', () => {
     it('stays hidden until the approved list has loaded, then shows', async () => {
         hangList = true;
         const section = buildEmbeddingTab(ctx(), new StagedSettingsStore());
+        void refreshEmbedding(section);
         await flush();
         const adder = section.querySelector<HTMLElement>('[data-embed-add]');
+        // An item of the card since 0.5.5; modal.css's `.settings-item[hidden]`
+        // takes it out of the layout, so `hidden` alone is the switch.
+        expect(adder?.classList.contains('settings-item')).toBe(true);
         expect(adder?.hidden).toBe(true);
-        // Inline, because the row's `display: contents` would otherwise beat `hidden`.
-        expect(adder?.style.display).toBe('none');
         expect(section.textContent).toContain('loading…');
 
         hangList = false;
         const ui = await buildTab();
         expect(ui.adder.hidden).toBe(false);
-        expect(ui.adder.style.display).toBe('contents');
+        expect(ui.adder.style.display).toBe('');
+    });
+
+    it('lays the tab out as one card: the list one item, the add row with all its notes another (0.5.5)', async () => {
+        approved = ['http://a.lan'];
+        const ui = await buildTab();
+        const cards = ui.section.querySelectorAll(':scope > .settings-card');
+        expect(cards).toHaveLength(1);
+        const items = [...cards[0]!.children];
+        expect(items.map((i) => i.className)).toEqual(['settings-item', 'settings-item']);
+        expect(items[0]!.hasAttribute('data-embed-list')).toBe(true);
+        expect(items[1]).toBe(ui.adder);
+        // Every note under the add row belongs to its item, so no line can fall
+        // between the row and them.
+        for (const hook of ['data-embed-both-note', 'data-embed-add-message', 'data-embed-https-note']) {
+            expect(ui.section.querySelector(`[${hook}]`)?.parentElement, hook).toBe(ui.adder);
+        }
+    });
+
+    it('lets the empty-list line span both columns: it is a line of text, with no control beside it', async () => {
+        const ui = await buildTab();
+        const row = ui.section.querySelector<HTMLElement>('[data-embed-list] .settings-row')!;
+        expect(row.textContent).toBe('No other origins may embed this app.');
+        expect(row.querySelector('.settings-label')?.classList.contains('settings-label-wide')).toBe(true);
+        expect(row.querySelector('.settings-control')).toBeNull();
     });
 
     it('stays hidden when the list cannot be read (another machine is refused), with the reason shown', async () => {
@@ -454,6 +508,51 @@ describe('a list re-read that fails', () => {
         expect(ui.pendingRows().map((r) => r.dataset['embedPending'])).toEqual(['http://localhost:5159']);
         expect(ui.adder.hidden).toBe(true);
         expect(pendingEmbedOrigins(ui.store)).toEqual(['http://localhost:5159']);
+    });
+});
+
+// 0.5.5: a revoke that never reached the server is the action's result, so it
+// goes on the tab's status line, and the list is drawn again as it was. It used
+// to replace the list with "could not reach the server." as if the list itself
+// could not be read.
+describe('a revoke that never reaches the server', () => {
+    it('says so on the tab line, below the card, and leaves the list as it was', async () => {
+        HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+            this.setAttribute('open', '');
+        });
+        HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+            this.removeAttribute('open');
+        });
+        approved = ['https://frame.example'];
+        const ui = await buildTab();
+        const realFetch = globalThis.fetch;
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string, init?: RequestInit) =>
+                url === '/api/embed-origins/revoke'
+                    ? Promise.reject(new TypeError('Failed to fetch'))
+                    : realFetch(url, init),
+            ),
+        );
+
+        [...ui.section.querySelectorAll('button')].find((b) => b.textContent === 'revoke')?.click();
+        await flush();
+        [...document.querySelectorAll<HTMLButtonElement>('dialog.confirm-modal button')]
+            .find((b) => b.textContent === 'ok')
+            ?.click();
+        await flush();
+
+        const line = ui.section.querySelector<HTMLElement>(':scope > [data-settings-alert]');
+        expect(line?.textContent).not.toBe('');
+        expect(line?.textContent).toBe('could not reach the server.');
+        expect(line?.classList.contains('settings-status-error')).toBe(true);
+        expect(ui.section.querySelector('.settings-card')?.contains(line ?? null)).toBe(false);
+        // The list is the list: the origin with a working revoke button, no error row.
+        expect(ui.listText()).toContain('https://frame.example');
+        expect(ui.listText()).not.toContain('could not reach');
+        const revoke = [...ui.section.querySelectorAll('button')].find((b) => b.textContent === 'revoke');
+        expect(revoke?.disabled).toBe(false);
+        expect(ui.adder.hidden).toBe(false);
     });
 });
 

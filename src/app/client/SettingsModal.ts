@@ -1,17 +1,33 @@
-import type { AppConfigEnvelope, FirstRunStatus } from '../../common/ConfigEvents';
+import type { AppConfigEnvelope } from '../../common/ConfigEvents';
 import { FRAME_ANCESTORS_ADD_ID } from '../../common/embedderOrigin';
+import { REMOTE_ADMIN_ID } from '../../common/remoteAdmin';
 import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { authClient, type Role } from './AuthClient';
-import { adminApiReachable, canSeeSection } from './adminGate';
+import { announceAdminAccessLost } from './adminAccess';
+import { ADMIN_UNREACHABLE_NOTE, adminApiReachable, canSeeSection } from './adminGate';
 import { DEPENDENCY_INSTALLED_EVENT } from './DependencyPanel';
 import { closeIntent } from './settings/closeIntent';
 import { type BatchResult, runSave } from './settings/SaveRunner';
 import { SettingsSummaryModal } from './settings/SettingsSummaryModal';
 import { type Change, StagedSettingsStore } from './settings/StagedSettingsStore';
+import {
+    buildItem,
+    buildSection,
+    buildTabAlert,
+    destroyTabAlerts,
+    type TabAlertKind,
+    tabAlertIn,
+} from './settings/settingsLayout';
 import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
-import { applyEmbeddingContainerMode, buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
+import {
+    applyEmbeddingContainerMode,
+    applyEmbeddingHeldBack,
+    buildEmbeddingTab,
+    refreshEmbedding,
+    type TabContext,
+} from './settings/tabs/EmbeddingTab';
 import {
     applyLocalHttpsContainerMode,
     applyLocalHttpsDependencyInstalled,
@@ -21,6 +37,7 @@ import {
     TLS_CERT_CHANGED_EVENT,
 } from './settings/tabs/LocalHttpsTab';
 import {
+    applyServerAdminUnreachable,
     applyServerContainerMode,
     applyServerHostMode,
     applyServerServiceStatus,
@@ -30,32 +47,25 @@ import {
 } from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
 import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
-import { buildUsersTab } from './settings/tabs/UsersTab';
+import { applyUsersConfig, buildUsersTab, REMOTE_ADMIN_OFF_BOX_WARNING } from './settings/tabs/UsersTab';
 
 /**
- * Settings modal — unified two-column grid layout.
+ * Settings modal — every tab in a card, each setting in a two-column grid.
  *
- * Every section is built from the same primitive:
- *   <div class="settings-section-body">       <-- grid container
- *     <div class="settings-row">              <-- display: contents
- *       <label class="settings-label">...     <-- grid-column: labels
- *       <div   class="settings-control">...   <-- grid-column: controls
- *     </div>
- *     <div class="settings-section-footer">   <-- spans both columns,
- *       <p class="settings-status">...        <-- right-aligned content
- *       <button class="settings-btn ...">...
- *     </div>
- *   </div>
+ * Every tab but Dependencies is built from the same primitives, in
+ * settings/settingsLayout.ts (which draws the full shape): a section holding a
+ * card (or, on a split tab, several cards under their own headings), the card
+ * holding items, and each item one setting's row plus the notes under it, laid
+ * out on a grid whose labels column is the same width everywhere.
  *
  * Inputs are siblings of labels (NOT nested inside them — the previous
  * pattern broke vertical alignment because input position drifted with
- * label-text length). Buttons live in section footers, never inline
- * with the inputs they affect, so the right column stays a clean
- * "value column" across all rows.
+ * label-text length), so the right column stays a clean "value column"
+ * across all rows.
  *
- * The `buildSection` / `buildRow` / `buildDynamicLabelRow` helpers that produce
- * that shape now live in each tab module under settings/tabs/ — this file owns
- * no section of its own any more, only the tab strip and the container notes.
+ * This file owns no section of its own, only the tab strip and the container
+ * notes (which are built with the same helpers, so they look like the tabs
+ * they replace).
  */
 /**
  * The container replacements for the Service, Updates and Dependencies sections
@@ -70,29 +80,24 @@ import { buildUsersTab } from './settings/tabs/UsersTab';
  * casually; the container smoke asserts on them.
  *
  * `.settings-status` is the shared Settings-note convention (modal.css: indented
- * 1.25rem, italic, weight 600), so these read as sub-notes rather than as
- * settings — which is what the SP4 branch's 730e521 exists to specify.
+ * 1.25rem, italic), so these read as sub-notes rather than as settings — which
+ * is what the SP4 branch's 730e521 exists to specify.
  */
 function buildDockerNoteSection(
     title: string,
     kind: 'service' | 'updates' | 'dependencies',
     text: string,
 ): HTMLElement {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
+    const { section, card } = buildSection(title);
     section.dataset['dockerNote'] = kind; // stable hook for the container smoke
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
     const note = document.createElement('p');
     note.className = 'settings-status';
     note.style.gridColumn = '1 / -1';
     note.textContent = text;
-    body.appendChild(note);
-    section.appendChild(body);
+    card.appendChild(buildItem(note));
+    // Its own status line, like every tab: the dialog's save reports there
+    // when this is the tab on screen.
+    buildTabAlert(section);
     return section;
 }
 
@@ -154,6 +159,27 @@ export function buildDockerUpdatesNote(): HTMLElement {
  * `buildDockerNoteSection` already renders. The rule is "the note answers to the
  * same hooks its real body does", not "every note gets every hook".
  */
+/**
+ * What the Updates, Service, Dependencies and Local HTTPS tabs show where the
+ * admin API will not answer this page (`adminApiReachable` false, off a
+ * container): every one of their reads and controls would only be refused, so
+ * none is made, and the tab says why instead of "loading…" forever (0.5.5).
+ * `tabId` is the tab's `data-settings-tab` hook, which Dependencies needs to be
+ * found at all (see `buildDockerDependenciesNote`).
+ */
+export function buildAdminUnreachableSection(title: string, tabId: string): HTMLElement {
+    const { section, card } = buildSection(title);
+    section.dataset['settingsTab'] = tabId;
+    const note = document.createElement('p');
+    note.className = 'settings-status';
+    note.style.gridColumn = '1 / -1';
+    note.setAttribute('data-admin-unreachable-note', '');
+    note.textContent = ADMIN_UNREACHABLE_NOTE;
+    card.appendChild(buildItem(note));
+    buildTabAlert(section);
+    return section;
+}
+
 export function buildDockerDependenciesNote(): HTMLElement {
     const section = buildDockerNoteSection(
         'Dependencies',
@@ -383,6 +409,32 @@ export async function performDirtyClose(
 }
 
 /**
+ * After a save that changed remote admin: has this device just lost its admin
+ * access? It has when the device is off this machine, sign-in is off, and the
+ * save turned remote admin off -- the server now refuses its admin calls. Read
+ * from /api/config, the policy now in force, rather than worked out from the
+ * batch.
+ *
+ * If so, the page's pollers are told (`announceAdminAccessLost`; the save
+ * already told them before it went out, see `saveDeps`, and telling them twice
+ * is harmless), and Settings is opened again, on Users, where it can no longer
+ * act: the new dialog reads the envelope as every dialog does and holds back
+ * each admin read and control the server would refuse (`adminApiReachable`).
+ */
+async function reopenIfAdminLost(): Promise<void> {
+    try {
+        const r = await fetch('/api/config');
+        if (!r.ok) return;
+        const env = (await r.json()) as AppConfigEnvelope;
+        if (adminApiReachable(env.runtime)) return;
+    } catch {
+        return;
+    }
+    announceAdminAccessLost();
+    new SettingsModal({ initialTab: 'users' });
+}
+
+/**
  * The Save / Discard / Cancel prompt raised when a dirty dialog is dismissed.
  *
  * Every ambiguous dismissal (Escape, the backdrop, the ×) resolves `cancel`,
@@ -519,6 +571,18 @@ export class SettingsModal extends Modal {
      */
     private embeddingTabEl: HTMLElement | null = null;
     /**
+     * The Users tab's section, captured the same way: its remote-admin item
+     * waits for the /api/config envelope the constructor reads
+     * (`applyUsersConfig()`). Stays null when the role cannot see Users.
+     */
+    private usersTabEl: HTMLElement | null = null;
+    /**
+     * The changes in the last batch the server accepted. Read once the dialog
+     * closes after it: a batch that turned remote admin off may have ended
+     * this device's admin access (see `reopenIfAdminLost`).
+     */
+    private lastSaved: Change[] = [];
+    /**
      * The Updates tab's root element, captured the same way and for the same
      * reason as `serviceTabEl`. Its /api/updates/status read is held until
      * container mode is known, so the constructor's post-probe block is what
@@ -569,7 +633,20 @@ export class SettingsModal extends Modal {
      */
     private readonly saveDeps: SaveDeps = {
         confirm: (changes) => this.askChild(() => liveSaveDeps.confirm(changes), false),
-        save: (changes) => liveSaveDeps.save(changes),
+        save: async (changes) => {
+            // A batch that ends this device's admin access (remote admin
+            // turned off by a device that is admin only because of it) stops
+            // the page's pollers BEFORE it goes out, so no tick can land on the
+            // refusal once it is applied. If the save then fails they stay
+            // stopped until the page is reloaded, which costs a badge, not a
+            // setting.
+            if (changes.some((c) => c.id === REMOTE_ADMIN_ID && c.warning === REMOTE_ADMIN_OFF_BOX_WARNING)) {
+                announceAdminAccessLost();
+            }
+            const res = await liveSaveDeps.save(changes);
+            if (res.ok) this.lastSaved = changes;
+            return res;
+        },
         promptDirtyClose: () => this.askChild(() => liveSaveDeps.promptDirtyClose(), 'cancel'),
         navigate: (url) => liveSaveDeps.navigate(url),
     };
@@ -609,7 +686,8 @@ export class SettingsModal extends Modal {
                 // dialog — this modal's own tests stub fetch as a never-resolving
                 // promise precisely to pin "the body still renders", and that is a
                 // real guarantee, not a test artifact.
-                const runtimeProbe = this.probeRuntime();
+                const configProbe = this.probeConfig();
+                const runtimeProbe = configProbe.then((env) => env?.runtime ?? null);
                 try {
                     const me = await authClient.me();
                     role = me.user?.role ?? null;
@@ -637,6 +715,12 @@ export class SettingsModal extends Modal {
                     // Before the container branch returns: a container runs a
                     // version too, and the footer is the only place it shows.
                     this.showVersion(runtime?.appVersion);
+                    // Remote admin is allowed in a container as well, so the
+                    // Users tab hears about it before that branch returns. A
+                    // failed probe, or an envelope missing either half, leaves
+                    // its item hidden.
+                    const env = await configProbe;
+                    if (env?.runtime && env.config && this.usersTabEl) applyUsersConfig(this.usersTabEl, env);
                     this.docker = runtime?.docker === true;
                     // Item 81: an admin whose calls would 403 regardless (a
                     // container with no opt-out) must not have these fired at them
@@ -644,6 +728,23 @@ export class SettingsModal extends Modal {
                     // the true answer is "not from here". Fails open when the probe
                     // itself failed, matching the role fail-open above.
                     this.adminReachable = runtime ? adminApiReachable(runtime) : true;
+                    // Where the admin API will not answer, every admin control
+                    // in the dialog is held back with a note saying why, so
+                    // nothing can be clicked into a 403 (0.5.5). Users decides
+                    // its own from the envelope (applyUsersConfig, above).
+                    if (!this.adminReachable && this.serverTabEl) applyServerAdminUnreachable(this.serverTabEl);
+                    // Embedding's list answers only an admin on the machine
+                    // itself (`requireLocalAdmin`), so it is read only there:
+                    // anywhere else it would be refused whatever the policy. An
+                    // unknown caller (a failed probe) reads, the fail-open
+                    // direction, as the tab did before the hold.
+                    if (this.embeddingTabEl) {
+                        if (this.adminReachable && runtime?.callerIsLocal !== false) {
+                            void refreshEmbedding(this.embeddingTabEl);
+                        } else {
+                            applyEmbeddingHeldBack(this.embeddingTabEl);
+                        }
+                    }
                     // The container branch runs FIRST and returns, so no tab
                     // gated by it ever starts anything.
                     //
@@ -679,6 +780,9 @@ export class SettingsModal extends Modal {
                     // A host: the Server tab's port rows, built hidden so none of
                     // their copy flashes in a container, can show now.
                     if (this.serverTabEl) applyServerHostMode(this.serverTabEl);
+                    // The tabs whose reads are held below say why, instead of
+                    // "loading…" forever.
+                    if (!this.adminReachable) this.applyAdminUnreachableNotes();
                     if (this.canUse('dependencies') && this.dependenciesTabEl) {
                         void refreshDependencies(this.dependenciesTabEl);
                     }
@@ -728,12 +832,13 @@ export class SettingsModal extends Modal {
         // The "Users" section (manage users button + auth toggle) is admin-only.
         //
         // `store` is a single StagedSettingsStore shared by every tab this
-        // dialog builds. Users/Service (below) take it and register nothing —
-        // they are actions, not staged values (see StagedSettingsStore's class
-        // doc). Embedding registers `frameAncestorsAdd` (the pre-approvals its
-        // add row stages; its revoke is an action). Server registers `webPort`;
-        // Updates registers `channel`, `autoUpdate`,
-        // `updateCheckIntervalMinutes` and `githubOwner`.
+        // dialog builds. Service (below) takes it and registers nothing — its
+        // controls are actions, not staged values (see StagedSettingsStore's
+        // class doc). Users registers `allowRemoteAdmin` (its other two rows
+        // are actions). Embedding registers `frameAncestorsAdd` (the
+        // pre-approvals its add row stages; its revoke is an action). Server
+        // registers `webPort` and `httpsPort`; Updates registers `channel`,
+        // `autoUpdate`, `updateCheckIntervalMinutes` and `githubOwner`.
         const store = new StagedSettingsStore();
         this.store = store;
         const ctx: TabContext = {
@@ -756,7 +861,15 @@ export class SettingsModal extends Modal {
         };
         const tabs: TabDef[] = [];
         if (canSeeSection(this.role, 'users')) {
-            tabs.push({ id: 'users', label: 'Users', build: () => buildUsersTab(ctx, store) });
+            tabs.push({
+                id: 'users',
+                label: 'Users',
+                build: () => {
+                    const el = buildUsersTab(ctx, store);
+                    this.usersTabEl = el; // so the constructor can hand it the /api/config envelope
+                    return el;
+                },
+            });
         }
         // Next to Users: both answer "who is allowed to do what with this server".
         if (canSeeSection(this.role, 'embedOrigins')) {
@@ -852,11 +965,12 @@ export class SettingsModal extends Modal {
 
     /**
      * The dialog-level footer: the running version on the left, one Save for
-     * every tab on the right, and between them the line that reports a refused
-     * batch.
+     * every tab on the right. A save's result is not reported here: it goes to
+     * the status line at the bottom of the tab on screen (`reportSave`), the
+     * one place every tab reports an action's result (0.5.5).
      *
      * Built during `super()`, so it may touch no instance field — hence the
-     * `saveBtn`/`saveStatus`/`versionEl` getters below, which re-find the nodes rather than
+     * `saveBtn`/`versionEl` getters below, which re-find the nodes rather than
      * caching them in fields that class-field init would clobber
      * (ES2022 useDefineForClassFields, the same hazard as `fillBody`).
      */
@@ -867,7 +981,6 @@ export class SettingsModal extends Modal {
         // The running version, left-aligned on Save's line. Hidden until the
         // runtime probe names it (`showVersion`), so the dialog never reads
         // "vundefined"; a server too old to send it leaves the line hidden.
-        // Never shrinks, so a long refusal beside it wraps instead of eating it.
         const version = document.createElement('span');
         version.className = 'settings-version';
         version.style.cssText =
@@ -875,18 +988,10 @@ export class SettingsModal extends Modal {
         version.hidden = true;
         footer.appendChild(version);
 
-        // Between the version and Save, taking the room that is left and
-        // wrapping inside it: a refused batch can name several settings.
-        const status = document.createElement('p');
-        status.className = 'settings-status settings-save-status';
-        status.style.cssText = 'margin: 0; flex: 1 1 auto; min-width: 0;';
-        status.hidden = true;
-        footer.appendChild(status);
-
         const save = document.createElement('button');
         save.type = 'button';
-        // `margin-left: auto` keeps Save on the right edge whether or not the
-        // status line is showing (when it is hidden nothing else fills the row).
+        // `margin-left: auto` keeps Save on the right edge, with or without the
+        // version beside it.
         save.style.marginLeft = 'auto';
         save.className = 'settings-btn settings-btn-primary settings-save';
         save.textContent = 'save';
@@ -902,10 +1007,6 @@ export class SettingsModal extends Modal {
 
     private get saveBtn(): HTMLButtonElement | null {
         return this.frameEl.querySelector<HTMLButtonElement>('button.settings-save');
-    }
-
-    private get saveStatus(): HTMLElement | null {
-        return this.frameEl.querySelector<HTMLElement>('.settings-save-status');
     }
 
     private get versionEl(): HTMLElement | null {
@@ -927,12 +1028,24 @@ export class SettingsModal extends Modal {
         el.hidden = !known;
     }
 
-    private setSaveStatus(msg: string, isError: boolean): void {
-        const el = this.saveStatus;
-        if (!el) return;
-        el.textContent = msg;
-        el.hidden = msg.length === 0;
-        el.classList.toggle('settings-status-error', isError);
+    /**
+     * Report a save's result on the status line of the tab on screen: the user
+     * clicked Save from there, and that line is where every tab reports an
+     * action's result. A tab body without a line of its own gets one.
+     */
+    private reportSave(kind: TabAlertKind, msg: string): void {
+        const strip = this.tabStrip;
+        const body = strip?.body(strip.activeId());
+        if (!body) return;
+        const alert = tabAlertIn(body) ?? buildTabAlert(body.querySelector<HTMLElement>('section') ?? body);
+        alert.show(kind, msg);
+    }
+
+    /** Clear the save's previous result off the tab on screen. */
+    private clearSaveReport(): void {
+        const strip = this.tabStrip;
+        const body = strip?.body(strip.activeId());
+        if (body) tabAlertIn(body)?.clear();
     }
 
     /**
@@ -973,7 +1086,7 @@ export class SettingsModal extends Modal {
             this.applyAction(action);
         } catch {
             this.saving = false;
-            this.setSaveStatus("couldn't save the changes", true);
+            this.reportSave('error', "couldn't save the changes");
         } finally {
             this.syncSaveButton();
         }
@@ -984,7 +1097,7 @@ export class SettingsModal extends Modal {
         if (!store) return;
         // Clear any previous refusal before re-attempting, so a stale message
         // cannot be read as a fresh one.
-        this.setSaveStatus('', false);
+        this.clearSaveReport();
         await this.runGuarded(() => performStagedSave(store, this.saveDeps));
     }
 
@@ -1028,6 +1141,8 @@ export class SettingsModal extends Modal {
      */
     protected override onBeforeClose(): void {
         if (this.dependenciesTabEl) destroyDependenciesTab(this.dependenciesTabEl);
+        // Every tab's status line stops its clock: nothing is left to hide.
+        destroyTabAlerts(this.dialog);
     }
 
     /** Act on what the save / close flow decided. */
@@ -1037,16 +1152,18 @@ export class SettingsModal extends Modal {
                 return;
             case 'close':
                 this.close();
+                if (this.lastSaved.some((c) => c.id === REMOTE_ADMIN_ID)) void reopenIfAdminLost();
                 return;
             case 'failed':
                 // Stays open, changes still staged — see performStagedSave.
-                this.setSaveStatus(action.message, true);
+                this.reportSave('error', action.message);
                 return;
             case 'redirect':
                 // The dialog stays up showing why, then follows the server. The
                 // wait is the supervisor's window to rebind the new port;
-                // navigating immediately gets a connection refused.
-                this.setSaveStatus('restarting → redirecting…', false);
+                // navigating immediately gets a connection refused. A busy
+                // message, so it stays up until the page leaves.
+                this.reportSave('busy', 'restarting → redirecting…');
                 setTimeout(() => liveSaveDeps.navigate(action.url), RESTART_REDIRECT_DELAY_MS);
                 return;
         }
@@ -1079,6 +1196,11 @@ export class SettingsModal extends Modal {
      * here: no panel was ever created, so there is no interval to stop.
      */
     private applyDockerGating(): void {
+        // The outgoing bodies' status lines stop their clocks first.
+        for (const id of ['updates', 'service', 'dependencies']) {
+            const body = this.tabStrip?.body(id);
+            if (body) destroyTabAlerts(body);
+        }
         this.tabStrip?.replaceTabBody('updates', buildDockerUpdatesNote());
         this.tabStrip?.replaceTabBody('service', buildDockerServiceNote());
         this.tabStrip?.replaceTabBody('dependencies', buildDockerDependenciesNote());
@@ -1087,22 +1209,50 @@ export class SettingsModal extends Modal {
     }
 
     /**
-     * Ask the server whether it is running in a container (SP4 E4).
+     * Replace the Updates, Service, Dependencies and Local HTTPS bodies with
+     * `buildAdminUnreachableSection` where the admin API will not answer this
+     * page, the way `applyDockerGating` replaces them in a container (and
+     * through `TabStrip.replaceTabBody` for the same reasons). None of the four
+     * has started anything: their refreshes are all held behind `canUse`. The
+     * refs are dropped so nothing drives a detached body later.
+     */
+    private applyAdminUnreachableNotes(): void {
+        const notes: Array<[string, string]> = [
+            ['updates', 'Updates'],
+            ['service', 'Service'],
+            ['dependencies', 'Dependencies'],
+            ['local-https', 'Local HTTPS'],
+        ];
+        for (const [id, title] of notes) {
+            const body = this.tabStrip?.body(id);
+            if (!body) continue;
+            destroyTabAlerts(body);
+            this.tabStrip?.replaceTabBody(id, buildAdminUnreachableSection(title, id));
+        }
+        this.updatesTabEl = null;
+        this.serviceTabEl = null;
+        this.dependenciesTabEl = null;
+        this.localHttpsTabEl = null;
+    }
+
+    /**
+     * Ask the server whether it is running in a container (SP4 E4), among the
+     * rest of the /api/config envelope.
      *
-     * Reads `runtime.docker` off the /api/config envelope — the runtime side, not
-     * `config`, because the flag is an env implication the server deliberately
-     * never persists to config.json.
+     * Reads `runtime.docker` off the envelope — the runtime side, not `config`,
+     * because the flag is an env implication the server deliberately never
+     * persists to config.json. The Users tab reads its remote-admin item off
+     * both halves (`applyUsersConfig`).
      *
      * Fails open to `false`. That is the desktop answer and the one that shows
      * MORE, matching the role fail-open in the constructor: a transient fetch
      * error should not silently strip a host user's Service and Updates sections.
      */
-    private async probeRuntime(): Promise<FirstRunStatus | null> {
+    private async probeConfig(): Promise<AppConfigEnvelope | null> {
         try {
             const r = await fetch('/api/config');
             if (!r.ok) return null;
-            const env = (await r.json()) as AppConfigEnvelope;
-            return env.runtime;
+            return (await r.json()) as AppConfigEnvelope;
         } catch {
             return null;
         }

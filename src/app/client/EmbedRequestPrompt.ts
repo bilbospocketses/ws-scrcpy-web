@@ -34,6 +34,10 @@ let promptOpen = false;
 async function fetchPending(): Promise<PendingEmbedRequest | null> {
     try {
         const res = await fetch('/api/embed-request', { headers: { Accept: 'application/json' } });
+        // Refused: consent is given at the machine itself, by an admin, and
+        // this page is neither. Asking again every 5 s would only be refused
+        // again (0.5.5).
+        if (res.status === 403) stopEmbedRequestWatch();
         if (!res.ok) return null;
         const body = (await res.json()) as { request: PendingEmbedRequest | null };
         return body.request ?? null;
@@ -102,8 +106,16 @@ async function checkOnce(): Promise<void> {
     }
 }
 
-/** Begin watching for embed requests. Safe to call more than once. */
-export function startEmbedRequestWatch(): void {
+/**
+ * Begin watching for embed requests. Safe to call more than once.
+ *
+ * `callerIsLocal` is the /api/config envelope's: the routes this reads answer
+ * only an admin on the machine itself, so a page on another machine (`false`)
+ * never starts. Unknown (`undefined`, an older server or a failed read) starts,
+ * and a refusal then stops it.
+ */
+export function startEmbedRequestWatch(callerIsLocal?: boolean): void {
+    if (callerIsLocal === false) return;
     if (timer !== null) return;
     void checkOnce();
     timer = setInterval(() => void checkOnce(), POLL_INTERVAL_MS);

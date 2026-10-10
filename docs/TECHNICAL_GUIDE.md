@@ -1419,8 +1419,10 @@ Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancell
 | `src/app/client/AddSubnetModal.ts` | Add-or-edit dialog. Accepts `{ onSubmit, mode?: 'add' \| 'edit', initialValue?: string }`. Edit mode re-titles to "Edit Subnet", switches the button to "save", pre-fills the input, and re-runs validation so a valid pre-filled value leaves save enabled immediately. Live validation via `parseSubnetInput`; error messages embed a clickable link to the subnet cheat sheet when relevant. |
 | `src/app/client/LargeSubnetWarningModal.ts` | Fires when combined scan size > 2,048 hosts. Shows total host count + per-subnet breakdown, user confirms or cancels. Nested-modal readability handled by a CSS `:has()` rule in `src/style/modal.css` that makes the topmost stacked dialog use a fully opaque frame (instead of compounding the glassmorphism of both layers). |
 | `src/app/client/ScanProgressChip.ts` | Lifecycle chip with four states: `scanning`, `draining`, `complete`, `cancelled`. Full-width inside its slot with `min-height: 32px` so all three label states occupy the same footprint regardless of which child button (cancel / × / none) is visible. `setScanning` is a no-op after the chip leaves `scanning` state — prevents stale `scan.progress` messages arriving during drain from resurrecting the scanning label. Drain label holds for a minimum 1200 ms before transitioning to `cancelled` (the real drain can complete in ~300 ms, which is too fast to read). Auto-dismisses 5 s after `complete` / 10 s after `cancelled`, via the `onDismiss?` callback restoring the panel's default info text. |
-| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate subject links to the top (its `click here for help on how this works` link, after 0.5.3), the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust`. Same back-link as the cheat sheet. |
+| `public/help/certificate-subject.html` | What a TLS certificate's subject is (ip address vs hostname), and section 4's per-device install steps (Windows, macOS, Linux, Android, iOS / iPadOS, Firefox). Opens in a new tab from the Local HTTPS tab: the line under the certificate subject links to the top (its `how this works ↗` link since 0.5.5), the line under **download ca certificate** to `#4-installing-a-certificate-establishing-trust` (`install guide ↗`). Same back-link and theme bootstrap as the cheat sheet. |
 | `public/help/subnets.html` | Subnet/CIDR cheat sheet. Opens in a new tab from `ScanNetworkModal` (the "New to CIDR?" link) and from `AddSubnetModal` validation-error messages. Back-link uses `window.close()` so the tab actually closes instead of navigating the new tab back to the app (which would accumulate stale tabs on repeat cheat-sheet visits). |
+
+Both help pages theme themselves before paint from `?theme=light|dark` in their own URL, falling back to the OS's `prefers-color-scheme`; both link the app's `../favicon.png`. They are static files with no access to the server's settings DB, where the app has kept its theme since it stopped using `localStorage` (`ThemeToggle.ts`), so the app's links pass the theme along: every link to a help page goes through `src/app/client/helpLink.ts` (`themeHelpLink`), which writes the current `data-theme` into the query ahead of any `#hash` and rewrites it again on `click`, `auxclick` and `contextmenu`, because the theme can change while a dialog holding the link stays open. Until 0.5.5 the pages read a `ws-scrcpy-web-theme` localStorage key nothing wrote any more, and so always opened dark.
 
 #### 14.2.5 Config Tuning Knobs
 
@@ -2409,11 +2411,17 @@ return requireAdmin(req, res);
 - **`GET /api/config` is never gated.** It is the launcher's readiness probe, the Docker image's `HEALTHCHECK` and the test harness's ready path. Gating it breaks all three at once, and it discloses nothing sensitive. Only the PATCH branch is guarded.
 - **`ServerShutdownApi` keeps its own ladder** rather than adopting `requireOperator`, because its off-box branch must stay token-first (403) then session (401) for the cookieless tray helper. It gained one clause: in **open** mode an off-box caller now also needs the opt-out.
 
-**The opt-out.** `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` (exact string `'1'` — a loose truthiness check would admit `''` or `'false'`) or `allowRemoteAdmin: true` in `config.json`. The env var is first-class and checked first: a container has nobody at a loopback browser, so it is the way into a container's admin routes, including the one-time setup of sign-in (`SECURITY.md` § Containers). There is no `docker exec` route: the image has no `curl` or `wget`, every `/api` call needs the per-launch token, and `POST /api/auth/enable` refuses until an admin with a password exists. The config key is what the banner's confirmation modal writes, and that PATCH is itself operator-gated, so the switch cannot be thrown from off-box.
+**The opt-out.** `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` (exact string `'1'` — a loose truthiness check would admit `''` or `'false'`) or `allowRemoteAdmin: true` in `config.json`. The env var is first-class and checked first: a container has nobody at a loopback browser, so it is the way into a container's admin routes, including the one-time setup of sign-in (`SECURITY.md` § Containers). There is no `docker exec` route: the image has no `curl` or `wget`, every `/api` call needs the per-launch token, and `POST /api/auth/enable` refuses until an admin with a password exists. The config key is what Settings → Users saves (0.5.5, below) and what the home page banner's confirmation modal writes, and both routes are themselves operator-gated, so the switch cannot be thrown from off-box.
 
 **`runtime.adminScope` and `runtime.callerIsLocal` on `GET /api/config`.** Two fields, not one: `adminScope` (`'local' | 'remote' | 'authenticated'`) is the **policy in force**, `callerIsLocal` is whether **this** request can act under it. The client needs both — a `local` policy shows buttons to a loopback caller and instructions to everyone else. Both are optional on the wire, so an older server reads as "no opinion" and the banner stays hidden rather than claiming a posture it cannot verify.
 
-**The banner is informational to everyone, actionable only from loopback.** In open mode there is no auth, so a card with a working "enable" button would render for an attacker too — a switch that turns off the lock, mounted on the outside of the door. It leads with **Set up sign-in** (recommended); **Allow remote admin without sign-in** sits second behind a red confirmation whose every dismissal path resolves *no*.
+**The banner is informational to everyone, actionable only from loopback.** In open mode there is no auth, so a card with a working "enable" button would render for an attacker too — a switch that turns off the lock, mounted on the outside of the door. It leads with **Set up sign-in** (recommended); **Allow remote admin without sign-in** sits second behind a red confirmation whose every dismissal path resolves *no*. **Under the `remote` policy the banner renders nothing** (0.5.5): until then it showed "Remote admin is enabled without sign-in." with no button and no way to dismiss it, and nothing in the app could turn the opt-out off.
+
+**Settings → Users owns the opt-out since 0.5.5.** Its card carries a **remote admin without sign-in** checkbox, with the warning the banner used to show as the note under it: `any device that can reach this server can administer it. set up sign-in, or uncheck this, to close it.` in the warning tone while checked, `admin actions are limited to this machine unless sign-in is set up.` while not. It is a **staged** setting, `allowRemoteAdmin` (`src/common/remoteAdmin.ts`): checking it raises the same `RemoteAdminWarningModal` first and stages only on its explicit accept (its `choose()` tells **Set up sign-in instead**, which opens the manage-users dialog over Settings, apart from a dismissal, which does nothing), unchecking asks nothing, the review lists `Remote admin without sign-in: off → on`, and Save applies it through the batch (§27.4, §27.7). The item is fed the `/api/config` envelope by the dialog (`applyUsersConfig`) and stays hidden until it arrives. Three more states: **forced** — `runtime.remoteAdminForced` (`remoteAdminForcedByEnv()`, true while `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`) shows the box checked and disabled with `forced on by WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 on the server; remove the variable to turn it off.`, and the batch refuses an attempt to turn it off with 409 and that sentence, as `PATCH /api/config` does (same status, same copy, field `allowRemoteAdmin`); **sign-in on** — the box stays visible and editable with `ignored while sign-in is on; it applies again if sign-in is turned off.`, so a stored `true` can be cleared before it comes back into force; **unreachable** — an off-box caller under the `local` policy sees the box disabled, since Save would only be refused. A device on another machine that is admin **only because of** the opt-out (`adminScope` `remote`, `callerIsLocal` false) is told under the box, and on the review screen through the field's `warning` (`StagedField.warning`), `you are on another device: saving this ends your admin access from here.`; such a save first tells the page's pollers to stop (`announceAdminAccessLost`, below), BEFORE the batch goes out, then the dialog re-reads `/api/config` and, if `adminApiReachable` now says no, opens Settings again on Users, held back as below (`reopenIfAdminLost`). The transition makes no refused request at all; e2e 18.13 asserts it over every poller's next tick.
+
+**Where the admin API will not answer this page, the dialog holds back every admin control** (0.5.5), so nothing can be clicked into a 403, and each affected tab says why once, muted: `admin changes are limited to the machine running the server.` (`ADMIN_UNREACHABLE_NOTE`). Users disables **manage users**, the login toggle and the remote-admin box; Server disables both ports and **stop server & exit** and leaves out reset's first-run half (a `PATCH /api/config`); Embedding makes no read and shows the note where the list would be, with no add row; Updates, Service, Dependencies and Local HTTPS are replaced by the note (`buildAdminUnreachableSection`, the way a container replaces them). This is the rule item 81 already applied to the reads, and covers an off-box visitor in open mode under `local` as well as a device that has just turned remote admin off. **Embedding's list is read only on the machine itself** whatever the policy, since `/api/embed-origins` answers only a local admin (`requireLocalAdmin`); off it, the tab shows the same note.
+
+**The pollers stop on a refusal, and before one** (`src/app/client/adminAccess.ts`). The home page's dependency badge and first-run banner (15 s, `/api/dependencies`), the update pill (30 s, `/api/updates/status`) and Settings → Dependencies' panel (15 s) each stop for good on a 403 from their own read, with no retry loop; the pill shows nothing then, never an error pill, and the panel's table says `ADMIN_UNREACHABLE_NOTE`. Each also stops on the `ws-admin-access-lost` window event (`announceAdminAccessLost`), which Settings raises before a save that ends this page's access and again once the re-read confirms it. None starts where the page already knows the admin API will not answer it (the badge and banner since item 81, the pill since 0.5.5), and the embed-request watch (5 s, `/api/embed-request`, a local-admin route) starts only on the machine itself (`runtime.callerIsLocal`) and stops on a 403. A page reload decides afresh.
 
 **`adminApiReachable()` (`src/app/client/adminGate.ts`) is a second, independent predicate.** Every admin handler gates at the top of `handle`, so the GETs are gated too — without it a flagless container would 403-spam every poll interval on a completely healthy app. It composes with `canSeeSection`: *permitted* and *reachable* are different questions, and a signed-in admin reaching a container without the opt-out passes the first and fails the second. This is finding 9.6's argument extended from `role` to `adminScope`.
 
@@ -3152,11 +3160,13 @@ mark-completed-before-restart a race rather than a fact.
 
 The important property is negative. `set()` on an unregistered id is **silently
 ignored**, so a field nobody registered can never appear in `changes()`. The
-action-only tabs (Users, Service) register nothing, which makes "actions must not
+action-only tab (Service) registers nothing, which makes "actions must not
 appear in the change summary" a structural fact rather than a rule someone has to
 remember — and a future action cannot leak into the summary by oversight.
 Embedding registers exactly one field, `frameAncestorsAdd` (its pre-approvals,
-§27.4); its **revoke** is still an action and registers nothing.
+§27.4); its **revoke** is still an action and registers nothing. Users likewise
+registers one, `allowRemoteAdmin` (0.5.5, §24.0); its manage-users button and login
+toggle are still actions.
 
 ### 27.3 The tabs
 
@@ -3189,6 +3199,63 @@ my settings" stops sending the first-run reset (§26.5). The Local HTTPS tab sta
 `applyLocalHttpsContainerMode()` (`LocalHttpsTab.ts`) shows only a note naming the
 reverse proxy, and a later service status never builds the panel over it.
 
+**Layout (0.5.5).** Every tab but Dependencies builds its DOM through
+`src/app/client/settings/settingsLayout.ts`, which replaced six identical private
+`buildSection` / `buildRow` copies (and two of `buildDynamicLabelRow`): a `section`
+holding its `h3` title and a `.settings-card` (the Dependencies card's border, radius
+and `--settings-card-bg` background, declared in both theme blocks of `app.css`), the
+card holding `.settings-item`s, each one setting's `display: contents` row plus the
+notes under it, laid out on a two-column grid whose labels column is 18rem everywhere
+(20rem before the cards; the card's padding took the difference). The items are made
+when the tab builds its rows, not inferred afterwards, because only the builder knows
+which notes belong to which row, and the tabs show and hide both long after. The
+dividing line is a `border-top` on every showing item that follows a showing item
+(`modal.css`): a `border-bottom` cleared on the last one showing would need a `:has()`
+inside a `:has()`, which CSS does not allow. "Showing" is read off the `hidden`
+attribute, so an item whose children are all hidden takes no space, and rows are hidden
+through `setRowShown`, which sets the attribute as well as the inline `display` their
+`display: contents` needs. A row with no control (`buildRow(label, null)`) lets its label
+span both columns. Server and Local HTTPS are split tabs (`buildSplitSection` +
+`addCard`): the title stays in the DOM, `visually-hidden`, so a screen reader and the
+e2e suite still find the tab by it, and each card has an `h4` heading at the title's
+size. Server's **Ports** card is hidden with its heading (`setCardShown`) until the
+dialog knows it is on a host, and stays hidden in a container. The Local HTTPS subject
+box is an editable combobox (`src/app/client/settings/Combobox.ts`, the APG pattern:
+`role="combobox"`, `aria-autocomplete="none"`, a `listbox` that always lists every
+candidate, keyboard and Escape handling) rather than a native `<datalist>`, which filters
+its options by the box's value.
+
+**Every tab reports an action's result on ONE status line** (0.5.5,
+`buildTabAlert` in `settingsLayout.ts`): the last element of the tab's section, below
+and outside its cards, so it never reads as part of the last one (`.settings-tab-alert`,
+hook `data-settings-alert`; the Local HTTPS one keeps `data-tls-alert` too). It is a
+`role="status"` live region, and so it is never `hidden`: a live region that appears
+together with its text may not be announced, so it stays in the accessibility tree,
+EMPTY when idle, and `.settings-tab-alert:empty` takes its margin away. "Hides" below
+means it empties. A success hides after 5 s and an error after 10 s; a new
+message replaces the old and restarts the clock, and a busy message (`saving…`,
+`removing the system service…`, `restarting → redirecting…`) stays until its result
+replaces it. `addCard` puts a split tab's later cards above it, and closing the dialog
+destroys every line (`destroyTabAlerts`), so nothing hides or shows after the dialog has
+gone. On it: the login toggle's failures (Users); change password's `saving…` /
+`password changed` / its refusals, log out's failure and install for all users' failure
+(Server); a revoke that never reached the server (Embedding, which used to write it into
+the list); a check or an apply that failed (Updates, whose action-row label keeps the
+update state); an install or uninstall that failed, with the card left as it was and its button
+back (Service, which used to replace the card with the error and an in-card **retry**),
+or one that HAPPENED but whose hand-off was not seen to finish (the install's
+take-over timed out, no fresh instance after an uninstall), where the card is read
+again instead, so no button offers to repeat it; a dependency install or update
+that failed, as `install failed: <message>` / `update failed: <message>` / `…failed: could not reach the server.` (Dependencies, which used the browser's `alert()`); every Local HTTPS result;
+and the dialog's own save (§27.5), on the line of the tab on screen. What stays beside
+its control is what describes the control rather than an action's outcome: a field's
+validation (the port range and collision lines, the Embedding add row, the
+change-password blank check, and since 0.5.5 the Updates interval and owner refusals,
+each under its own field) and standing state (gate notes, the restart note, the
+privilege warning, `already installed for all users (/opt)`, the loading and
+"couldn't reach server" placeholders, the Updates state text, the note after a
+system-scope uninstall).
+
 ### 27.4 What stages, and what still writes immediately
 
 `SettingsBatchApi.STAGEABLE_IDS` is an **allowlist** — an id absent from it is
@@ -3203,6 +3270,7 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'updateCheckIntervalMinutes',
     'githubOwner',
     FRAME_ANCESTORS_ADD_ID, // 'frameAncestorsAdd', src/common/embedderOrigin.ts
+    REMOTE_ADMIN_ID, // 'allowRemoteAdmin', src/common/remoteAdmin.ts (0.5.5)
 ]);
 ```
 
@@ -3250,9 +3318,15 @@ Three things the allowlist implies, all easy to state wrongly:
   nothing was removed from the endpoint — the tab simply no longer calls it. In a
   container it answers 409, as every updater route does (§26.5).
 - **"check for updates now" and "apply update" are actions**, as are everything
-  on Users and Service, Embedding's **revoke**, and the Server tab's reset /
-  change password / log out / install for all users / stop & exit / uninstall.
-  They fire on click and register nothing.
+  on Service, Users' **manage users** and **login** toggle, Embedding's
+  **revoke**, and the Server tab's reset / change password / log out / install
+  for all users / stop & exit / uninstall. They fire on click and register
+  nothing.
+- **Remote admin without sign-in stages** (0.5.5). The Users tab's checkbox
+  registers `allowRemoteAdmin` (label `Remote admin without sign-in`, `on` /
+  `off`) and Save sends it; the batch applies it through `updateAppConfig`, so
+  turning it off removes the key from `config.json` as `PATCH /api/config`
+  always has (§24.0).
 - **Pre-approving an embedder stages; revoking one does not** (0.5.3). The
   Embedding tab's **add an embedder** row (address, optional port, scheme
   `http` / `https` / `http & https`) validates with `embedderOriginsFromInput`
@@ -3335,10 +3409,14 @@ the order of its calls is the behavior:
 2. **A failure leaves the store alone.** No `reset()` and — above all — no tab
    refresh, since `refreshUpdates()` / `refreshServer()` re-register their fields
    with server values and would silently discard every staged edit. A refused
-   batch leaves the dialog open, the changes staged, and the reason on the footer
-   status line, named by the change's **label** rather than its wire id.
+   batch leaves the dialog open, the changes staged, and the reason on the status
+   line of the tab on screen (§27.3; it was a line in the footer until 0.5.5),
+   named by the change's **label** rather than its wire id. A change can carry a
+   `warning` for the summary to show under its list (`StagedField.warning`): remote
+   admin turned off by the device that is admin only because of it.
 3. **A restart redirects.** On `restartRequired` with a numeric `redirectPort`,
-   the dialog says `restarting → redirecting…` and navigates
+   the dialog says `restarting → redirecting…` on the tab's line, as a busy
+   message that stays up, and navigates
    `RESTART_REDIRECT_DELAY_MS` (4000 ms) later to that port on **this browser's
    own origin** — the server names only the port, because a server-built
    `localhost` URL sends every off-box client to its own machine. The delay is
@@ -3383,6 +3461,15 @@ A batch naming an id outside `STAGEABLE_IDS` is refused **before** the WAL row i
 written, so a rejected batch leaves no trace to reason about later. In a container,
 so is a batch naming a host-only key (`webPort` or an updater key): 409
 `reason: unsupported`, the same refusal `PATCH /api/config` gives (§26.5).
+
+**`allowRemoteAdmin` carries two pre-WAL checks** (0.5.5, `remoteAdminRefusal`),
+in the same rejected-apply shape: a value that is not a boolean is 400 (`allowRemoteAdmin must be a boolean`),
+and turning it off while `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` forces it on is 409 with
+`REMOTE_ADMIN_FORCED_MESSAGE`, since nothing the save writes could change what the
+server does. Every `allowRemoteAdmin` change in a batch is checked, not only the
+first. `PATCH /api/config` refuses `{ allowRemoteAdmin: false }` while forced the same
+way (409, the same copy). A container allows it, as `PATCH /api/config` does: it is
+not a host-only key.
 
 **`frameAncestorsAdd` carries two extra pre-WAL checks** (0.5.3), both answered in
 the rejected-apply shape (`{ ok: false, applied: [], failed: { id, error } }`), so
@@ -3470,9 +3557,12 @@ stays bounded; `pending` rows are never pruned.
 | `src/app/client/settings/closeIntent.ts` | `prompt` vs `close`, as a pure function of the store |
 | `src/app/client/settings/SaveRunner.ts` | `runSave()` and the `res.ok` normalization of a refused batch |
 | `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server, Local HTTPS |
-| `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save, `performStagedSave`, `performDirtyClose`, the dirty-close prompt |
+| `src/app/client/settings/settingsLayout.ts` | The shared section / card / item / row builders every tab but Dependencies uses (§27.3, Layout), and every tab's status line (`buildTabAlert`, §27.3) |
+| `src/app/client/settings/Combobox.ts` | The editable combobox the Local HTTPS certificate subject uses |
+| `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save and where its result is reported, `performStagedSave`, `performDirtyClose`, the dirty-close prompt, `reopenIfAdminLost` (§24.0) |
 | `src/app/client/DependencyAlertCard.ts` | The top-bar dependency-update indicator (§14.3) |
-| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, `frameAncestorsAddRefusal()`, the apply loop and the WAL marks |
+| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, `frameAncestorsAddRefusal()`, `remoteAdminRefusal()`, the apply loop and the WAL marks |
+| `src/common/remoteAdmin.ts` | `REMOTE_ADMIN_ID` and the forced-on copy, shared by the batch and Settings → Users (§24.0) |
 | `src/common/embedderOrigin.ts` | `FRAME_ANCESTORS_ADD_ID`, the Embedding add row's address / port validators and origin builder |
 | `src/server/db/PendingSettingsStore.ts` | The WAL rows and their transitions |
 | `src/server/db/reconcilePendingSettings.ts` | Boot-time abandon + prune |
@@ -3526,7 +3616,7 @@ implicit admin, a bare link, a QR code or `curl -k https://<LAN IP>:<https port>
 the panel's save uses too. Every platform the install guide covers, and Firefox, accepts a PEM
 certificate under `.crt`, and Linux's `update-ca-certificates` reads only `*.crt`. The per-OS install
 steps are not in the panel any more: one line links to section 4 of `public/help/certificate-subject.html`,
-opening in a new tab. It does not bypass sign-in: in locked mode `AuthGate` answers a
+opening in a new tab, in the app's theme (`helpLink.ts`). It does not bypass sign-in: in locked mode `AuthGate` answers a
 caller with no session 401 before this handler runs, and the admin gate answers a signed-in non-admin
 403. The rate limit and the per-download log line are unchanged.
 
@@ -3544,13 +3634,27 @@ test suite is a fake.
   connect-address callers) and cross-checked against `kind` with `isIP` — a caller-supplied `kind`
   that doesn't match the value's actual shape would otherwise mint a certificate whose real SAN type
   falls outside the constraints built for the other type, failing silently in a browser with nothing
-  in this stack having reported a problem. A hostname subject additionally needs at least two labels
-  and must miss a small explicit denylist of common public suffixes (`co.uk`, `com`, `gov`, …) —
-  **not a Public Suffix List implementation, and not claimed to be complete.** It exists because
-  mkcert's own name-constraint code (`cert.go:512`) appends the subject **and its entire subtree**
-  unconditionally: a CA constrained to `com` would let a stolen CA key mint a certificate for
-  `google.com`. The constraint permits the subject and everything beneath it — never the subject
-  alone — so the subject must be a name only the requester could plausibly own.
+  in this stack having reported a problem. A hostname subject additionally may not be a real
+  internet TLD, any of IANA's delegated list (`src/common/ianaTlds.ts`, generated by
+  `scripts/refresh-iana-tlds.mjs`, which keeps the list's `# Version …` line), nor one of a short
+  explicit list of second-level public suffixes (`co.uk`, `com.au`, …; `src/common/publicSuffix.ts`,
+  **not a Public Suffix List implementation**). The reason is the name constraint itself: mkcert's
+  `cert.go:512` appends the subject **and its entire subtree**, and an RFC 5280 dNSName constraint
+  covers the subtree in any case, so the CA permits the subject and everything beneath it, never the
+  subject alone. Measured in the 0.5.5 review: mkcert with the subject `de` produced
+  `Permitted: DNS:de, DNS:.de`, and a leaf for `bank.de` signed by that CA passed `openssl verify`.
+  Every device that installed such a CA accepts that leaf from anyone who presents it, an
+  interceptor on the path included; DNS has no part in it, so "the name only reaches what the
+  devices resolve" is not a defense. Hence any real TLD is refused (user decision 2026-10-09), `dev`,
+  `app` and `media` with `com` and `de`. A one-word name that is not delegated (`htpc`, `nas`,
+  `localhost`, and `lan`, `local`, `home`, whose LAN-wide reach the user accepted) is allowed since
+  0.5.5; until then a hostname needed two labels, with `localhost` the one exception, beside a
+  hand-picked list of 25 suffixes. The same lists drive the Local HTTPS tab's warning while such a
+  name is typed in hostname mode, where it holds **generate** back. A refused subject answers 400 with
+  fixed copy that follows `kind` (`src/common/refusedSubject.ts`, shared with the tab's own fallback:
+  `that name could not be used for a certificate.` for a hostname, `… address …` for an ip), never the
+  value itself. `local-https.spec.ts` (run with `QA_MKCERT_EXE` naming a real mkcert) mints a one-word
+  certificate with real mkcert and checks it end to end.
 - **`nameConstraintsFor(kind, value)` constrains both name types on every call**, because mkcert
   warns (and this code treats it as a failure — see below) when a name-constrained CA ends up
   covering only one type: a half-constrained CA "looks protected" while not being. An IPv4 subject
@@ -3738,7 +3842,7 @@ above all an answer the definition refuses such as an unexpected mkcert release 
 the same `POST /api/dependencies/mkcert/update` the update button uses. A failed install reads `Error`, with
 the button kept as the retry. The Local HTTPS panel reads `GET /api/dependencies` beside `/api/tls/state`:
 while mkcert is not installed, **generate** and the subject controls (the ip/hostname radios, the subject
-field and the address picker) are disabled, and the very first element of the Local HTTPS tab, above its heading, is an orange boxed callout (`.settings-callout`: the Dependencies card's border, radius, padding and background, in `--warning-color`): `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (a callout above the heading since after 0.5.3; in 0.5.3 a line under the heading; until then a line under the certificate controls). Its **dependencies tab** is a `<button>` styled as a link (`.settings-inline-link`: bold, underlined, a focus ring), which switches the dialog to the Dependencies tab through the optional `TabContext.showTab`. The note names only the certificate controls because they are all mkcert gates. The exposure modes, revoke and the CA download need no mkcert and are left
+box and its **▾** address list) are disabled, and the very first element of the Local HTTPS tab, above its (visually hidden, since 0.5.5) heading and its three boxes, is an orange boxed callout (`.settings-callout`: the Dependencies card's border, radius, padding and background, the last from `--settings-card-bg` since 0.5.5, in `--warning-color`): `install mkcert from the dependencies tab to generate a certificate, which is what turns https on. until then, the certificate controls below are unavailable; the other settings on this tab still work.` (a callout above the heading since after 0.5.3; in 0.5.3 a line under the heading; until then a line under the certificate controls). Its **dependencies tab** is a `<button>` styled as a link (`.settings-inline-link`: bold, underlined, a focus ring), which switches the dialog to the Dependencies tab through the optional `TabContext.showTab`. The note names only the certificate controls because they are all mkcert gates. The exposure modes, revoke and the CA download need no mkcert and are left
 alone; the https port is on the Server tab since after 0.5.3, gated on mkcert AND a certificate (§27.4). A successful install bubbles `ws-dependency-installed` from the panel to the Settings dialog, which has
 the Local HTTPS tab re-read mkcert, so generate enables without a reopen, and the Server tab re-read its https port's gate. When the panel cannot tell (the read
 failed, was refused, or does not name mkcert) it fails open: generate stays enabled.

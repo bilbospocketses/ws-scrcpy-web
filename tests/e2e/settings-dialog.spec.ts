@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { APIRequestContext, BrowserContext, Locator, Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
-import { openSettings, openSettingsTab, settingsRow } from './support/auth';
+import { openSettings, openSettingsTab, settingsRow, settingsTabLine } from './support/auth';
 import {
     apiContext,
     dismissPrivatePrompts,
@@ -68,8 +68,13 @@ function updatesControls(updates: Locator) {
         interval: settingsRow(updates, 'check interval (minutes)').locator('input'),
         owner: settingsRow(updates, 'github owner').locator('input'),
         radio: (channel: string) => updates.getByRole('radio', { name: channel, exact: true }),
-        /** The action row's label, which is also the tab's status / refusal line. */
-        refusal: (text: string) => updates.locator('.settings-label.settings-status-error', { hasText: text }),
+        /**
+         * A refusal, on the line under the field it is about (0.5.5): the
+         * interval's or the owner's. The action row's label keeps to the
+         * update state.
+         */
+        refusal: (text: string) =>
+            updates.locator('[data-updates-interval-note], [data-updates-owner-note]', { hasText: text }),
     };
 }
 
@@ -353,8 +358,18 @@ test.describe('settings dialog: the staged save (smoke 13.4-13.6, 13.9)', () => 
             // Left on screen for the user to correct, not snapped back.
             await expect(c.interval).toHaveValue(bad);
         }
+        // Each under its own field, in that field's item, and not on the status
+        // label, which keeps the update state.
+        const itemWith = (input: string) =>
+            updates
+                .locator('.settings-item')
+                .filter({ has: page.locator(input) })
+                .locator('.settings-status');
+        await expect(itemWith('input[type="number"]')).toHaveText(intervalMsg);
+        await expect(updates.getByText(`up to date: v${INSTALLED_VERSION}`)).toBeVisible();
         await typeAndLeave(c.owner, '');
         await expect(c.refusal('github owner cannot be empty')).toBeVisible();
+        await expect(itemWith('input[type="text"]')).toHaveText('github owner cannot be empty');
 
         await footerSave(settings).click();
         const review = reviewDialog(page);
@@ -592,7 +607,10 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
                 restartRequired: true,
                 redirectPort: 8173,
             });
-            await expect(settings.locator('.settings-save-status')).toHaveText('restarting → redirecting…');
+            // On the status line of the tab Save was clicked from (0.5.5), and
+            // the footer has no line of its own any more.
+            await expect(settingsTabLine(serverTab)).toHaveText('restarting → redirecting…');
+            await expect(settings.locator('.modal-footer [data-settings-alert], .settings-save-status')).toHaveCount(0);
             // Exit 75 is the supervisor's restart signal; the browser follows.
             const exit1 = await withTimeout(server.handle.exited, 15_000, () => server!.handle.output());
             expect(exit1.code).toBe(75);

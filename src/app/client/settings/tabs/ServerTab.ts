@@ -8,6 +8,17 @@ import { settingsService } from '../../SettingsService';
 import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMessage';
 import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
+import {
+    addCard,
+    buildAdminUnreachableNote,
+    buildItem,
+    buildRow,
+    buildSplitSection,
+    buildTabAlert,
+    setCardShown,
+    setRowShown,
+    type TabAlert,
+} from '../settingsLayout';
 import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
 import { fetchMkcertInstalled } from './LocalHttpsTab';
 // Type-only, so it is erased at build time and adds no runtime dependency on the
@@ -16,38 +27,6 @@ import { fetchMkcertInstalled } from './LocalHttpsTab';
 // radios; Server: the stop-server button), and re-declaring it here would mean
 // two descriptions of one wire shape free to drift apart.
 import type { ScopeRadioInputs } from './ServiceTab';
-
-/** Local copy — see EmbeddingTab.ts's `buildSection` for why it isn't shared. */
-function buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
-    const section = document.createElement('section');
-    section.className = 'settings-section';
-    const heading = document.createElement('h3');
-    heading.className = 'settings-section-heading';
-    heading.textContent = title;
-    section.appendChild(heading);
-    const body = document.createElement('div');
-    body.className = 'settings-section-body';
-    section.appendChild(body);
-    return { section, body };
-}
-
-/** Local copy — see EmbeddingTab.ts's `buildRow` for why it isn't shared. */
-function buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
-    const row = document.createElement('div');
-    row.className = 'settings-row';
-
-    const label = document.createElement('span');
-    label.className = 'settings-label';
-    label.textContent = labelText;
-    row.appendChild(label);
-
-    const controlWrap = document.createElement('div');
-    controlWrap.className = 'settings-control';
-    controlWrap.appendChild(control);
-    row.appendChild(controlWrap);
-
-    return row;
-}
 
 /** The staged-field id and summary label for the http port — one definition, so
  *  the build-time registration and the post-read re-baseline cannot disagree.
@@ -317,8 +296,9 @@ export function buildResetControl(opts: {
  * plus its full-width status note. Clicking POSTs /api/service/install-system-wide
  * (the server runs pkexec, relocates to /opt, and re-execs — the OS pkexec prompt
  * IS the confirmation, so there is no extra modal); on success the server is
- * about to re-exec, so the page reloads; on failure the note shows an inline
- * error. `reload` is injected so the unit test can observe it without navigating.
+ * about to re-exec, so the page reloads; a failure is reported on the tab's
+ * status line (`alert`), and the note keeps to the standing "already installed"
+ * state. `reload` is injected so the unit test can observe it without navigating.
  * Self-contained DOM + wiring (no network until clicked) so it is unit-testable.
  * Show/hide + the machine-wide disabled+note state are applied separately via
  * appSectionButtonsState, from `applyServerServiceStatus` below.
@@ -326,7 +306,7 @@ export function buildResetControl(opts: {
  * Lives here rather than in ServiceTab.ts: its only call site is this tab's
  * "install for all users" row. Task 7 filed it under Service in error.
  */
-export function buildInstallAllUsersControl(opts: { reload: () => void }): {
+export function buildInstallAllUsersControl(opts: { reload: () => void; alert: Pick<TabAlert, 'show'> }): {
     button: HTMLButtonElement;
     note: HTMLElement;
 } {
@@ -343,7 +323,6 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
     button.addEventListener('click', () => {
         button.disabled = true;
         button.textContent = 'installing…';
-        note.hidden = true;
         void (async () => {
             try {
                 const res = await fetch('/api/service/install-system-wide', { method: 'POST' });
@@ -353,13 +332,15 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
                     return;
                 }
                 // A cancelled polkit prompt is a decline, not a failure (smoke 14.10).
-                note.textContent = (await isElevationDeclined(res))
-                    ? reasonToUserMessage('uac-declined', '')
-                    : 'install failed — see the server logs and try again.';
+                opts.alert.show(
+                    'error',
+                    (await isElevationDeclined(res))
+                        ? reasonToUserMessage('uac-declined', '')
+                        : 'install failed — see the server logs and try again.',
+                );
             } catch {
-                note.textContent = 'install failed — could not reach the server.';
+                opts.alert.show('error', 'install failed — could not reach the server.');
             }
-            note.hidden = false;
             button.disabled = false;
             button.textContent = 'install';
         })();
@@ -487,6 +468,7 @@ const httpsRefreshers = new WeakMap<HTMLElement, () => Promise<void>>();
 const serviceStatusAppliers = new WeakMap<HTMLElement, (resp: ServiceStatusResponse) => void>();
 const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
 const hostModeAppliers = new WeakMap<HTMLElement, () => void>();
+const adminUnreachableAppliers = new WeakMap<HTMLElement, () => void>();
 
 /**
  * The Server tab — the consolidated app/server section (beta.62 folded the old
@@ -512,14 +494,26 @@ const hostModeAppliers = new WeakMap<HTMLElement, () => void>();
  *
  * Local HTTPS is no longer part of this tab: since 0.5.3 it is its own tab,
  * right after this one (LocalHttpsTab.ts).
+ *
+ * Three cards since 0.5.5, each under its own heading in place of the tab
+ * title: Settings (the user's own: reset, and password and session when login
+ * is on), Ports (the http and https port, admin-only) and Application (install
+ * for all users, stop & exit, uninstall; admin-only). The http and https ports
+ * are separate items, and every note about the https port, including the
+ * restart note both ports share, sits under the https port.
  */
 export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
-    const { section, body } = buildSection('Server');
+    const { section } = buildSplitSection('Server');
+    // The tab's one status line: the change-password, log-out and install
+    // results. Built first, and every card goes above it (`addCard`).
+    const tabAlert = buildTabAlert(section);
+    const settingsCard = addCard(section, 'Settings');
 
     // Replaces the instance fields `SettingsModal` held for this section
     // (`this.webPortInput`, `this.stopServerButton`, …). Each stays null when its
     // row was never built (role-gated out), and every consumer below guards on
     // that exactly as the old `if (this.x)` checks did.
+    let portsCard: HTMLElement | null = null;
     let webPortInput: HTMLInputElement | null = null;
     let webPortRow: HTMLElement | null = null;
     let webPortStatus: HTMLElement | null = null;
@@ -554,6 +548,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // Set by applyContainerMode. Read at click time by the reset control, which
     // is built before container mode is known.
     let containerMode = false;
+    // Set by applyAdminUnreachable: the admin API will not answer this page.
+    // Read at click time by the reset control, like `containerMode`.
+    let adminUnreachable = false;
+    let adminUnreachableNote: HTMLElement | null = null;
     // Set by applyServiceStatus. Read at click time by the uninstall control,
     // for the same reason.
     let servicePlatform: NodeJS.Platform | undefined;
@@ -565,16 +563,20 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     //    prefs are read fresh. In a container only the per-user half is sent.
     const reset = buildResetControl({
         reload: () => ctx.reload(),
-        sendFirstRunReset: () => !containerMode,
+        // The first-run half is a PATCH /api/config, an admin write: not
+        // sent where the server refuses it (a container, or a page the admin
+        // API will not answer). The per-user half is the user's own.
+        sendFirstRunReset: () => !containerMode && !adminUnreachable,
         askChild: ctx.askChild,
     });
-    body.appendChild(buildRow('reset all my settings', reset.button));
+    settingsCard.appendChild(buildItem(buildRow('reset all my settings', reset.button)));
 
     // 1b. change password — user-level, only shown when auth is enabled
     //     (in open mode there is no password to change). Reveals an inline
     //     form with current + new password inputs, each with an eye toggle.
-    //     On save → authClient.changePassword(); on success collapse the form;
-    //     on failure show inline status. Never throws.
+    //     On save → authClient.changePassword(); on success collapse the form.
+    //     The result goes to the tab's status line; only the blank-form check
+    //     stays under the form, as a field's validation does. Never throws.
     if (ctx.authEnabled) {
         const cpStatus = document.createElement('p');
         cpStatus.className = 'settings-status';
@@ -638,22 +640,22 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
                     cpStatus.hidden = false;
                     return;
                 }
+                cpStatus.hidden = true;
                 saveBtn.disabled = true;
-                cpStatus.textContent = 'saving…';
-                cpStatus.hidden = false;
+                tabAlert.show('busy', 'saving…');
                 try {
                     const ok = await authClient.changePassword(curInput.value, newInput.value);
                     if (ok) {
-                        cpStatus.textContent = 'password changed';
+                        tabAlert.show('success', 'password changed');
                         cpForm.style.display = 'none';
                         cpBtn.style.display = '';
                         curInput.value = '';
                         newInput.value = '';
                     } else {
-                        cpStatus.textContent = 'current password incorrect';
+                        tabAlert.show('error', 'current password incorrect');
                     }
                 } catch {
-                    cpStatus.textContent = 'could not reach server';
+                    tabAlert.show('error', 'could not reach server');
                 }
                 saveBtn.disabled = false;
             })();
@@ -688,16 +690,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         const cpControl = document.createDocumentFragment();
         cpControl.appendChild(cpBtn);
         cpControl.appendChild(cpForm);
-        body.appendChild(buildRow('password', cpControl));
-        body.appendChild(cpStatus);
+        settingsCard.appendChild(buildItem(buildRow('password', cpControl), cpStatus));
 
         // Logout — user-level, only when authEnabled (you're only logged in when
         // auth is enabled). Placed adjacent to change-password. Not admin-gated.
-        const logoutStatus = document.createElement('p');
-        logoutStatus.className = 'settings-status';
-        logoutStatus.style.gridColumn = '1 / -1';
-        logoutStatus.hidden = true;
-
         const logoutBtn = document.createElement('button');
         logoutBtn.type = 'button';
         logoutBtn.className = 'modal-button';
@@ -708,14 +704,12 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
                 try {
                     await authClient.logout();
                 } catch {
-                    logoutStatus.textContent = 'logout request failed — reloading anyway.';
-                    logoutStatus.hidden = false;
+                    tabAlert.show('error', 'logout request failed — reloading anyway.');
                 }
                 ctx.reload();
             })();
         });
-        body.appendChild(buildRow('session', logoutBtn));
-        body.appendChild(logoutStatus);
+        settingsCard.appendChild(buildItem(buildRow('session', logoutBtn)));
     }
 
     // 2–5 below are admin-only. Skip building + storing them entirely for
@@ -723,6 +717,13 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     //    points (refreshServer, applyServerServiceStatus) are null-safe on every
     //    ref above — they guard with `if (!x) return;`.
     if (canSeeSection(ctx.role, 'webPort')) {
+        // The Ports card: the http port, then the https port with every note
+        // about either one. Hidden whole until the dialog knows it is on a
+        // host (applyHostMode), with its heading: rows hidden inside a showing
+        // card would leave an empty box (M6, see the end of this block).
+        const ports = addCard(section, 'Ports');
+        portsCard = ports;
+
         // 2. http port — a number input, and nothing else. Editing it STAGES the
         //    value; the dialog's Save sends the whole batch. The status line below
         //    the row is empty at rest and carries either a read error or the
@@ -750,7 +751,6 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
         webPortRow = buildRow('http port', input);
         labelInputByRow(webPortRow, input);
-        body.appendChild(webPortRow);
 
         const status = document.createElement('p');
         status.className = 'settings-status';
@@ -758,7 +758,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         status.id = nextPortDomId();
         status.hidden = true;
         webPortStatus = status;
-        body.appendChild(status);
+        ports.appendChild(buildItem(webPortRow, status));
 
         // 2b. https port — the port the Local HTTPS listener binds. Staged like
         //     the http port (`httpsPort`, saved by the dialog's Save), with the
@@ -783,7 +783,6 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
         httpsPortRow = buildRow('https port', httpsInput);
         labelInputByRow(httpsPortRow, httpsInput);
-        body.appendChild(httpsPortRow);
 
         const httpsStatus = document.createElement('p');
         httpsStatus.className = 'settings-status';
@@ -792,7 +791,6 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         httpsStatus.setAttribute('data-https-port-status', '');
         httpsStatus.hidden = true;
         httpsPortStatus = httpsStatus;
-        body.appendChild(httpsStatus);
 
         const gateNote = document.createElement('p');
         gateNote.className = 'settings-status';
@@ -802,7 +800,6 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         gateNote.textContent = HTTPS_PORT_GATE_NOTE;
         gateNote.hidden = true;
         httpsPortGateNote = gateNote;
-        body.appendChild(gateNote);
 
         // Notification 5, moved here with the port it is about.
         const privilegeNotice = document.createElement('p');
@@ -812,11 +809,11 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         privilegeNotice.setAttribute('data-tls-port-notice', '');
         privilegeNotice.hidden = true;
         httpsPortPrivilegeNotice = privilegeNotice;
-        body.appendChild(privilegeNotice);
 
         // Below both rows: either port's save restarts the server
         // (SettingsBatchApi schedules one restart for a moved http port, a moved
-        // https port, or both). Shown whenever the rows are.
+        // https port, or both). Shown whenever the rows are; in the https
+        // port's item, the last line of the card, since it speaks for both.
         const restartNote = document.createElement('p');
         restartNote.className = 'settings-status';
         restartNote.style.gridColumn = '1 / -1';
@@ -824,29 +821,39 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         restartNote.setAttribute('data-port-restart-note', '');
         restartNote.textContent = PORT_RESTART_NOTE;
         portRestartNote = restartNote;
-        body.appendChild(restartNote);
+        ports.appendChild(buildItem(httpsPortRow, httpsStatus, gateNote, privilegeNotice, restartNote));
 
         // Hidden until the host/container probe has answered (applyHostMode /
         // applyContainerMode), so a container never shows any of it, even for
         // the moment before the probe resolves (M6).
-        for (const row of [webPortRow, httpsPortRow]) row.style.display = 'none';
+        for (const row of [webPortRow, httpsPortRow]) setRowShown(row, false);
         restartNote.hidden = true;
+        setCardShown(ports, false);
         updatePortDescriptions();
     }
 
     if (canSeeSection(ctx.role, 'serverControls')) {
+        // The Application card: the install lifecycle. "stop server & exit"
+        // always shows, so the card is never empty.
+        const application = addCard(section, 'Application');
+
+        // Shown, first in the card, only when the admin API will not answer
+        // this page (applyAdminUnreachable): the one place the tab says why its
+        // admin controls are held back.
+        adminUnreachableNote = buildAdminUnreachableNote();
+        application.appendChild(buildItem(adminUnreachableNote));
+
         // 3. install for all users (Linux-only) — hidden until
         //    applyServerServiceStatus reveals it on Linux. POSTs
         //    /api/service/install-system-wide (pkexec → /opt → re-exec); the OS
         //    pkexec dialog is the confirmation, so on success just reload.
-        const install = buildInstallAllUsersControl({ reload: () => ctx.reload() });
+        const install = buildInstallAllUsersControl({ reload: () => ctx.reload(), alert: tabAlert });
         installAllUsersButton = install.button;
         installAllUsersNote = install.note;
         const installRow = buildRow('install for all users', install.button);
-        installRow.style.display = 'none';
+        setRowShown(installRow, false);
         installAllUsersRow = installRow;
-        body.appendChild(installRow);
-        body.appendChild(install.note);
+        application.appendChild(buildItem(installRow, install.note));
 
         // 4. stop the server and close the app — §27 graceful shutdown (exit 0,
         //    the launcher supervisor will NOT restart it). Gated off in service
@@ -857,14 +864,13 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         stopBtn.textContent = 'stop server & exit';
         stopBtn.addEventListener('click', () => void onStopServerExit(stopBtn, ctx.askChild));
         stopServerButton = stopBtn;
-        body.appendChild(buildRow('stop the server and close the app', stopBtn));
 
         const stopNote = document.createElement('p');
         stopNote.className = 'settings-status';
         stopNote.style.gridColumn = '1 / -1';
         stopNote.hidden = true;
         stopServerNote = stopNote;
-        body.appendChild(stopNote);
+        application.appendChild(buildItem(buildRow('stop the server and close the app', stopBtn), stopNote));
 
         // 5. uninstall ws-scrcpy-web (Linux + win32) — hidden until revealed.
         //    Always enabled when shown (uninstalling is how you remove a
@@ -877,9 +883,9 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         });
         uninstallButton = uninstall.button;
         const row = buildRow('uninstall ws-scrcpy-web', uninstall.button);
-        row.style.display = 'none';
+        setRowShown(row, false);
         uninstallRow = row;
-        body.appendChild(row);
+        application.appendChild(buildItem(row));
     }
 
     function setServerStatus(msg: string, isError = false): void {
@@ -996,7 +1002,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
     function applyHttpsGate(): void {
         const open = httpsGateOpen();
-        if (httpsPortInput) httpsPortInput.disabled = !open;
+        if (httpsPortInput) httpsPortInput.disabled = !open || adminUnreachable;
         if (httpsPortGateNote) httpsPortGateNote.hidden = open || !hostMode;
         updatePortDescriptions();
     }
@@ -1009,8 +1015,9 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     function applyHostMode(): void {
         if (containerMode || hostMode) return;
         hostMode = true;
-        if (webPortRow) webPortRow.style.display = '';
-        if (httpsPortRow) httpsPortRow.style.display = '';
+        if (portsCard) setCardShown(portsCard, true);
+        if (webPortRow) setRowShown(webPortRow, true);
+        if (httpsPortRow) setRowShown(httpsPortRow, true);
         if (portRestartNote) portRestartNote.hidden = false;
         applyHttpsGate();
         updateHttpsPrivilegeNotice();
@@ -1104,8 +1111,8 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
     /**
      * Apply one `appSectionButtonsState` decision to the two install-lifecycle
-     * rows (an inline display overrides the `.settings-row { display: contents }`
-     * rule), and record WHICH path decided on the section as
+     * rows (`setRowShown`: an inline display overrides the `.settings-row {
+     * display: contents }` rule), and record WHICH path decided on the section as
      * `data-app-rows-decided`. The rows are built hidden; the attribute is what
      * tells "decided hidden" apart from "never decided", which the container spec
      * relies on (findings 20.4, 20.5).
@@ -1115,7 +1122,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         decidedBy: 'service-status' | 'container',
     ): void {
         if (installAllUsersRow) {
-            installAllUsersRow.style.display = state.showInstallAllUsers ? '' : 'none';
+            setRowShown(installAllUsersRow, state.showInstallAllUsers);
         }
         if (installAllUsersButton) {
             installAllUsersButton.disabled = state.installAllUsersDisabled;
@@ -1125,7 +1132,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
             installAllUsersNote.hidden = state.installAllUsersNote === null;
         }
         if (uninstallRow) {
-            uninstallRow.style.display = state.showUninstall ? '' : 'none';
+            setRowShown(uninstallRow, state.showUninstall);
         }
         if (uninstallButton) {
             // Uninstall is ALWAYS enabled on Linux — never gated on service mode
@@ -1156,12 +1163,29 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
      * The third, Local HTTPS shown as a reverse-proxy note, belongs to the Local
      * HTTPS tab since 0.5.3 (LocalHttpsTab.ts's `applyLocalHttpsContainerMode`).
      */
+    /**
+     * The admin API will not answer this page (item 81's rule, 0.5.5): hold
+     * back every control that stages or posts an admin change -- the http port
+     * (the https port stays shut, since its read is never made), stop & exit --
+     * and say why once. Install for all users and uninstall never show, since
+     * the service status that reveals them is never read. Change password and
+     * log out are the user's own and stay.
+     */
+    function applyAdminUnreachable(): void {
+        adminUnreachable = true;
+        if (webPortInput) webPortInput.disabled = true;
+        if (httpsPortInput) httpsPortInput.disabled = true;
+        if (stopServerButton) stopServerButton.disabled = true;
+        if (adminUnreachableNote) adminUnreachableNote.hidden = false;
+    }
+
     function applyContainerMode(): void {
         containerMode = true;
         applyAppRows(appSectionButtonsState({ platform: 'linux', docker: true }), 'container');
-        if (webPortRow) webPortRow.style.display = 'none';
+        if (portsCard) setCardShown(portsCard, false);
+        if (webPortRow) setRowShown(webPortRow, false);
         if (webPortStatus) webPortStatus.hidden = true;
-        if (httpsPortRow) httpsPortRow.style.display = 'none';
+        if (httpsPortRow) setRowShown(httpsPortRow, false);
         for (const note of [httpsPortStatus, httpsPortGateNote, httpsPortPrivilegeNotice, portRestartNote]) {
             if (note) note.hidden = true;
         }
@@ -1182,7 +1206,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         updateHttpsPrivilegeNotice();
         if (stopServerButton) {
             const stop = stopServerButtonState(resp);
-            stopServerButton.disabled = stop.disabled;
+            stopServerButton.disabled = stop.disabled || adminUnreachable;
             if (stopServerNote) {
                 stopServerNote.textContent = stop.note ?? '';
                 stopServerNote.hidden = stop.note === null;
@@ -1197,6 +1221,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     serviceStatusAppliers.set(section, applyServiceStatus);
     containerModeAppliers.set(section, applyContainerMode);
     hostModeAppliers.set(section, applyHostMode);
+    adminUnreachableAppliers.set(section, applyAdminUnreachable);
     return section;
 }
 
@@ -1255,4 +1280,13 @@ export function applyServerContainerMode(section: HTMLElement): void {
  */
 export function applyServerHostMode(section: HTMLElement): void {
     hostModeAppliers.get(section)?.();
+}
+
+/**
+ * Tell a Server tab the admin API will not answer this page
+ * (`adminApiReachable` false): its admin controls are held back, with one note
+ * saying why. A no-op if `section` was never built through `buildServerTab`.
+ */
+export function applyServerAdminUnreachable(section: HTMLElement): void {
+    adminUnreachableAppliers.get(section)?.();
 }
