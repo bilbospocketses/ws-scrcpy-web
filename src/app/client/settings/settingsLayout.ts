@@ -91,6 +91,9 @@ const cardHeadings = new WeakMap<HTMLElement, HTMLElement>();
  * Append a card under its own heading to a split tab's section, and return the
  * card. The heading is the next level down from the (hidden) tab title, and is
  * drawn at the title's size (modal.css `.settings-card-heading`).
+ *
+ * Above the tab's status line when it already has one (`buildTabAlert`), so
+ * the line stays the last thing in the tab whichever is built first.
  */
 export function addCard(section: HTMLElement, headingText: string): HTMLElement {
     const heading = document.createElement('h4');
@@ -98,7 +101,9 @@ export function addCard(section: HTMLElement, headingText: string): HTMLElement 
     heading.textContent = headingText;
     const card = buildCardElement();
     cardHeadings.set(card, heading);
-    section.append(heading, card);
+    const line = section.querySelector(':scope > [data-settings-alert]');
+    section.insertBefore(heading, line);
+    section.insertBefore(card, line);
     return card;
 }
 
@@ -177,4 +182,125 @@ export function buildDynamicLabelRow(
 export function setRowShown(row: HTMLElement, shown: boolean): void {
     row.hidden = !shown;
     row.style.display = shown ? '' : 'none';
+}
+
+/**
+ * How long a tab's line shows a result. A success is read at a glance; an
+ * error may need reading and acting on, so it stays twice as long.
+ */
+export const TAB_ALERT_SUCCESS_MS = 5_000;
+export const TAB_ALERT_ERROR_MS = 10_000;
+
+/**
+ * `success` and `error` hide themselves after their time; `busy` (saving…,
+ * installing…) stays until the result replaces it, however long the action
+ * takes.
+ */
+export type TabAlertKind = 'success' | 'error' | 'busy';
+
+/**
+ * A piece of a tab line's message: text, or `{ echo }` for a value
+ * round-tripped from the server or typed by the user (a certificate's
+ * subject), which goes in through a `<span>`'s textContent, never into markup.
+ */
+export type TabAlertPart = string | { echo: string };
+
+/** A tab's one status line, from `buildTabAlert`. */
+export interface TabAlert {
+    element: HTMLElement;
+    /** Show a message, replacing whatever was showing, and restart the clock. */
+    show(kind: TabAlertKind, ...parts: TabAlertPart[]): void;
+    /** Hide the line now. */
+    clear(): void;
+    /** Stop the clock for good: the dialog is closing. Later `show` calls do nothing. */
+    destroy(): void;
+}
+
+/** Each line's controller, so the dialog can find the active tab's (`tabAlertIn`). */
+const tabAlerts = new WeakMap<HTMLElement, TabAlert>();
+
+/**
+ * The tab's ONE status line (0.5.5): every action result on the tab -- a
+ * failed install, a changed password, the dialog's own save -- is reported
+ * here, at the bottom of the tab, rather than beside whichever control caused
+ * it. A user who just clicked something looks in one place for the result.
+ * What stays beside its control is what describes the control and not an
+ * action: a field's validation, and a standing condition (a gate, a privilege
+ * warning, "loading…").
+ *
+ * Appended straight into `section`, after every card, and never through
+ * `buildRow()`: modal.css's `.settings-row:has(.settings-status-error)` would
+ * start matching the row on an error and change its layout. It goes after
+ * whatever the section holds when it is built, and `addCard` puts a later card
+ * above it, so the line is the last thing in the tab either way.
+ *
+ * `role="status"` makes it a polite live region, so a screen reader announces
+ * the result without moving focus.
+ */
+export function buildTabAlert(section: HTMLElement): TabAlert {
+    const element = document.createElement('p');
+    element.className = 'settings-status settings-tab-alert';
+    element.setAttribute('data-settings-alert', '');
+    element.setAttribute('role', 'status');
+    element.setAttribute('aria-live', 'polite');
+    element.hidden = true;
+    section.appendChild(element);
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
+
+    const stopClock = (): void => {
+        if (timer !== null) clearTimeout(timer);
+        timer = null;
+    };
+
+    const alert: TabAlert = {
+        element,
+        show(kind, ...parts) {
+            if (destroyed) return;
+            stopClock();
+            element.textContent = '';
+            for (const part of parts) {
+                if (typeof part === 'string') {
+                    element.appendChild(document.createTextNode(part));
+                } else {
+                    const span = document.createElement('span');
+                    span.textContent = part.echo;
+                    element.appendChild(span);
+                }
+            }
+            element.hidden = false;
+            element.classList.toggle('settings-status-error', kind === 'error');
+            element.classList.toggle('settings-status-ready', kind === 'success');
+            if (kind === 'busy') return;
+            timer = setTimeout(
+                () => {
+                    timer = null;
+                    element.hidden = true;
+                },
+                kind === 'success' ? TAB_ALERT_SUCCESS_MS : TAB_ALERT_ERROR_MS,
+            );
+        },
+        clear() {
+            stopClock();
+            element.hidden = true;
+        },
+        destroy() {
+            destroyed = true;
+            stopClock();
+        },
+    };
+    tabAlerts.set(element, alert);
+    return alert;
+}
+
+/** The status line inside `root` (a tab body), or null if it has none. */
+export function tabAlertIn(root: HTMLElement): TabAlert | null {
+    const el = root.matches('[data-settings-alert]') ? root : root.querySelector<HTMLElement>('[data-settings-alert]');
+    return el ? (tabAlerts.get(el) ?? null) : null;
+}
+
+/** Destroy every status line inside `root`: the dialog is closing, or this body is being replaced. */
+export function destroyTabAlerts(root: HTMLElement): void {
+    for (const el of root.querySelectorAll<HTMLElement>('[data-settings-alert]')) tabAlerts.get(el)?.destroy();
 }

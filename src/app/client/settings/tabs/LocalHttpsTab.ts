@@ -6,7 +6,16 @@ import type { ServiceStatusResponse } from '../../../../common/ServiceEvents';
 import { ConfirmModal } from '../../ConfirmModal';
 import { themeHelpLink } from '../../helpLink';
 import { buildCombobox } from '../Combobox';
-import { addCard, buildItem, buildRow, buildSection, buildSplitSection } from '../settingsLayout';
+import {
+    addCard,
+    buildItem,
+    buildRow,
+    buildSection,
+    buildSplitSection,
+    buildTabAlert,
+    destroyTabAlerts,
+    type TabAlertPart,
+} from '../settingsLayout';
 import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
 
 // ---------------------------------------------------------------------------
@@ -135,15 +144,6 @@ export interface LocalHttpsPanelDeps {
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXPIRY_WARNING_DAYS = 30;
-
-// This repo's established convention for transient save/status feedback: ONE
-// alert in one place at the bottom of the tab, never scattered inline next to
-// whichever control caused it (a user who just clicked something looks in one
-// place for the result). Since 0.5.5 that place is below and outside the
-// cards, so it never reads as part of the last one. Success auto-hides after
-// 5 s, an error after 10 s: it may need reading and acting on.
-const TRANSIENT_ALERT_SUCCESS_MS = 5_000;
-const TRANSIENT_ALERT_ERROR_MS = 10_000;
 
 /**
  * `candidateLanIps()` (the source of `candidateIps`, via TlsApi's
@@ -466,7 +466,7 @@ async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
  * plain-http mode and its notices). The mkcert callout stays above them all.
  *
  * Every notice in here is one of two kinds, and each renders differently
- * (this repo's convention -- see TRANSIENT_ALERT_*_MS above):
+ * (this repo's convention -- see `buildTabAlert` in settingsLayout.ts):
  * - TRANSIENT OUTCOMES (a generate/download/exposure-save result) -- one
  *   shared alert at the bottom of the tab, below the cards, auto-hiding
  *   after 5s/10s.
@@ -888,62 +888,14 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     // see the class doc above for why this is one element rather than a
     // status line per button. It sits in ONE fixed place, the bottom of the
     // tab, below and outside all three cards, so it never reads as part of the
-    // last card (Exposure) whichever action raised it.
-    //
-    // M5: appended DIRECTLY into the section, never through `buildRow()` --
-    // deliberately, not by accident. `modal.css`'s
-    // `.settings-row:has(.settings-status-error) { display: flex; ... }`
-    // targets `.settings-row`, and `transientAlert` toggles
-    // `.settings-status-error` on itself (see `showTransientAlert`). Wrapping
-    // this element in a `.settings-row` the way every control here is wrapped
-    // would make that rule match it on an error, overriding the row's normal
-    // `display: contents` and changing its layout -- a near-miss on the same
-    // "a rule silently starts matching an element it wasn't written for" class
-    // of bug the `[hidden]` reassertion in modal.css guards against. If a
-    // future change wraps this in a row, that CSS rule needs handling at the
-    // same time, not discovered by an unexplained layout shift the next time
-    // an error fires.
-    const transientAlert = document.createElement('p');
-    transientAlert.className = 'settings-status settings-tab-alert';
-    transientAlert.setAttribute('data-tls-alert', '');
-    transientAlert.hidden = true;
+    // last card (Exposure) whichever action raised it. Every tab's line is
+    // built the same way since 0.5.5 (`buildTabAlert`); this one also keeps
+    // its own `data-tls-alert` hook, which the e2e suites find it by.
     // Last: every card is already in the section (they are added above, before any is filled).
-    section.appendChild(transientAlert);
-    let transientAlertTimer: ReturnType<typeof setTimeout> | null = null;
-
-    /**
-     * Show the tab's one alert for `TRANSIENT_ALERT_SUCCESS_MS` (5 s) after a
-     * success and `TRANSIENT_ALERT_ERROR_MS` (10 s) after an error; a new one
-     * replaces the old one and restarts the clock.
-     *
-     * `parts` are text nodes, or `{ echo }` for a value round-tripped from the
-     * server (the generated subject) -- appended via a `<span>.textContent`
-     * exactly like `renderCertState`'s subject span, never string
-     * interpolation into markup.
-     */
-    function showTransientAlert(kind: 'success' | 'error', ...parts: Array<string | { echo: string }>): void {
-        transientAlert.textContent = '';
-        for (const part of parts) {
-            if (typeof part === 'string') {
-                transientAlert.appendChild(document.createTextNode(part));
-            } else {
-                const span = document.createElement('span');
-                span.textContent = part.echo;
-                transientAlert.appendChild(span);
-            }
-        }
-        transientAlert.hidden = false;
-        transientAlert.classList.toggle('settings-status-error', kind === 'error');
-        transientAlert.classList.toggle('settings-status-ready', kind === 'success');
-        if (transientAlertTimer !== null) clearTimeout(transientAlertTimer);
-        transientAlertTimer = setTimeout(
-            () => {
-                transientAlert.hidden = true;
-                transientAlertTimer = null;
-            },
-            kind === 'success' ? TRANSIENT_ALERT_SUCCESS_MS : TRANSIENT_ALERT_ERROR_MS,
-        );
-    }
+    const tabAlert = buildTabAlert(section);
+    tabAlert.element.setAttribute('data-tls-alert', '');
+    const showTransientAlert = (kind: 'success' | 'error', ...parts: TabAlertPart[]): void =>
+        tabAlert.show(kind, ...parts);
 
     generateBtn.addEventListener('click', () => {
         void (async () => {
@@ -997,7 +949,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // the transient alert, not a persistent in-panel notice. It
                 // says what the edit does for the user, not the config key's
                 // name (no control in Settings is labeled allowedHosts).
-                const allowedHostSuffix: Array<string | { echo: string }> =
+                const allowedHostSuffix: TabAlertPart[] =
                     data.allowedHostAdded && data.subject
                         ? [' this server now also accepts connections addressed to ', { echo: data.subject }, '.']
                         : [];
@@ -1343,6 +1295,9 @@ export function buildLocalHttpsContainerNote(): HTMLElement {
     note.textContent =
         "local HTTPS doesn't apply in a container. serve HTTPS from a reverse proxy in front of the container — that is the only supported way to add HTTPS to the image.";
     card.appendChild(buildItem(note));
+    // Its own status line, like every tab: the dialog's save reports there
+    // when this is the tab on screen.
+    buildTabAlert(section);
     return section;
 }
 
@@ -1394,6 +1349,8 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
     loading.textContent = 'loading…';
     const loadingItem = buildItem(loading);
     placeholder.card.appendChild(loadingItem);
+    // The tab's status line until the panel (which has its own) replaces it.
+    buildTabAlert(placeholder.section);
     root.appendChild(placeholder.section);
 
     // Set once the panel or the container note has replaced the placeholder;
@@ -1407,6 +1364,7 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
     function applyContainerMode(): void {
         if (decided) return;
         decided = true;
+        destroyTabAlerts(root);
         root.replaceChildren(buildLocalHttpsContainerNote());
     }
 
@@ -1430,6 +1388,7 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
             ...(ctx.showTab ? { showTab: ctx.showTab } : {}),
         }).then((built) => {
             panel = built;
+            destroyTabAlerts(root);
             root.replaceChildren(built);
         });
     }

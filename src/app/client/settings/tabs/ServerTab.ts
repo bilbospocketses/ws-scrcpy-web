@@ -8,7 +8,16 @@ import { settingsService } from '../../SettingsService';
 import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMessage';
 import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { addCard, buildItem, buildRow, buildSplitSection, setCardShown, setRowShown } from '../settingsLayout';
+import {
+    addCard,
+    buildItem,
+    buildRow,
+    buildSplitSection,
+    buildTabAlert,
+    setCardShown,
+    setRowShown,
+    type TabAlert,
+} from '../settingsLayout';
 import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
 import { fetchMkcertInstalled } from './LocalHttpsTab';
 // Type-only, so it is erased at build time and adds no runtime dependency on the
@@ -286,8 +295,9 @@ export function buildResetControl(opts: {
  * plus its full-width status note. Clicking POSTs /api/service/install-system-wide
  * (the server runs pkexec, relocates to /opt, and re-execs — the OS pkexec prompt
  * IS the confirmation, so there is no extra modal); on success the server is
- * about to re-exec, so the page reloads; on failure the note shows an inline
- * error. `reload` is injected so the unit test can observe it without navigating.
+ * about to re-exec, so the page reloads; a failure is reported on the tab's
+ * status line (`alert`), and the note keeps to the standing "already installed"
+ * state. `reload` is injected so the unit test can observe it without navigating.
  * Self-contained DOM + wiring (no network until clicked) so it is unit-testable.
  * Show/hide + the machine-wide disabled+note state are applied separately via
  * appSectionButtonsState, from `applyServerServiceStatus` below.
@@ -295,7 +305,7 @@ export function buildResetControl(opts: {
  * Lives here rather than in ServiceTab.ts: its only call site is this tab's
  * "install for all users" row. Task 7 filed it under Service in error.
  */
-export function buildInstallAllUsersControl(opts: { reload: () => void }): {
+export function buildInstallAllUsersControl(opts: { reload: () => void; alert: Pick<TabAlert, 'show'> }): {
     button: HTMLButtonElement;
     note: HTMLElement;
 } {
@@ -312,7 +322,6 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
     button.addEventListener('click', () => {
         button.disabled = true;
         button.textContent = 'installing…';
-        note.hidden = true;
         void (async () => {
             try {
                 const res = await fetch('/api/service/install-system-wide', { method: 'POST' });
@@ -322,13 +331,15 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
                     return;
                 }
                 // A cancelled polkit prompt is a decline, not a failure (smoke 14.10).
-                note.textContent = (await isElevationDeclined(res))
-                    ? reasonToUserMessage('uac-declined', '')
-                    : 'install failed — see the server logs and try again.';
+                opts.alert.show(
+                    'error',
+                    (await isElevationDeclined(res))
+                        ? reasonToUserMessage('uac-declined', '')
+                        : 'install failed — see the server logs and try again.',
+                );
             } catch {
-                note.textContent = 'install failed — could not reach the server.';
+                opts.alert.show('error', 'install failed — could not reach the server.');
             }
-            note.hidden = false;
             button.disabled = false;
             button.textContent = 'install';
         })();
@@ -491,6 +502,9 @@ const hostModeAppliers = new WeakMap<HTMLElement, () => void>();
  */
 export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
     const { section } = buildSplitSection('Server');
+    // The tab's one status line: the change-password, log-out and install
+    // results. Built first, and every card goes above it (`addCard`).
+    const tabAlert = buildTabAlert(section);
     const settingsCard = addCard(section, 'Settings');
 
     // Replaces the instance fields `SettingsModal` held for this section
@@ -551,8 +565,9 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // 1b. change password — user-level, only shown when auth is enabled
     //     (in open mode there is no password to change). Reveals an inline
     //     form with current + new password inputs, each with an eye toggle.
-    //     On save → authClient.changePassword(); on success collapse the form;
-    //     on failure show inline status. Never throws.
+    //     On save → authClient.changePassword(); on success collapse the form.
+    //     The result goes to the tab's status line; only the blank-form check
+    //     stays under the form, as a field's validation does. Never throws.
     if (ctx.authEnabled) {
         const cpStatus = document.createElement('p');
         cpStatus.className = 'settings-status';
@@ -616,22 +631,22 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
                     cpStatus.hidden = false;
                     return;
                 }
+                cpStatus.hidden = true;
                 saveBtn.disabled = true;
-                cpStatus.textContent = 'saving…';
-                cpStatus.hidden = false;
+                tabAlert.show('busy', 'saving…');
                 try {
                     const ok = await authClient.changePassword(curInput.value, newInput.value);
                     if (ok) {
-                        cpStatus.textContent = 'password changed';
+                        tabAlert.show('success', 'password changed');
                         cpForm.style.display = 'none';
                         cpBtn.style.display = '';
                         curInput.value = '';
                         newInput.value = '';
                     } else {
-                        cpStatus.textContent = 'current password incorrect';
+                        tabAlert.show('error', 'current password incorrect');
                     }
                 } catch {
-                    cpStatus.textContent = 'could not reach server';
+                    tabAlert.show('error', 'could not reach server');
                 }
                 saveBtn.disabled = false;
             })();
@@ -670,11 +685,6 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
         // Logout — user-level, only when authEnabled (you're only logged in when
         // auth is enabled). Placed adjacent to change-password. Not admin-gated.
-        const logoutStatus = document.createElement('p');
-        logoutStatus.className = 'settings-status';
-        logoutStatus.style.gridColumn = '1 / -1';
-        logoutStatus.hidden = true;
-
         const logoutBtn = document.createElement('button');
         logoutBtn.type = 'button';
         logoutBtn.className = 'modal-button';
@@ -685,13 +695,12 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
                 try {
                     await authClient.logout();
                 } catch {
-                    logoutStatus.textContent = 'logout request failed — reloading anyway.';
-                    logoutStatus.hidden = false;
+                    tabAlert.show('error', 'logout request failed — reloading anyway.');
                 }
                 ctx.reload();
             })();
         });
-        settingsCard.appendChild(buildItem(buildRow('session', logoutBtn), logoutStatus));
+        settingsCard.appendChild(buildItem(buildRow('session', logoutBtn)));
     }
 
     // 2–5 below are admin-only. Skip building + storing them entirely for
@@ -823,7 +832,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         //    applyServerServiceStatus reveals it on Linux. POSTs
         //    /api/service/install-system-wide (pkexec → /opt → re-exec); the OS
         //    pkexec dialog is the confirmation, so on success just reload.
-        const install = buildInstallAllUsersControl({ reload: () => ctx.reload() });
+        const install = buildInstallAllUsersControl({ reload: () => ctx.reload(), alert: tabAlert });
         installAllUsersButton = install.button;
         installAllUsersNote = install.note;
         const installRow = buildRow('install for all users', install.button);

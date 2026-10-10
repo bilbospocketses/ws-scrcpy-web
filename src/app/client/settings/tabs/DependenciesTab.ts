@@ -1,5 +1,6 @@
 import { DependencyPanel } from '../../DependencyPanel';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
+import { buildTabAlert } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /**
@@ -70,11 +71,13 @@ export function buildDependenciesTab(_ctx: TabContext, _store: StagedSettingsSto
     placeholder.textContent = 'loading dependencies…';
     body.appendChild(placeholder);
     section.appendChild(body);
+    // The tab's one status line, below the panel: a failed install or update.
+    const tabAlert = buildTabAlert(section);
 
     async function runRefresh(): Promise<void> {
         if (torndown.has(section) || panels.has(section) || starting.has(section)) return;
         starting.add(section);
-        const panel = await DependencyPanel.create();
+        const panel = await DependencyPanel.create(tabAlert);
         if (torndown.has(section)) {
             // Closed while the first read was in flight. `create()` has already
             // started the interval by the time it resolves, so stop it here —

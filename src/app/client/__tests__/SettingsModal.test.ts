@@ -437,7 +437,7 @@ describe('buildInstallAllUsersControl', () => {
         vi.stubGlobal('fetch', fetchMock);
         const reload = vi.fn();
 
-        const { button } = buildInstallAllUsersControl({ reload });
+        const { button } = buildInstallAllUsersControl({ reload, alert: { show: vi.fn() } });
         button.click();
 
         // fetch is invoked synchronously, before the first await in the handler.
@@ -447,18 +447,21 @@ describe('buildInstallAllUsersControl', () => {
         expect(reload).toHaveBeenCalledTimes(1);
     });
 
-    it('shows an inline error note and does NOT reload when the server rejects', async () => {
+    // 0.5.5: a failure is the click's result, so it goes to the tab's status
+    // line; the note beside the row is kept for the standing /opt state.
+    it('reports a refusal on the tab line, leaves the note alone, and does NOT reload', async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: false });
         vi.stubGlobal('fetch', fetchMock);
         const reload = vi.fn();
+        const alert = { show: vi.fn() };
 
-        const { button, note } = buildInstallAllUsersControl({ reload });
+        const { button, note } = buildInstallAllUsersControl({ reload, alert });
         button.click();
         await flush();
 
         expect(reload).not.toHaveBeenCalled();
-        expect(note.hidden).toBe(false);
-        expect(note.textContent).toMatch(/install/i);
+        expect(alert.show).toHaveBeenCalledWith('error', 'install failed — see the server logs and try again.');
+        expect(note.hidden).toBe(true);
     });
 
     // Smoke 14.10: cancelling the polkit prompt is a decline, not a failure.
@@ -475,14 +478,17 @@ describe('buildInstallAllUsersControl', () => {
         });
         vi.stubGlobal('fetch', fetchMock);
         const reload = vi.fn();
+        const alert = { show: vi.fn() };
 
-        const { button, note } = buildInstallAllUsersControl({ reload });
+        const { button } = buildInstallAllUsersControl({ reload, alert });
         button.click();
         await flush();
 
         expect(reload).not.toHaveBeenCalled();
-        expect(note.hidden).toBe(false);
-        expect(note.textContent).toBe('Administrative privileges were declined. Try again and approve the prompt.');
+        expect(alert.show).toHaveBeenCalledWith(
+            'error',
+            'Administrative privileges were declined. Try again and approve the prompt.',
+        );
         expect(button.disabled).toBe(false);
         expect(button.textContent).toBe('install');
     });
@@ -496,11 +502,12 @@ describe('buildInstallAllUsersControl', () => {
         });
         vi.stubGlobal('fetch', fetchMock);
 
-        const { button, note } = buildInstallAllUsersControl({ reload: vi.fn() });
+        const alert = { show: vi.fn() };
+        const { button } = buildInstallAllUsersControl({ reload: vi.fn(), alert });
         button.click();
         await flush();
 
-        expect(note.textContent).toBe('install failed — see the server logs and try again.');
+        expect(alert.show).toHaveBeenCalledWith('error', 'install failed — see the server logs and try again.');
         expect(button.disabled).toBe(false);
     });
 });
@@ -793,31 +800,32 @@ describe('the running version in the dialog footer', () => {
         stubMeAsAdmin();
     });
 
-    function footerParts(): { version: HTMLElement | null; status: HTMLElement | null; save: HTMLElement | null } {
+    function footerParts(): { version: HTMLElement | null; save: HTMLElement | null } {
         const footer = document.querySelector<HTMLElement>('dialog.settings-modal .modal-footer');
         expect(footer, 'footer missing').not.toBeNull();
         return {
             version: footer!.querySelector<HTMLElement>('.settings-version'),
-            status: footer!.querySelector<HTMLElement>('.settings-save-status'),
             save: footer!.querySelector<HTMLElement>('button.settings-save'),
         };
     }
 
-    it('names the version from /api/config, on the Save line, to the left of everything else', async () => {
+    it('names the version from /api/config, on the Save line, to the left of Save', async () => {
         stubConfig({ ...base, appVersion: '0.5.1-beta.1' });
         new SettingsModal();
         await flush();
 
-        const { version, status, save } = footerParts();
+        const { version, save } = footerParts();
         expect(version).not.toBeNull();
         expect(version!.hidden).toBe(false);
         expect(version!.textContent).toBe('v0.5.1-beta.1');
-        // Left-aligned means FIRST in the row: version, then the refusal line,
-        // then Save on the right.
+        // Left-aligned means FIRST in the row, with Save on the right. Nothing
+        // else is on the line since 0.5.5: a save's result goes to the status
+        // line at the bottom of the tab on screen.
         const kids = Array.from(version!.parentElement!.children);
         expect(kids.indexOf(version!)).toBe(0);
-        expect(kids.indexOf(version!)).toBeLessThan(kids.indexOf(status!));
-        expect(kids.indexOf(status!)).toBeLessThan(kids.indexOf(save!));
+        expect(kids.indexOf(version!)).toBeLessThan(kids.indexOf(save!));
+        expect(kids).toHaveLength(2);
+        expect(document.querySelector('.settings-save-status')).toBeNull();
     });
 
     it('shows nothing until the version is known (no "vundefined" while /api/config is pending)', async () => {

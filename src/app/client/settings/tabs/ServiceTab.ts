@@ -15,7 +15,7 @@ import { ServiceOperationModal } from '../../ServiceOperationModal';
 import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { isStaleTokenRefusal } from '../../staleToken';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildDynamicLabelRow, buildItem, buildRow, buildSection } from '../settingsLayout';
+import { buildDynamicLabelRow, buildItem, buildRow, buildSection, buildTabAlert } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /**
@@ -193,10 +193,19 @@ const refreshers = new WeakMap<HTMLElement, (callbacks: ServiceTabCallbacks) => 
  * `refreshService()`, exactly like the class method it replaces, so the
  * container-mode and role/reachability gating in `SettingsModal` (which decide
  * WHEN to call it) keep working unchanged.
+ *
+ * An install or uninstall that fails says so on the tab's status line, below
+ * the card, and leaves the card as it was, button and all, so the user can try
+ * again (0.5.5; it used to replace the card with the error and a retry). What
+ * stays IN the card is state: the status read's own failure, which has nothing
+ * else to show, and the note after a system-scope uninstall.
  */
 export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
     // `body` is the tab's card: everything below renders into it, one item per setting.
     const { section, card: body } = buildSection('Service');
+    // The tab's one status line. Built now, but below the card all the same:
+    // `body` is the section's only card, and only its contents are redrawn.
+    const tabAlert = buildTabAlert(section);
     const placeholder = document.createElement('p');
     placeholder.className = 'settings-status';
     placeholder.style.gridColumn = '1 / -1';
@@ -322,7 +331,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             btn.className = 'settings-btn settings-btn-ready';
             btn.textContent = 'not installed — install?';
             btn.addEventListener('click', () => {
-                void onInstallService(btn, callbacks);
+                void onInstallService(btn);
             });
         } else {
             btn.className = 'settings-btn settings-btn-danger';
@@ -357,6 +366,13 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         }
     }
 
+    /** An install or uninstall did not happen: give the button back and say why on the tab's line. */
+    function failAction(btn: HTMLButtonElement, prevText: string | null, msg: string): void {
+        btn.disabled = false;
+        btn.textContent = prevText;
+        tabAlert.show('error', msg);
+    }
+
     async function runRefresh(callbacks: ServiceTabCallbacks): Promise<void> {
         body.replaceChildren();
         const loading = document.createElement('p');
@@ -384,7 +400,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         renderServiceState(resp, callbacks);
     }
 
-    async function onInstallService(btn: HTMLButtonElement, callbacks: ServiceTabCallbacks): Promise<void> {
+    async function onInstallService(btn: HTMLButtonElement): Promise<void> {
         const isLinux = servicePlatform === 'linux';
         const isSystemScope = serviceScopeSystemRadio?.checked ?? false;
 
@@ -421,9 +437,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                         ? reasonToUserMessage(data.reason, data.error)
                         : `install failed (${r.status})`;
                 modal.close();
-                btn.disabled = false;
-                btn.textContent = prevText;
-                renderServiceError(errMsg, () => void runRefresh(callbacks));
+                failAction(btn, prevText, errMsg);
                 return;
             }
 
@@ -453,16 +467,12 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                 },
                 onTimeout: () => {
                     modal.close();
-                    btn.disabled = false;
-                    btn.textContent = prevText;
-                    renderServiceError(INSTALL_HANDOFF_TIMEOUT_MESSAGE, () => void runRefresh(callbacks));
+                    failAction(btn, prevText, INSTALL_HANDOFF_TIMEOUT_MESSAGE);
                 },
             });
         } catch {
             modal.close();
-            btn.disabled = false;
-            btn.textContent = prevText;
-            renderServiceError("couldn't reach server", () => void runRefresh(callbacks));
+            failAction(btn, prevText, "couldn't reach server");
         }
     }
 
@@ -493,9 +503,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                         ? reasonToUserMessage(data.reason, data.error)
                         : `uninstall failed (${r.status})`;
                 modal.close();
-                btn.disabled = false;
-                btn.textContent = prevText;
-                renderServiceError(errMsg, () => void runRefresh(callbacks));
+                failAction(btn, prevText, errMsg);
                 return;
             }
             if (data.status === 'shutting-down') {
@@ -510,19 +518,23 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                     // saying "removed". Poll /api/service/status until the service is
                     // actually gone, and surface a failure if it never does.
                     modal.close();
-                    renderServiceInfo('removing the system service…');
+                    // In progress: on the tab's line until the outcome replaces it.
+                    tabAlert.show('busy', 'removing the system service…');
                     const outcome = await pollServiceUninstalled();
-                    btn.disabled = false;
-                    btn.textContent = prevText;
                     // 'stopped' is this page's own server going quiet: the service
                     // served this page and nothing relaunches after a system-scope
                     // uninstall, so that IS success (D11, item 157).
                     if (outcome === 'uninstalled' || outcome === 'stopped') {
+                        btn.disabled = false;
+                        btn.textContent = prevText;
+                        tabAlert.clear();
+                        // A standing state, not a result: it stays in the card.
                         renderServiceInfo(uninstallFollowupMessage());
                     } else {
-                        renderServiceError(
+                        failAction(
+                            btn,
+                            prevText,
                             'the system service is still running — uninstall may not have completed. check the service logs and try again.',
-                            () => void runRefresh(callbacks),
                         );
                     }
                     return;
@@ -544,11 +556,10 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                     if (iterations > maxIterations) {
                         clearInterval(poll);
                         modal.close();
-                        btn.disabled = false;
-                        btn.textContent = prevText;
-                        renderServiceError(
+                        failAction(
+                            btn,
+                            prevText,
                             'service uninstalled but fresh instance not detected. try reloading.',
-                            () => void runRefresh(callbacks),
                         );
                         return;
                     }
@@ -594,9 +605,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             await runRefresh(callbacks);
         } catch {
             modal.close();
-            btn.disabled = false;
-            btn.textContent = prevText;
-            renderServiceError("couldn't reach server", () => void runRefresh(callbacks));
+            failAction(btn, prevText, "couldn't reach server");
         }
     }
 

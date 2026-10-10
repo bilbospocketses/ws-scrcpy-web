@@ -973,9 +973,10 @@ dialog.settings-modal .settings-status[hidden] {
 }
 
 /*
- * A tab's one transient alert (the Local HTTPS tab's): at the bottom of the
- * tab, below and outside its cards, set off from the last card so it never
- * reads as one of that card's notes. No `display`, so `hidden` still works.
+ * A tab's one status line (every tab's since 0.5.5, settingsLayout.ts
+ * `buildTabAlert`): at the bottom of the tab, below and outside its cards, set
+ * off from the last card so it never reads as one of that card's notes. No
+ * `display`, so `hidden` still works.
  */
 dialog.settings-modal .settings-status.settings-tab-alert {
     margin-top: 0.75rem;

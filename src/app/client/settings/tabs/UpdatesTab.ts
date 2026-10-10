@@ -4,7 +4,7 @@ import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { runUpgradingHandoff } from '../../UpgradingOverlay';
 import { classifyFailedApply, LostApplyWatch } from '../../updateApplyOutcome';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildDynamicLabelRow, buildItem, buildRow, buildSection } from '../settingsLayout';
+import { buildDynamicLabelRow, buildItem, buildRow, buildSection, buildTabAlert } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /** The staged-field ids, as `SettingsBatchApi.STAGEABLE_IDS` spells them. */
@@ -100,6 +100,10 @@ const refreshers = new WeakMap<HTMLElement, () => Promise<void>>();
  *
  * "check for updates now" / "apply update" stay ACTIONS: they fire immediately
  * on click and register nothing, so they cannot reach the change summary.
+ * Their results (a check or an apply that failed) go to the tab's status line
+ * below the card (0.5.5), while the action row's label keeps showing the
+ * update STATE ("up to date: v…", "downloading v… — n%"). A value the interval
+ * or owner field refuses is said under that field.
  *
  * Builds synchronously and fires no network request of its own. Everything
  * below the "loading…" placeholder is rendered by the externally-triggered
@@ -110,6 +114,9 @@ const refreshers = new WeakMap<HTMLElement, () => Promise<void>>();
 export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
     // `body` is the tab's card: everything below renders into it, one item per setting.
     const { section, card: body } = buildSection('Updates');
+    // The tab's one status line. Built now, but below the card all the same:
+    // `body` is the section's only card, and only its contents are redrawn.
+    const tabAlert = buildTabAlert(section);
     const placeholder = document.createElement('p');
     placeholder.className = 'settings-status';
     placeholder.style.gridColumn = '1 / -1';
@@ -143,14 +150,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     /** The status read that follows a failed apply until its check has finished. */
     let settleTimer: number | undefined;
 
-    /**
-     * `keepError`: a failure line the caller has just shown. The rebuild below
-     * repaints the status line from the response, so without it the line the
-     * user needed to read is gone the moment the read answers; with it, the
-     * line is put back over the fresh status and stays until the next action
-     * on the tab repaints it.
-     */
-    async function runRefresh(keepError?: string): Promise<void> {
+    async function runRefresh(): Promise<void> {
         let resp: UpdatesStatusResponse;
         try {
             const r = await fetch('/api/updates/status');
@@ -181,12 +181,6 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             githubOwner: resp.githubOwner,
         });
         renderSection(resp);
-        // A failed install the server recorded already says why (applyStatusText).
-        if (keepError !== undefined && !showsApplyError(resp)) setStatusError(keepError);
-    }
-
-    function showsApplyError(s: UpdatesStatusResponse): boolean {
-        return s.status === 'ready' && s.lastApplyError !== undefined;
     }
 
     function renderError(msg: string): void {
@@ -243,7 +237,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
                 window.clearTimeout(intervalDebounce);
             }
             intervalDebounce = window.setTimeout(() => {
-                commitIntervalChange(interval);
+                commitIntervalChange(interval, intervalNote);
             }, 500);
         });
         interval.addEventListener('blur', () => {
@@ -251,9 +245,11 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
                 window.clearTimeout(intervalDebounce);
                 intervalDebounce = undefined;
             }
-            commitIntervalChange(interval);
+            commitIntervalChange(interval, intervalNote);
         });
-        body.appendChild(buildItem(buildRow('check interval (minutes)', interval)));
+        const intervalNote = buildFieldNote();
+        intervalNote.setAttribute('data-updates-interval-note', '');
+        body.appendChild(buildItem(buildRow('check interval (minutes)', interval), intervalNote));
 
         // Row 3: channel radios. STAGED.
         const channelFrag = document.createDocumentFragment();
@@ -297,9 +293,11 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         owner.className = 'settings-input';
         owner.value = s.githubOwner;
         owner.addEventListener('blur', () => {
-            commitOwnerChange(owner);
+            commitOwnerChange(owner, ownerNote);
         });
-        body.appendChild(buildItem(buildRow('github owner', owner)));
+        const ownerNote = buildFieldNote();
+        ownerNote.setAttribute('data-updates-owner-note', '');
+        body.appendChild(buildItem(buildRow('github owner', owner), ownerNote));
 
         // Action row: label = live status text (idle: "up to date (vX)", ready:
         // "vX ready to apply", checking/downloading: progress, error: failure
@@ -403,10 +401,18 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         }
     }
 
-    function setStatusError(msg: string): void {
-        if (!statusEl) return;
-        statusEl.textContent = msg;
-        statusEl.classList.add('settings-status-error');
+    /** The line under a staged field, empty and hidden until the field refuses a value. */
+    function buildFieldNote(): HTMLElement {
+        const note = document.createElement('p');
+        note.className = 'settings-status settings-status-error';
+        note.style.gridColumn = '1 / -1';
+        note.hidden = true;
+        return note;
+    }
+
+    function setFieldNote(note: HTMLElement, msg: string): void {
+        note.textContent = msg;
+        note.hidden = msg.length === 0;
     }
 
     /**
@@ -422,7 +428,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
      * the field still read 90.5, saving an interval the user never typed.
      * `Number` gives NaN for junk and 0 for an emptied field, and both fail below.
      *
-     * A refused value is LEFT ON SCREEN with the message beside it, and nothing
+     * A refused value is LEFT ON SCREEN with the message under it, and nothing
      * is staged — the same refusal shape `ServerTab`'s web-port guard has always
      * had. This used to snap the field back to the staged value instead, so the
      * dialog had two staged number fields disagreeing about what an invalid
@@ -430,24 +436,19 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
      * is also the kinder half of the pair, because the user can see and correct
      * the digit they got wrong rather than having to retype the whole value.
      */
-    function commitIntervalChange(input: HTMLInputElement): void {
+    function commitIntervalChange(input: HTMLInputElement, note: HTMLElement): void {
         const n = Number(input.value.trim());
         if (!Number.isInteger(n) || n < INTERVAL_MIN || n > INTERVAL_MAX) {
             // Refuse the stage: whatever was last staged stands, and the message
             // stays up until a valid interval replaces it.
-            setStatusError(`interval must be between ${INTERVAL_MIN} and ${INTERVAL_MAX} minutes`);
+            setFieldNote(note, `interval must be between ${INTERVAL_MIN} and ${INTERVAL_MAX} minutes`);
             return;
         }
-        // Put the status line back before staging, the way ServerTab's guard
-        // clears its message on the success path. Without this the refusal
-        // message is STICKY: type 3 (red "interval must be between…"), then type
-        // 90 — the 90 stages fine but the label stays red with a message about a
-        // value that is no longer anywhere, until some unrelated event (a
-        // check-now, an apply) happens to repaint it. `applyStatusText`
-        // rather than a literal empty string, because this label is not a
-        // dedicated status line: it is the live update-status text, so what
-        // "cleared" means here is the current status, not blank.
-        if (lastStatus) applyStatusText(lastStatus);
+        // Clear the refusal before staging, the way ServerTab's guard clears its
+        // message on the success path. Without this the message is STICKY: type
+        // 3 (red "interval must be between…"), then type 90 — the 90 stages fine
+        // but the field still says it is out of range.
+        setFieldNote(note, '');
         // No "same as the server's value, nothing to do" early return. That was
         // right for a PATCH and wrong for a stage: typing 90 then 60 back would
         // leave 90 staged while the field read 60, and Save would write a value
@@ -477,16 +478,16 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
      * `ServerTab`'s web-port guard. All three staged text/number fields in this
      * dialog now answer bad input identically.
      */
-    function commitOwnerChange(input: HTMLInputElement): void {
+    function commitOwnerChange(input: HTMLInputElement, note: HTMLElement): void {
         const next = input.value.trim();
         if (next.length === 0) {
-            setStatusError('github owner cannot be empty');
+            setFieldNote(note, 'github owner cannot be empty');
             return;
         }
         // Clear the refusal message before staging, for the reason spelled out
         // in `commitIntervalChange`: without it the red warning outlives the
         // value it was about.
-        if (lastStatus) applyStatusText(lastStatus);
+        setFieldNote(note, '');
         // No "same as the server's value, nothing to do" early return, for the
         // same reason as the interval: re-staging the baseline is how a change
         // CLEARS, since `changes()` compares rather than latches.
@@ -541,9 +542,10 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             endApply(me);
             // A cancelled polkit prompt on a machine-wide update (smoke
             // 14.10). Nothing changed and the update is still ready, so
-            // there is no state to re-read, and a refresh would repaint the
-            // line straight back to "update: vX".
-            setStatusError(reasonToUserMessage('uac-declined', ''));
+            // there is no state to re-read: the label goes back to the
+            // state it showed, and the decline is said on the tab's line.
+            if (lastStatus) applyStatusText(lastStatus);
+            tabAlert.show('error', reasonToUserMessage('uac-declined', ''));
             return;
         }
         failApply(me, failure.reason !== undefined ? `apply failed: ${failure.reason}` : `apply failed (${r.status})`);
@@ -625,18 +627,18 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     }
 
     /**
-     * The apply failed: say why, and re-read the state. The refresh rebuilds
-     * the body and re-baselines, so any staged edit is dropped — the same
-     * rebuild the pre-tabs code did, and the alternative (a stale body
-     * describing a state that has moved on) is worse. The failure line rides
-     * through the rebuild, or the user never gets to read it; and while the
-     * check a failed download starts is running, the status is followed
-     * until it ends, or the button would stay disabled.
+     * The apply failed: say why on the tab's line, and re-read the state. The
+     * refresh rebuilds the body and re-baselines, so any staged edit is
+     * dropped — the same rebuild the pre-tabs code did, and the alternative (a
+     * stale body describing a state that has moved on) is worse. The line is
+     * outside the card, so the rebuild leaves it up; and while the check a
+     * failed download starts is running, the status is followed until it
+     * ends, or the button would stay disabled.
      */
     function failApply(me: ApplyRun, line: string): void {
         endApply(me);
-        setStatusError(line);
-        void runRefresh(line).then(() => settleAfterFailure(line));
+        tabAlert.show('error', line);
+        void runRefresh().then(() => settleAfterFailure());
     }
 
     function stopSettling(): void {
@@ -644,7 +646,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         settleTimer = undefined;
     }
 
-    function settleAfterFailure(line: string): void {
+    function settleAfterFailure(): void {
         stopSettling();
         if (!lastStatus || (lastStatus.status !== 'checking' && lastStatus.status !== 'downloading')) return;
         settleTimer = window.setTimeout(() => {
@@ -661,14 +663,8 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
                 if (run !== null || restarting) return;
                 lastStatus = s;
                 applyActionButtonState(s);
-                // The failure stays up while its check runs; a download, or the
-                // check's answer, replaces it unless that answer does not say why.
-                if (s.status === 'checking' || (s.status === 'ready' && s.lastApplyError === undefined)) {
-                    setStatusError(line);
-                } else {
-                    applyStatusText(s);
-                }
-                settleAfterFailure(line);
+                applyStatusText(s);
+                settleAfterFailure();
             })();
         }, APPLY_POLL_MS);
     }
@@ -732,10 +728,14 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
                 }
             },
         };
+        tabAlert.clear();
         try {
             const r = await fetch('/api/updates/check', { method: 'POST' });
             if (!r.ok) {
-                setStatusError(`check failed (${r.status})`);
+                // The label goes back to the state it showed; the failure is
+                // the click's result, so it goes on the tab's line.
+                if (lastStatus) applyStatusText(lastStatus);
+                tabAlert.show('error', `check failed (${r.status})`);
                 btn.textContent = 'check for updates now';
                 return;
             }
@@ -752,7 +752,8 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             applyStatusText(s);
             applyActionButtonState(s);
         } catch {
-            setStatusError("couldn't reach server");
+            if (lastStatus) applyStatusText(lastStatus);
+            tabAlert.show('error', "couldn't reach server");
             btn.textContent = 'check for updates now';
         }
     }

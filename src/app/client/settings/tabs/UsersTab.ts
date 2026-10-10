@@ -1,7 +1,7 @@
 import { authClient } from '../../AuthClient';
 import { UsersModal } from '../../UsersModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildItem, buildRow, buildSection } from '../settingsLayout';
+import { buildItem, buildRow, buildSection, buildTabAlert } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /**
@@ -14,6 +14,9 @@ import type { TabContext } from './EmbeddingTab';
  */
 export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
     const { section, card } = buildSection('Users');
+    // The tab's one status line. Built now, but it lands below the card all
+    // the same: the card is already in the section and stays its last card.
+    const tabAlert = buildTabAlert(section);
 
     // 1. Manage users button — opens UsersModal (admin-only action).
     const manageBtn = document.createElement('button');
@@ -30,10 +33,7 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
     //    (authEnabled=false). ctx.reload() on success (SettingsModal wires this
     //    to window.location.reload(), matching every other action control in
     //    Settings that needs a reload — buildResetControl, buildInstallAllUsersControl).
-    const toggleStatus = document.createElement('p');
-    toggleStatus.className = 'settings-status';
-    toggleStatus.style.gridColumn = '1 / -1';
-    toggleStatus.hidden = true;
+    //    A failure is reported on the tab's line, below the card (`tabAlert`).
 
     if (ctx.authEnabled) {
         const disableBtn = document.createElement('button');
@@ -47,13 +47,12 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
                     await authClient.disableAuth();
                     ctx.reload();
                 } catch {
-                    toggleStatus.textContent = 'failed to disable login — see server logs.';
-                    toggleStatus.hidden = false;
+                    tabAlert.show('error', 'failed to disable login — see server logs.');
                     disableBtn.disabled = false;
                 }
             })();
         });
-        card.appendChild(buildItem(buildRow('login', disableBtn), toggleStatus));
+        card.appendChild(buildItem(buildRow('login', disableBtn)));
     } else {
         const enableBtn = document.createElement('button');
         enableBtn.type = 'button';
@@ -68,22 +67,20 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
                         ctx.reload();
                         return;
                     }
-                    if (res.status === 409) {
-                        toggleStatus.textContent = 'Add a user with an admin password first (Users → manage users)';
-                    } else {
-                        toggleStatus.textContent = `failed to enable login (${res.status})`;
-                    }
-                    toggleStatus.hidden = false;
+                    tabAlert.show(
+                        'error',
+                        res.status === 409
+                            ? 'Add a user with an admin password first (Users → manage users)'
+                            : `failed to enable login (${res.status})`,
+                    );
                     enableBtn.disabled = false;
                 } catch {
-                    toggleStatus.textContent = 'failed to enable login — could not reach server.';
-                    toggleStatus.hidden = false;
+                    tabAlert.show('error', 'failed to enable login — could not reach server.');
                     enableBtn.disabled = false;
                 }
             })();
         });
-        // The status line belongs to the login row: it reports that row's toggle.
-        card.appendChild(buildItem(buildRow('login', enableBtn), toggleStatus));
+        card.appendChild(buildItem(buildRow('login', enableBtn)));
     }
 
     return section;

@@ -8,7 +8,7 @@ import {
 import type { Role } from '../../AuthClient';
 import { ConfirmModal } from '../../ConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildItem, buildRow, buildSection } from '../settingsLayout';
+import { buildItem, buildRow, buildSection, buildTabAlert, type TabAlert } from '../settingsLayout';
 
 /**
  * What every tab builder gets, regardless of whether it uses it.
@@ -144,6 +144,8 @@ interface EmbeddingView {
     approved: string[] | null;
     /** Why the list could not be read, if it could not. */
     error: string | null;
+    /** The tab's status line, below the card: where a revoke that never reached the server says so. */
+    alert: TabAlert;
 }
 
 /**
@@ -183,6 +185,9 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
         adder: document.createElement('div'),
         approved: null,
         error: null,
+        // Built now, but below the card all the same: the card is already in
+        // the section and is its only one.
+        alert: buildTabAlert(section),
     };
     view.adder = buildAddRow(view);
     card.append(list, view.adder);
@@ -294,7 +299,9 @@ function renderEmbedOrigins(view: EmbeddingView): void {
                         await refreshEmbedOrigins(view);
                     }
                 } catch {
-                    view.error = 'could not reach the server.';
+                    // An action's result, so on the tab's line; the list is
+                    // drawn again as it was, which also gives the button back.
+                    view.alert.show('error', 'could not reach the server.');
                     renderEmbedOrigins(view);
                 }
             })();

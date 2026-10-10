@@ -1,5 +1,6 @@
 import { type DependencyInfo, DependencyStatus, type UpdateResult } from '../../common/DependencyTypes';
 import { escapeHtml } from '../htmlEscape';
+import type { TabAlert } from './settings/settingsLayout';
 import { isStaleTokenRefusal } from './staleToken';
 
 const POLL_INTERVAL_MS = 15_000;
@@ -25,6 +26,15 @@ function offersInstall(dep: DependencyInfo): boolean {
     return dep.status === DependencyStatus.Error && dep.deferInstall === true && dep.installedVersion === null;
 }
 
+/**
+ * The dependency table, hosted by Settings → Dependencies (its only home since
+ * the home page's copy became an alert badge).
+ *
+ * An install or update that fails is reported on that tab's status line
+ * (`alert`, 0.5.5), where every Settings tab reports an action's result; it
+ * used to be the browser's `alert()`. A failed load or check is the table's
+ * state, not an action's result, and stays in the table.
+ */
 export class DependencyPanel {
     private container: HTMLElement;
     private tableBody: HTMLTableSectionElement | null = null;
@@ -32,7 +42,7 @@ export class DependencyPanel {
     private busy = false;
     private restarting = false;
 
-    constructor() {
+    constructor(private readonly alert: Pick<TabAlert, 'show'>) {
         this.container = document.createElement('div');
         this.container.id = 'dependency-panel';
         this.container.className = 'home-section';
@@ -60,8 +70,8 @@ export class DependencyPanel {
         this.container.querySelector('.dep-check-all')!.addEventListener('click', () => this.checkAll());
     }
 
-    static async create(): Promise<DependencyPanel> {
-        const panel = new DependencyPanel();
+    static async create(alert: Pick<TabAlert, 'show'>): Promise<DependencyPanel> {
+        const panel = new DependencyPanel(alert);
         await panel.load();
         panel.startPolling();
         return panel;
@@ -160,11 +170,11 @@ export class DependencyPanel {
                     this.showRestartPrompt();
                 }
             } else {
-                alert(`${install ? 'Install' : 'Update'} failed: ${result.errorMessage}`);
+                this.alert.show('error', `${install ? 'install' : 'update'} failed: ${result.errorMessage}`);
                 await this.load();
             }
         } catch {
-            alert(`${install ? 'Install' : 'Update'} request failed`);
+            this.alert.show('error', `${install ? 'install' : 'update'} failed: could not reach the server.`);
             await this.load();
         }
     }

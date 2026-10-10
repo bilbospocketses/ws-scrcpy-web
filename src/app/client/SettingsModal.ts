@@ -9,7 +9,14 @@ import { closeIntent } from './settings/closeIntent';
 import { type BatchResult, runSave } from './settings/SaveRunner';
 import { SettingsSummaryModal } from './settings/SettingsSummaryModal';
 import { type Change, StagedSettingsStore } from './settings/StagedSettingsStore';
-import { buildItem, buildSection } from './settings/settingsLayout';
+import {
+    buildItem,
+    buildSection,
+    buildTabAlert,
+    destroyTabAlerts,
+    type TabAlertKind,
+    tabAlertIn,
+} from './settings/settingsLayout';
 import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
 import { applyEmbeddingContainerMode, buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
@@ -79,6 +86,9 @@ function buildDockerNoteSection(
     note.style.gridColumn = '1 / -1';
     note.textContent = text;
     card.appendChild(buildItem(note));
+    // Its own status line, like every tab: the dialog's save reports there
+    // when this is the tab on screen.
+    buildTabAlert(section);
     return section;
 }
 
@@ -838,11 +848,12 @@ export class SettingsModal extends Modal {
 
     /**
      * The dialog-level footer: the running version on the left, one Save for
-     * every tab on the right, and between them the line that reports a refused
-     * batch.
+     * every tab on the right. A save's result is not reported here: it goes to
+     * the status line at the bottom of the tab on screen (`reportSave`), the
+     * one place every tab reports an action's result (0.5.5).
      *
      * Built during `super()`, so it may touch no instance field — hence the
-     * `saveBtn`/`saveStatus`/`versionEl` getters below, which re-find the nodes rather than
+     * `saveBtn`/`versionEl` getters below, which re-find the nodes rather than
      * caching them in fields that class-field init would clobber
      * (ES2022 useDefineForClassFields, the same hazard as `fillBody`).
      */
@@ -853,7 +864,6 @@ export class SettingsModal extends Modal {
         // The running version, left-aligned on Save's line. Hidden until the
         // runtime probe names it (`showVersion`), so the dialog never reads
         // "vundefined"; a server too old to send it leaves the line hidden.
-        // Never shrinks, so a long refusal beside it wraps instead of eating it.
         const version = document.createElement('span');
         version.className = 'settings-version';
         version.style.cssText =
@@ -861,18 +871,10 @@ export class SettingsModal extends Modal {
         version.hidden = true;
         footer.appendChild(version);
 
-        // Between the version and Save, taking the room that is left and
-        // wrapping inside it: a refused batch can name several settings.
-        const status = document.createElement('p');
-        status.className = 'settings-status settings-save-status';
-        status.style.cssText = 'margin: 0; flex: 1 1 auto; min-width: 0;';
-        status.hidden = true;
-        footer.appendChild(status);
-
         const save = document.createElement('button');
         save.type = 'button';
-        // `margin-left: auto` keeps Save on the right edge whether or not the
-        // status line is showing (when it is hidden nothing else fills the row).
+        // `margin-left: auto` keeps Save on the right edge, with or without the
+        // version beside it.
         save.style.marginLeft = 'auto';
         save.className = 'settings-btn settings-btn-primary settings-save';
         save.textContent = 'save';
@@ -888,10 +890,6 @@ export class SettingsModal extends Modal {
 
     private get saveBtn(): HTMLButtonElement | null {
         return this.frameEl.querySelector<HTMLButtonElement>('button.settings-save');
-    }
-
-    private get saveStatus(): HTMLElement | null {
-        return this.frameEl.querySelector<HTMLElement>('.settings-save-status');
     }
 
     private get versionEl(): HTMLElement | null {
@@ -913,12 +911,24 @@ export class SettingsModal extends Modal {
         el.hidden = !known;
     }
 
-    private setSaveStatus(msg: string, isError: boolean): void {
-        const el = this.saveStatus;
-        if (!el) return;
-        el.textContent = msg;
-        el.hidden = msg.length === 0;
-        el.classList.toggle('settings-status-error', isError);
+    /**
+     * Report a save's result on the status line of the tab on screen: the user
+     * clicked Save from there, and that line is where every tab reports an
+     * action's result. A tab body without a line of its own gets one.
+     */
+    private reportSave(kind: TabAlertKind, msg: string): void {
+        const strip = this.tabStrip;
+        const body = strip?.body(strip.activeId());
+        if (!body) return;
+        const alert = tabAlertIn(body) ?? buildTabAlert(body.querySelector<HTMLElement>('section') ?? body);
+        alert.show(kind, msg);
+    }
+
+    /** Clear the save's previous result off the tab on screen. */
+    private clearSaveReport(): void {
+        const strip = this.tabStrip;
+        const body = strip?.body(strip.activeId());
+        if (body) tabAlertIn(body)?.clear();
     }
 
     /**
@@ -959,7 +969,7 @@ export class SettingsModal extends Modal {
             this.applyAction(action);
         } catch {
             this.saving = false;
-            this.setSaveStatus("couldn't save the changes", true);
+            this.reportSave('error', "couldn't save the changes");
         } finally {
             this.syncSaveButton();
         }
@@ -970,7 +980,7 @@ export class SettingsModal extends Modal {
         if (!store) return;
         // Clear any previous refusal before re-attempting, so a stale message
         // cannot be read as a fresh one.
-        this.setSaveStatus('', false);
+        this.clearSaveReport();
         await this.runGuarded(() => performStagedSave(store, this.saveDeps));
     }
 
@@ -1014,6 +1024,8 @@ export class SettingsModal extends Modal {
      */
     protected override onBeforeClose(): void {
         if (this.dependenciesTabEl) destroyDependenciesTab(this.dependenciesTabEl);
+        // Every tab's status line stops its clock: nothing is left to hide.
+        destroyTabAlerts(this.dialog);
     }
 
     /** Act on what the save / close flow decided. */
@@ -1026,13 +1038,14 @@ export class SettingsModal extends Modal {
                 return;
             case 'failed':
                 // Stays open, changes still staged — see performStagedSave.
-                this.setSaveStatus(action.message, true);
+                this.reportSave('error', action.message);
                 return;
             case 'redirect':
                 // The dialog stays up showing why, then follows the server. The
                 // wait is the supervisor's window to rebind the new port;
-                // navigating immediately gets a connection refused.
-                this.setSaveStatus('restarting → redirecting…', false);
+                // navigating immediately gets a connection refused. A busy
+                // message, so it stays up until the page leaves.
+                this.reportSave('busy', 'restarting → redirecting…');
                 setTimeout(() => liveSaveDeps.navigate(action.url), RESTART_REDIRECT_DELAY_MS);
                 return;
         }
@@ -1065,6 +1078,11 @@ export class SettingsModal extends Modal {
      * here: no panel was ever created, so there is no interval to stop.
      */
     private applyDockerGating(): void {
+        // The outgoing bodies' status lines stop their clocks first.
+        for (const id of ['updates', 'service', 'dependencies']) {
+            const body = this.tabStrip?.body(id);
+            if (body) destroyTabAlerts(body);
+        }
         this.tabStrip?.replaceTabBody('updates', buildDockerUpdatesNote());
         this.tabStrip?.replaceTabBody('service', buildDockerServiceNote());
         this.tabStrip?.replaceTabBody('dependencies', buildDockerDependenciesNote());

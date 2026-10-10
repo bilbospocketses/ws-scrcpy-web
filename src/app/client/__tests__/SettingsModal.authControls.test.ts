@@ -15,6 +15,14 @@ function bodyText(): string {
     return (document.querySelector('.settings-modal .modal-body')?.textContent ?? '').toLowerCase();
 }
 
+/** The status line at the bottom of the tab titled `title`, where its actions' results go (0.5.5). */
+function tabLine(title: string): HTMLElement | null {
+    const section = [...document.querySelectorAll<HTMLElement>('.settings-modal section.settings-section')].find(
+        (s) => s.querySelector('h3')?.textContent === title,
+    );
+    return section?.querySelector<HTMLElement>(':scope > [data-settings-alert]') ?? null;
+}
+
 beforeEach(() => {
     HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
         this.setAttribute('open', '');
@@ -192,7 +200,7 @@ describe('SettingsModal auth controls', () => {
             expect(window.location.reload).toHaveBeenCalledOnce();
         });
 
-        it('clicking "enable login" when 409 shows inline hint', async () => {
+        it('clicking "enable login" when 409 says why on the Users tab line', async () => {
             vi.spyOn(authClient, 'enableAuth').mockResolvedValue({ ok: false, status: 409 } as Response);
 
             new SettingsModal();
@@ -206,7 +214,12 @@ describe('SettingsModal auth controls', () => {
             await flush();
             await flush();
 
-            expect(bodyText()).toContain('add a user with an admin password first');
+            const line = tabLine('Users');
+            expect(line?.hidden).toBe(false);
+            expect(line?.textContent).toBe('Add a user with an admin password first (Users → manage users)');
+            expect(line?.classList.contains('settings-status-error')).toBe(true);
+            // Nothing is said beside the button any more.
+            expect(enableBtn!.closest('.settings-item')?.querySelector('.settings-status')).toBeNull();
         });
     });
 
@@ -243,6 +256,12 @@ describe('SettingsModal auth controls', () => {
 
             expect(changePwSpy).not.toHaveBeenCalled();
             expect(bodyText()).toContain('enter your current and new password');
+            // A field's validation: under the form, not on the tab's line.
+            expect(tabLine('Server')?.hidden).toBe(true);
+            const guard = [...document.querySelectorAll<HTMLElement>('.settings-card .settings-status')].find(
+                (el) => el.textContent === 'enter your current and new password',
+            );
+            expect(guard?.hidden).toBe(false);
         });
     });
 
@@ -286,9 +305,11 @@ describe('SettingsModal auth controls', () => {
             await flush();
 
             expect(changePwSpy).toHaveBeenCalledWith('cur', 'new');
+            expect(tabLine('Server')?.textContent).toBe('password changed');
+            expect(tabLine('Server')?.hidden).toBe(false);
         });
 
-        it('on false return from changePassword, shows error status', async () => {
+        it('on false return from changePassword, says so on the Server tab line', async () => {
             vi.spyOn(authClient, 'changePassword').mockResolvedValue(false);
 
             new SettingsModal();
@@ -312,7 +333,10 @@ describe('SettingsModal auth controls', () => {
             await flush();
             await flush();
 
-            expect(bodyText()).toContain('current password incorrect');
+            const line = tabLine('Server');
+            expect(line?.textContent).toBe('current password incorrect');
+            expect(line?.hidden).toBe(false);
+            expect(line?.classList.contains('settings-status-error')).toBe(true);
         });
     });
 

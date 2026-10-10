@@ -88,6 +88,11 @@ export class TabStrip {
         return this.active;
     }
 
+    /** The body of the tab with this id, or null if it was never built. */
+    body(id: string): HTMLElement | null {
+        return this.built.get(id) ?? null;
+    }
+
     activate(id: string): void {
         const tab = this.tabs.find((t) => t.id === id);
         if (!tab) return;

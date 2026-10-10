@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     addCard,
     buildDynamicLabelRow,
@@ -9,8 +9,13 @@ import {
     buildRow,
     buildSection,
     buildSplitSection,
+    buildTabAlert,
+    destroyTabAlerts,
     setCardShown,
     setRowShown,
+    TAB_ALERT_ERROR_MS,
+    TAB_ALERT_SUCCESS_MS,
+    tabAlertIn,
 } from '../settingsLayout';
 
 /**
@@ -211,5 +216,162 @@ describe('the modal.css rules the layout relies on', () => {
 
     it('gives the section no divider of its own any more', () => {
         expect(rule('dialog.settings-modal .settings-section')).not.toContain('border-bottom');
+    });
+});
+
+/**
+ * A tab's one status line (0.5.5): where every action result on the tab is
+ * reported, at the bottom, outside every card.
+ */
+describe('buildTabAlert', () => {
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('is the last thing in the section, outside every card, hidden until it has something to say', () => {
+        const { section, card } = buildSection('Users');
+        card.appendChild(buildItem(buildRow('user accounts', null)));
+        const alert = buildTabAlert(section);
+        expect(section.lastElementChild).toBe(alert.element);
+        expect(card.contains(alert.element)).toBe(false);
+        expect(alert.element.hidden).toBe(true);
+        expect(alert.element.classList.contains('settings-status')).toBe(true);
+        expect(alert.element.classList.contains('settings-tab-alert')).toBe(true);
+        expect(alert.element.hasAttribute('data-settings-alert')).toBe(true);
+        // A polite live region: a result is announced without moving focus.
+        expect(alert.element.getAttribute('role')).toBe('status');
+        expect(alert.element.getAttribute('aria-live')).toBe('polite');
+    });
+
+    it('stays last on a split tab whose cards are added after it', () => {
+        const { section } = buildSplitSection('Server');
+        const alert = buildTabAlert(section);
+        const settings = addCard(section, 'Settings');
+        const ports = addCard(section, 'Ports');
+        expect(section.lastElementChild).toBe(alert.element);
+        const kids = [...section.children];
+        expect(kids.indexOf(settings)).toBeLessThan(kids.indexOf(ports));
+        expect(kids.indexOf(ports)).toBeLessThan(kids.indexOf(alert.element));
+    });
+
+    it('hides a success after 5 s, and an error after 10 s', () => {
+        const { section } = buildSection('Users');
+        const alert = buildTabAlert(section);
+        expect(TAB_ALERT_SUCCESS_MS).toBe(5_000);
+        expect(TAB_ALERT_ERROR_MS).toBe(10_000);
+
+        alert.show('success', 'password changed');
+        expect(alert.element.hidden).toBe(false);
+        expect(alert.element.textContent).toBe('password changed');
+        expect(alert.element.classList.contains('settings-status-ready')).toBe(true);
+        expect(alert.element.classList.contains('settings-status-error')).toBe(false);
+        vi.advanceTimersByTime(TAB_ALERT_SUCCESS_MS - 1);
+        expect(alert.element.hidden).toBe(false);
+        vi.advanceTimersByTime(1);
+        expect(alert.element.hidden).toBe(true);
+
+        alert.show('error', 'current password incorrect');
+        expect(alert.element.classList.contains('settings-status-error')).toBe(true);
+        expect(alert.element.classList.contains('settings-status-ready')).toBe(false);
+        vi.advanceTimersByTime(TAB_ALERT_SUCCESS_MS);
+        expect(alert.element.hidden, 'an error outlasts a success').toBe(false);
+        vi.advanceTimersByTime(TAB_ALERT_ERROR_MS - TAB_ALERT_SUCCESS_MS);
+        expect(alert.element.hidden).toBe(true);
+    });
+
+    it('a new message replaces the old one and restarts the clock', () => {
+        const { section } = buildSection('Users');
+        const alert = buildTabAlert(section);
+        alert.show('error', 'first');
+        vi.advanceTimersByTime(TAB_ALERT_ERROR_MS - 1_000);
+        alert.show('success', 'second');
+        expect(alert.element.textContent).toBe('second');
+        // The first message's timer would have fired here; the second's has
+        // not run out.
+        vi.advanceTimersByTime(1_000);
+        expect(alert.element.hidden).toBe(false);
+        vi.advanceTimersByTime(TAB_ALERT_SUCCESS_MS - 1_000);
+        expect(alert.element.hidden).toBe(true);
+    });
+
+    it('a busy message stays until its result replaces it', () => {
+        const { section } = buildSection('Server');
+        const alert = buildTabAlert(section);
+        alert.show('busy', 'saving…');
+        expect(alert.element.classList.contains('settings-status-error')).toBe(false);
+        expect(alert.element.classList.contains('settings-status-ready')).toBe(false);
+        vi.advanceTimersByTime(TAB_ALERT_ERROR_MS * 10);
+        expect(alert.element.hidden).toBe(false);
+        expect(alert.element.textContent).toBe('saving…');
+
+        alert.show('success', 'password changed');
+        vi.advanceTimersByTime(TAB_ALERT_SUCCESS_MS);
+        expect(alert.element.hidden).toBe(true);
+    });
+
+    it('a busy message after a timed one is not hidden by the old timer', () => {
+        const { section } = buildSection('Server');
+        const alert = buildTabAlert(section);
+        alert.show('success', 'done');
+        alert.show('busy', 'restarting → redirecting…');
+        vi.advanceTimersByTime(TAB_ALERT_ERROR_MS);
+        expect(alert.element.hidden).toBe(false);
+    });
+
+    it('clear hides it at once and stops its clock', () => {
+        const { section } = buildSection('Users');
+        const alert = buildTabAlert(section);
+        alert.show('error', 'nope');
+        alert.clear();
+        expect(alert.element.hidden).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('destroy stops the clock for good: nothing shows after the dialog closes', () => {
+        const { section } = buildSection('Users');
+        const alert = buildTabAlert(section);
+        alert.show('error', 'nope');
+        expect(vi.getTimerCount()).toBe(1);
+        alert.destroy();
+        expect(vi.getTimerCount()).toBe(0);
+        // An action that answers after the close says nothing and starts nothing.
+        alert.show('success', 'late');
+        expect(alert.element.textContent).toBe('nope');
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('destroyTabAlerts destroys every line inside a root', () => {
+        const root = document.createElement('div');
+        const a = buildSection('Users');
+        const b = buildSection('Server');
+        root.append(a.section, b.section);
+        const one = buildTabAlert(a.section);
+        const two = buildTabAlert(b.section);
+        one.show('error', 'x');
+        two.show('success', 'y');
+        expect(vi.getTimerCount()).toBe(2);
+        destroyTabAlerts(root);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('tabAlertIn finds the line of a tab body, or nothing', () => {
+        const { section } = buildSection('Users');
+        expect(tabAlertIn(section)).toBeNull();
+        const alert = buildTabAlert(section);
+        const body = document.createElement('div');
+        body.appendChild(section);
+        expect(tabAlertIn(body)).toBe(alert);
+        expect(tabAlertIn(alert.element)).toBe(alert);
+    });
+
+    it('puts an echoed value in through textContent, never as markup', () => {
+        const { section } = buildSection('Local HTTPS');
+        const alert = buildTabAlert(section);
+        alert.show('success', 'accepts ', { echo: '<img src=x onerror=alert(1)>' }, '.');
+        expect(alert.element.querySelector('img')).toBeNull();
+        expect(alert.element.textContent).toBe('accepts <img src=x onerror=alert(1)>.');
     });
 });

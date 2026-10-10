@@ -482,6 +482,51 @@ describe('a list re-read that fails', () => {
     });
 });
 
+// 0.5.5: a revoke that never reached the server is the action's result, so it
+// goes on the tab's status line, and the list is drawn again as it was. It used
+// to replace the list with "could not reach the server." as if the list itself
+// could not be read.
+describe('a revoke that never reaches the server', () => {
+    it('says so on the tab line, below the card, and leaves the list as it was', async () => {
+        HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+            this.setAttribute('open', '');
+        });
+        HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+            this.removeAttribute('open');
+        });
+        approved = ['https://frame.example'];
+        const ui = await buildTab();
+        const realFetch = globalThis.fetch;
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string, init?: RequestInit) =>
+                url === '/api/embed-origins/revoke'
+                    ? Promise.reject(new TypeError('Failed to fetch'))
+                    : realFetch(url, init),
+            ),
+        );
+
+        [...ui.section.querySelectorAll('button')].find((b) => b.textContent === 'revoke')?.click();
+        await flush();
+        [...document.querySelectorAll<HTMLButtonElement>('dialog.confirm-modal button')]
+            .find((b) => b.textContent === 'ok')
+            ?.click();
+        await flush();
+
+        const line = ui.section.querySelector<HTMLElement>(':scope > [data-settings-alert]');
+        expect(line?.hidden).toBe(false);
+        expect(line?.textContent).toBe('could not reach the server.');
+        expect(line?.classList.contains('settings-status-error')).toBe(true);
+        expect(ui.section.querySelector('.settings-card')?.contains(line ?? null)).toBe(false);
+        // The list is the list: the origin with a working revoke button, no error row.
+        expect(ui.listText()).toContain('https://frame.example');
+        expect(ui.listText()).not.toContain('could not reach');
+        const revoke = [...ui.section.querySelectorAll('button')].find((b) => b.textContent === 'revoke');
+        expect(revoke?.disabled).toBe(false);
+        expect(ui.adder.hidden).toBe(false);
+    });
+});
+
 describe('removing a pending entry before Save', () => {
     it('drops it, and the dialog is clean again once nothing is pending', async () => {
         const ui = await buildTab();
