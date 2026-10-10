@@ -1161,26 +1161,6 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     }
 
     /**
-     * Container mode's decision for the install-lifecycle rows, made explicitly.
-     * A container never fetches /api/service/status (SettingsModal gates Service
-     * and Updates first and returns), so `applyServiceStatus` is never reached
-     * there; the rows used to stay hidden only because they are built hidden.
-     * This asks `appSectionButtonsState` the question a Linux host would ask
-     * (the image is Linux by construction) with `docker: true`, so removing its
-     * container check would reveal the rows, and the container spec would see it.
-     * "stop server & exit" is left alone: it is correct in a container (row 20.6).
-     *
-     * Two more container decisions live here (row 20.19):
-     * - the http port row is hidden: the port inside the image is always 8000,
-     *   docker's port mapping picks the one users reach, and the server refuses
-     *   the field. The https port row goes with it, notes and all: Local HTTPS
-     *   is not supported in a container, and the server refuses that field too;
-     * - "reset all my settings" stops sending the first-run reset (see
-     *   buildResetControl).
-     * The third, Local HTTPS shown as a reverse-proxy note, belongs to the Local
-     * HTTPS tab since 0.5.3 (LocalHttpsTab.ts's `applyLocalHttpsContainerMode`).
-     */
-    /**
      * The admin API will not answer this page (item 81's rule, 0.5.5): hold
      * back every control that stages or posts an admin change and say why
      * once. Since 0.5.8 the Ports and Application cards are hidden, headings
@@ -1206,6 +1186,26 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         if (adminUnreachableCard) setCardShown(adminUnreachableCard, true);
     }
 
+    /**
+     * Container mode's decision for the install-lifecycle rows, made explicitly.
+     * A container never fetches /api/service/status (SettingsModal gates Service
+     * and Updates first and returns), so `applyServiceStatus` is never reached
+     * there; the rows used to stay hidden only because they are built hidden.
+     * This asks `appSectionButtonsState` the question a Linux host would ask
+     * (the image is Linux by construction) with `docker: true`, so removing its
+     * container check would reveal the rows, and the container spec would see it.
+     * "stop server & exit" is left alone: it is correct in a container (row 20.6).
+     *
+     * Two more container decisions live here (row 20.19):
+     * - the http port row is hidden: the port inside the image is always 8000,
+     *   docker's port mapping picks the one users reach, and the server refuses
+     *   the field. The https port row goes with it, notes and all: Local HTTPS
+     *   is not supported in a container, and the server refuses that field too;
+     * - "reset all my settings" stops sending the first-run reset (see
+     *   buildResetControl).
+     * The third, Local HTTPS shown as a reverse-proxy note, belongs to the Local
+     * HTTPS tab since 0.5.3 (LocalHttpsTab.ts's `applyLocalHttpsContainerMode`).
+     */
     function applyContainerMode(): void {
         containerMode = true;
         applyAppRows(appSectionButtonsState({ platform: 'linux', docker: true }), 'container');
