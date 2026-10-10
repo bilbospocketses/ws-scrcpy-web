@@ -196,9 +196,14 @@ const refreshers = new WeakMap<HTMLElement, (callbacks: ServiceTabCallbacks) => 
  *
  * An install or uninstall that fails says so on the tab's status line, below
  * the card, and leaves the card as it was, button and all, so the user can try
- * again (0.5.5; it used to replace the card with the error and a retry). What
- * stays IN the card is state: the status read's own failure, which has nothing
- * else to show, and the note after a system-scope uninstall.
+ * again (0.5.5; it used to replace the card with the error and a retry). One
+ * that HAPPENED but whose hand-off was not seen to finish (the install's
+ * take-over timed out, or no fresh instance turned up after an uninstall) is
+ * not a failure: the button would repeat an action that already ran, so the
+ * card is read again instead and shows the service as it now is, with the
+ * message on the line (`settleAction`). What stays IN the card is state: the
+ * status read's own failure, which has nothing else to show, and the note
+ * after a system-scope uninstall.
  */
 export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
     // `body` is the tab's card: everything below renders into it, one item per setting.
@@ -331,7 +336,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
             btn.className = 'settings-btn settings-btn-ready';
             btn.textContent = 'not installed — install?';
             btn.addEventListener('click', () => {
-                void onInstallService(btn);
+                void onInstallService(btn, callbacks);
             });
         } else {
             btn.className = 'settings-btn settings-btn-danger';
@@ -373,6 +378,18 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         tabAlert.show('error', msg);
     }
 
+    /**
+     * An install or uninstall that DID happen, but whose hand-off was not seen
+     * to finish. Its button must not come back, since clicking it would repeat
+     * the action: say so on the tab's line and read the status again, so the
+     * card shows the service as it is now (or the read's own failure, with its
+     * retry, if this page's server has gone).
+     */
+    function settleAction(msg: string, callbacks: ServiceTabCallbacks): void {
+        tabAlert.show('error', msg);
+        void runRefresh(callbacks);
+    }
+
     async function runRefresh(callbacks: ServiceTabCallbacks): Promise<void> {
         body.replaceChildren();
         const loading = document.createElement('p');
@@ -400,7 +417,7 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         renderServiceState(resp, callbacks);
     }
 
-    async function onInstallService(btn: HTMLButtonElement): Promise<void> {
+    async function onInstallService(btn: HTMLButtonElement, callbacks: ServiceTabCallbacks): Promise<void> {
         const isLinux = servicePlatform === 'linux';
         const isSystemScope = serviceScopeSystemRadio?.checked ?? false;
 
@@ -467,7 +484,8 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                 },
                 onTimeout: () => {
                     modal.close();
-                    failAction(btn, prevText, INSTALL_HANDOFF_TIMEOUT_MESSAGE);
+                    // The install ran; only the take-over was not seen.
+                    settleAction(INSTALL_HANDOFF_TIMEOUT_MESSAGE, callbacks);
                 },
             });
         } catch {
@@ -556,11 +574,8 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
                     if (iterations > maxIterations) {
                         clearInterval(poll);
                         modal.close();
-                        failAction(
-                            btn,
-                            prevText,
-                            'service uninstalled but fresh instance not detected. try reloading.',
-                        );
+                        // The uninstall ran; only the relaunch was not seen.
+                        settleAction('service uninstalled but fresh instance not detected. try reloading.', callbacks);
                         return;
                     }
                     try {
