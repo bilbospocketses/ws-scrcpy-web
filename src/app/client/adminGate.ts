@@ -71,19 +71,31 @@ export const ADMIN_ONLY_NOTE = 'only an admin can change these settings.';
 export type AdminRefusal = 'operator' | 'role';
 
 /**
- * Why the server refused an admin read, or null when it did not refuse (any
- * status but 403), read from the 403's body (0.5.6):
+ * Which refusal a 403's body is (0.5.6), or null when it is not one this page
+ * can act on:
  * - `operator`: `requireOperator` refused this page, which is not the
  *   operator, so every admin call from here will be refused the same way;
- * - `role`: any other 403, which is `requireAdmin` refusing a user who is not
- *   an admin.
- *
- * Neither is worth a retry: only a network failure or a server error can
- * answer differently next time. Reads the body, so call it only on a response
- * whose body nothing else will read.
+ * - `role`: `requireAdmin`'s bare `{"error":"forbidden"}`, a user who is not
+ *   an admin;
+ * - null for anything else, the stale-token refusal above all
+ *   (`isStaleTokenRefusal`: `forbidden` WITH a `reason`), which says the
+ *   server process changed under this page, not that this page may not ask.
+ */
+export function refusalFromBody(status: number, body: unknown): AdminRefusal | null {
+    if (status !== 403 || typeof body !== 'object' || body === null) return null;
+    const { error, reason } = body as { error?: unknown; reason?: unknown };
+    if (error === OPERATOR_REFUSAL_ERROR) return 'operator';
+    if (error === 'forbidden' && reason === undefined) return 'role';
+    return null;
+}
+
+/**
+ * Why the server refused an admin read, or null when it did not refuse it
+ * (`refusalFromBody`; any status but 403 is null). A refusal is not worth a
+ * retry; a null is a failure like any other, and keeps its retry. Reads the
+ * body, so call it only on a response whose body nothing else will read.
  */
 export async function adminRefusal(res: Response): Promise<AdminRefusal | null> {
     if (res.status !== 403) return null;
-    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-    return body?.error === OPERATOR_REFUSAL_ERROR ? 'operator' : 'role';
+    return refusalFromBody(res.status, await res.json().catch(() => null));
 }

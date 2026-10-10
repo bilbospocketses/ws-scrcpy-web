@@ -1221,14 +1221,6 @@ export class SettingsModal extends Modal {
     }
 
     /**
-     * Replace the Updates, Service, Dependencies and Local HTTPS bodies with
-     * `buildAdminUnreachableSection` where the admin API will not answer this
-     * page, the way `applyDockerGating` replaces them in a container (and
-     * through `TabStrip.replaceTabBody` for the same reasons). None of the four
-     * has started anything: their refreshes are all held behind `canUse`. The
-     * refs are dropped so nothing drives a detached body later.
-     */
-    /**
      * A tab's admin read was refused as not from the operator
      * (`ctx.onAdminRefused`; 0.5.6), though `adminReachable` said the admin API
      * would answer: it fails open when the runtime probe itself fails. Does now
@@ -1249,6 +1241,16 @@ export class SettingsModal extends Modal {
         announceAdminAccessLost();
     }
 
+    /**
+     * Replace the Updates, Service, Dependencies and Local HTTPS bodies with
+     * `buildAdminUnreachableSection` where the admin API will not answer this
+     * page, the way `applyDockerGating` replaces them in a container (and
+     * through `TabStrip.replaceTabBody` for the same reasons). From the
+     * post-probe block none of the four has started anything, since their
+     * refreshes are all held behind `canUse`; from `onAdminRefused` they have,
+     * which is why it stops the Dependencies panel's poll first. The refs are
+     * dropped so nothing drives a detached body later.
+     */
     private applyAdminUnreachableNotes(): void {
         const notes: Array<[string, string]> = [
             ['updates', 'Updates'],

@@ -11,6 +11,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OPERATOR_REFUSAL_ERROR } from '../../../../common/remoteAdmin';
+import { authClient } from '../../AuthClient';
 import { ADMIN_ONLY_NOTE, ADMIN_UNREACHABLE_NOTE, adminRefusal } from '../../adminGate';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { askUnbound, type TabContext } from '../tabs/EmbeddingTab';
@@ -44,7 +45,16 @@ const respond = (status: number, body: unknown): Response =>
 
 const OPERATOR_403 = (): Response => respond(403, { error: OPERATOR_REFUSAL_ERROR });
 const ROLE_403 = (): Response => respond(403, { error: 'forbidden' });
+/** The request gate's answer to a page whose server process has changed (`isStaleTokenRefusal`). */
+const STALE_TOKEN_403 = (): Response => respond(403, { error: 'forbidden', reason: 'missing or invalid token' });
 const SERVER_500 = (): Response => respond(500, { error: 'boom' });
+
+/** The one shown refusal note in `el`, asserting it is shown, not just present. */
+function shownNote(el: HTMLElement, hook: 'data-admin-unreachable-note' | 'data-admin-only-note'): HTMLElement {
+    const notes = [...el.querySelectorAll<HTMLElement>(`[${hook}]`)].filter((n) => !n.hidden);
+    expect(notes, hook).toHaveLength(1);
+    return notes[0]!;
+}
 
 function context(onAdminRefused = vi.fn()): TabContext & { onAdminRefused: ReturnType<typeof vi.fn> } {
     return {
@@ -72,9 +82,14 @@ describe('adminRefusal', () => {
         expect(await adminRefusal(OPERATOR_403())).toBe('operator');
     });
 
-    it('reads any other 403 as a role refusal, a body it cannot parse included', async () => {
+    it("reads requireAdmin's bare forbidden as a role refusal", async () => {
         expect(await adminRefusal(ROLE_403())).toBe('role');
-        expect(await adminRefusal(respond(403, undefined))).toBe('role');
+    });
+
+    it('is null for a stale token, an unknown 403 and a body it cannot parse: those keep their retry', async () => {
+        expect(await adminRefusal(STALE_TOKEN_403())).toBeNull();
+        expect(await adminRefusal(respond(403, { error: 'something else' }))).toBeNull();
+        expect(await adminRefusal(respond(403, undefined))).toBeNull();
     });
 
     it('is null for anything but a 403', async () => {
@@ -95,9 +110,7 @@ describe('Updates: the status read', () => {
 
     it('an operator refusal says why, offers no retry, and tells the dialog', async () => {
         const { el, ctx } = await mount(OPERATOR_403);
-        const note = el.querySelector<HTMLElement>('.settings-card [data-admin-unreachable-note]')!;
-        expect(note.hidden).toBe(false);
-        expect(note.textContent).toBe(ADMIN_UNREACHABLE_NOTE);
+        expect(shownNote(el, 'data-admin-unreachable-note').textContent).toBe(ADMIN_UNREACHABLE_NOTE);
         expect(buttonsIn(el)).toEqual([]);
         expect(el.textContent).not.toContain("couldn't reach server");
         expect(ctx.onAdminRefused).toHaveBeenCalledTimes(1);
@@ -105,7 +118,7 @@ describe('Updates: the status read', () => {
 
     it('a role refusal says only an admin can change these, with no retry, and does not tell the dialog', async () => {
         const { el, ctx } = await mount(ROLE_403);
-        expect(el.querySelector('[data-admin-only-note]')?.textContent).toBe(ADMIN_ONLY_NOTE);
+        expect(shownNote(el, 'data-admin-only-note').textContent).toBe(ADMIN_ONLY_NOTE);
         expect(el.querySelector('[data-admin-unreachable-note]')).toBeNull();
         expect(buttonsIn(el)).toEqual([]);
         expect(ctx.onAdminRefused).not.toHaveBeenCalled();
@@ -114,6 +127,7 @@ describe('Updates: the status read', () => {
     it.each([
         ['a server error', SERVER_500],
         ['a network failure', () => Promise.reject(new TypeError('Failed to fetch'))],
+        ['a stale token (the server process changed under the page)', STALE_TOKEN_403],
     ])('%s keeps "couldn\'t reach server" and its retry', async (_label, answer) => {
         const { el, ctx } = await mount(answer as () => Response);
         expect(el.querySelector('.settings-card')!.textContent).toContain("couldn't reach server");
@@ -138,9 +152,7 @@ describe('Service: the status read', () => {
 
     it('an operator refusal says why, offers no retry, and tells Local HTTPS and the dialog', async () => {
         const { el, ctx, callbacks } = await mount(OPERATOR_403);
-        expect(el.querySelector('.settings-card [data-admin-unreachable-note]')?.textContent).toBe(
-            ADMIN_UNREACHABLE_NOTE,
-        );
+        expect(shownNote(el, 'data-admin-unreachable-note').textContent).toBe(ADMIN_UNREACHABLE_NOTE);
         expect(buttonsIn(el)).toEqual([]);
         expect(callbacks.onServiceStatusRefused).toHaveBeenCalledWith('operator');
         expect(callbacks.onServiceStatusFailed).not.toHaveBeenCalled();
@@ -149,14 +161,17 @@ describe('Service: the status read', () => {
 
     it('a role refusal says only an admin can change these, and tells Local HTTPS but not the dialog', async () => {
         const { el, ctx, callbacks } = await mount(ROLE_403);
-        expect(el.querySelector('[data-admin-only-note]')?.textContent).toBe(ADMIN_ONLY_NOTE);
+        expect(shownNote(el, 'data-admin-only-note').textContent).toBe(ADMIN_ONLY_NOTE);
         expect(buttonsIn(el)).toEqual([]);
         expect(callbacks.onServiceStatusRefused).toHaveBeenCalledWith('role');
         expect(ctx.onAdminRefused).not.toHaveBeenCalled();
     });
 
-    it('a server error keeps "couldn\'t reach server" and its retry', async () => {
-        const { el, ctx, callbacks } = await mount(SERVER_500);
+    it.each([
+        ['a server error', SERVER_500],
+        ['a stale token (the server process changed under the page)', STALE_TOKEN_403],
+    ])('%s keeps "couldn\'t reach server" and its retry', async (_label, answer) => {
+        const { el, ctx, callbacks } = await mount(answer);
         expect(el.querySelector('.settings-card')!.textContent).toContain("couldn't reach server");
         expect(buttonsIn(el)).toEqual(['retry']);
         expect(callbacks.onServiceStatusFailed).toHaveBeenCalledTimes(1);
@@ -218,7 +233,7 @@ describe('Local HTTPS: its own certificate-state read', () => {
 
     it('a role refusal says only an admin can change these, with no retry', async () => {
         const { el, ctx } = await mount(ROLE_403);
-        expect(el.querySelector('[data-admin-only-note]')?.textContent).toBe(ADMIN_ONLY_NOTE);
+        expect(shownNote(el, 'data-admin-only-note').textContent).toBe(ADMIN_ONLY_NOTE);
         expect(el.querySelector('[data-local-https-retry]')).toBeNull();
         expect(el.querySelector('[data-tls-generate]')).toBeNull();
         expect(ctx.onAdminRefused).not.toHaveBeenCalled();
@@ -226,9 +241,16 @@ describe('Local HTTPS: its own certificate-state read', () => {
 
     it('an operator refusal says why, with no retry, and tells the dialog', async () => {
         const { el, ctx } = await mount(OPERATOR_403);
-        expect(el.querySelector('[data-admin-unreachable-note]')?.textContent).toBe(ADMIN_UNREACHABLE_NOTE);
+        expect(shownNote(el, 'data-admin-unreachable-note').textContent).toBe(ADMIN_UNREACHABLE_NOTE);
         expect(el.querySelector('[data-local-https-retry]')).toBeNull();
         expect(ctx.onAdminRefused).toHaveBeenCalledTimes(1);
+    });
+
+    it('a stale token is a failure, not a refusal: it keeps the retry', async () => {
+        const { el, ctx } = await mount(STALE_TOKEN_403);
+        expect(el.querySelector('[data-local-https-retry]')).not.toBeNull();
+        expect(el.querySelector('[data-admin-only-note]')).toBeNull();
+        expect(ctx.onAdminRefused).not.toHaveBeenCalled();
     });
 
     it('a refused service-status read says why, with no retry, and a later status builds nothing over it', async () => {
@@ -236,13 +258,33 @@ describe('Local HTTPS: its own certificate-state read', () => {
         vi.stubGlobal('fetch', f);
         const el = buildLocalHttpsTab(context());
         applyLocalHttpsServiceStatusRefused(el, 'role');
-        expect(el.querySelector('[data-admin-only-note]')?.textContent).toBe(ADMIN_ONLY_NOTE);
+        expect(shownNote(el, 'data-admin-only-note').textContent).toBe(ADMIN_ONLY_NOTE);
         expect(el.querySelector('[data-local-https-retry]')).toBeNull();
 
         applyLocalHttpsServiceStatus(el, serviceStatus);
         await flush();
         expect(el.querySelector('[data-tls-generate]')).toBeNull();
         expect(f).not.toHaveBeenCalled();
+    });
+});
+
+describe('Users: a login click in flight when the controls are held back', () => {
+    it('does not give the button back when it fails', async () => {
+        let fail: (e: Error) => void = () => undefined;
+        vi.spyOn(authClient, 'enableAuth').mockReturnValue(
+            new Promise((_resolve, reject) => {
+                fail = reject;
+            }),
+        );
+        const el = buildUsersTab(context(), new StagedSettingsStore());
+        const enable = [...el.querySelectorAll<HTMLButtonElement>('.settings-card button')].find(
+            (b) => b.textContent === 'enable login',
+        )!;
+        enable.click();
+        applyUsersAdminUnreachable(el);
+        fail(new Error('refused'));
+        await flush();
+        expect(enable.disabled).toBe(true);
     });
 });
 

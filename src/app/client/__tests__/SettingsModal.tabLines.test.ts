@@ -236,15 +236,29 @@ describe('where the admin API will not answer this page', () => {
             if (url === '/api/config')
                 return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) });
             if (url === '/api/updates/status' || url === '/api/service/status') return operator403();
+            // The Dependencies panel mounts and starts its 15 s poll.
+            if (url === '/api/dependencies') {
+                return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+            }
             return new Promise(() => undefined);
         });
         vi.stubGlobal('fetch', f);
+        const depsReads = () => f.mock.calls.filter((c) => c[0] === '/api/dependencies').length;
         const lost = vi.fn();
         window.addEventListener(ADMIN_ACCESS_LOST_EVENT, lost);
+        // Only the intervals are faked: `flush` still runs on real timeouts.
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
         try {
             new SettingsModal();
             await flush();
+            // The panel's poll is stopped with it (§36): no read follows the refusal.
+            const before = depsReads();
+            expect(before).toBeGreaterThan(0);
+            vi.advanceTimersByTime(31_000);
+            await flush();
+            expect(depsReads()).toBe(before);
         } finally {
+            vi.useRealTimers();
             window.removeEventListener(ADMIN_ACCESS_LOST_EVENT, lost);
         }
 
@@ -263,10 +277,17 @@ describe('where the admin API will not answer this page', () => {
         for (const b of byTitle('Users')!.querySelectorAll<HTMLButtonElement>('.settings-card button')) {
             expect(b.disabled, b.textContent ?? '').toBe(true);
         }
-        const stop = [...byTitle('Server')!.querySelectorAll('button')].find(
-            (b) => b.textContent === 'stop server & exit',
-        );
+        const server = byTitle('Server')!;
+        const stop = [...server.querySelectorAll('button')].find((b) => b.textContent === 'stop server & exit');
         expect(stop?.disabled).toBe(true);
+        for (const input of server.querySelectorAll<HTMLInputElement>('input[type="number"]')) {
+            expect(input.disabled).toBe(true);
+        }
+        // Embedding: its list held back with the note, and nothing to add.
+        const embedding = byTitle('Embedding')!;
+        const embedNote = embedding.querySelector<HTMLElement>('[data-embed-list] [data-admin-unreachable-note]');
+        expect(embedNote?.textContent).toBe('admin changes are limited to the machine running the server.');
+        expect(embedding.querySelector<HTMLElement>('[data-embed-add]')!.hidden).toBe(true);
     });
 
     it('on another machine with remote admin on, Embedding is not read: it answers this machine only', async () => {

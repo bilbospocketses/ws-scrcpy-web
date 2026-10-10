@@ -120,6 +120,9 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
     //    Settings that needs a reload — buildResetControl, buildInstallAllUsersControl).
     //    A failure is reported on the tab's line, below the card (`tabAlert`).
     let loginBtn: HTMLButtonElement;
+    // Set once the controls are held back (`holdBack`): a click already on its
+    // way out when that happened must not give the button back when it fails.
+    let heldBack = false;
     if (ctx.authEnabled) {
         const disableBtn = document.createElement('button');
         disableBtn.type = 'button';
@@ -133,7 +136,7 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
                     ctx.reload();
                 } catch {
                     tabAlert.show('error', 'failed to disable login — see server logs.');
-                    disableBtn.disabled = false;
+                    disableBtn.disabled = heldBack;
                 }
             })();
         });
@@ -159,10 +162,10 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
                             ? 'Add a user with an admin password first (Users → manage users)'
                             : `failed to enable login (${res.status})`,
                     );
-                    enableBtn.disabled = false;
+                    enableBtn.disabled = heldBack;
                 } catch {
                     tabAlert.show('error', 'failed to enable login — could not reach server.');
-                    enableBtn.disabled = false;
+                    enableBtn.disabled = heldBack;
                 }
             })();
         });
@@ -178,6 +181,7 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
     card.appendChild(remote.item);
 
     function holdBack(): void {
+        heldBack = true;
         manageBtn.disabled = true;
         loginBtn.disabled = true;
         unreachableNote.hidden = false;

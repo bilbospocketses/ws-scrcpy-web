@@ -1353,7 +1353,11 @@ const dependencyInstalledAppliers = new WeakMap<HTMLElement, () => Promise<void>
  *
  * Until either arrives the tab holds a placeholder section under the same
  * heading; if the status read fails, `applyLocalHttpsServiceStatusFailed()`
- * turns that placeholder into "couldn't reach server" with a retry button. The root is a plain `<div>`, not a `.settings-section`, so exactly one
+ * turns that placeholder into "couldn't reach server" with a retry button, and
+ * if it is refused, `applyLocalHttpsServiceStatusRefused()` says why with no
+ * retry. The panel's own /api/tls/state read does the same in the placeholder
+ * (0.5.6): a failure offers a retry that builds the panel again, a refusal
+ * says why. The root is a plain `<div>`, not a `.settings-section`, so exactly one
  * `section.settings-section` with the "Local HTTPS" heading exists at any time.
  *
  * Registers nothing with a `StagedSettingsStore`: every control in the panel
@@ -1375,9 +1379,11 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
     buildTabAlert(placeholder.section);
     root.appendChild(placeholder.section);
 
-    // Set once the panel or the container note has replaced the placeholder;
-    // neither is ever rebuilt (a rebuild would re-fetch /api/tls/state and blow
-    // away whatever the user is mid-typing in the subject/port fields).
+    // Set once the tab has been decided: the panel is being built, or the
+    // container note or a refusal has replaced the placeholder. A built panel is
+    // never rebuilt (a rebuild would re-fetch /api/tls/state and blow away
+    // whatever the user is mid-typing in the subject field); only a panel whose
+    // state read failed is built again, from its retry, with nothing typed to lose.
     let decided = false;
     // The built panel, once `buildLocalHttpsPanel` has resolved; what a
     // dependency install re-checks mkcert on (applyDependencyInstalled).

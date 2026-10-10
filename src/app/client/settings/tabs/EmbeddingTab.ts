@@ -6,8 +6,9 @@ import {
     isEmbedderScheme,
 } from '../../../../common/embedderOrigin';
 import type { Role } from '../../AuthClient';
-import { ADMIN_UNREACHABLE_NOTE } from '../../adminGate';
+import { ADMIN_ONLY_NOTE, ADMIN_UNREACHABLE_NOTE, refusalFromBody } from '../../adminGate';
 import { ConfirmModal } from '../../ConfirmModal';
+import { isStaleTokenRefusal } from '../../staleToken';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import { buildItem, buildRow, buildSection, buildTabAlert, type TabAlert } from '../settingsLayout';
 
@@ -183,6 +184,8 @@ interface EmbeddingView {
     alert: TabAlert;
     /** The list will not be read on this page (`applyEmbeddingHeldBack`): say why, offer nothing. */
     heldBack: boolean;
+    /** The server refused the list because this user is not an admin (0.5.6): say so, offer nothing. */
+    adminOnly: boolean;
 }
 
 /**
@@ -226,6 +229,7 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
         // the section and is its only one.
         alert: buildTabAlert(section),
         heldBack: false,
+        adminOnly: false,
     };
     view.adder = buildAddRow(view);
     card.append(list, view.adder);
@@ -263,12 +267,18 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
 async function refreshEmbedOrigins(view: EmbeddingView): Promise<void> {
     try {
         const res = await fetch('/api/embed-origins', { headers: { Accept: 'application/json' } });
-        if (res.status === 403) {
+        const body: unknown = res.status === 403 ? await res.json().catch(() => null) : null;
+        if (res.status === 403 && refusalFromBody(res.status, body) === 'role') {
+            // A user who is not an admin (0.5.6).
+            view.adminOnly = true;
+        } else if (res.status === 403 && !isStaleTokenRefusal(res.status, body)) {
             // Refused: the list answers only an admin on the machine itself,
             // whatever the remote-admin policy, so this is held back as the
             // dialog holds it back when it knows from the start; never an
             // error to retry (0.5.6). The rest of the dialog is not told: a
             // page this route refuses may still be an admin everywhere else.
+            // A stale token is not this: the server changed under the page,
+            // and that reads as the failure below.
             view.heldBack = true;
         } else if (!res.ok) {
             view.error = 'could not read the list — see server logs.';
@@ -292,11 +302,17 @@ function renderEmbedOrigins(view: EmbeddingView): void {
     list.textContent = '';
     // The add row needs the approved list for its duplicate check, and a list
     // that could not be read (another machine, say) means Save would be refused.
-    setAdderVisible(view.adder, view.approved !== null && view.error === null && !view.heldBack);
+    setAdderVisible(view.adder, view.approved !== null && view.error === null && !view.heldBack && !view.adminOnly);
     if (view.heldBack) {
         // Every add and revoke would only be refused from this page.
         const note = buildRow(ADMIN_UNREACHABLE_NOTE, null);
         note.setAttribute('data-admin-unreachable-note', '');
+        list.appendChild(note);
+        return;
+    }
+    if (view.adminOnly) {
+        const note = buildRow(ADMIN_ONLY_NOTE, null);
+        note.setAttribute('data-admin-only-note', '');
         list.appendChild(note);
         return;
     }
