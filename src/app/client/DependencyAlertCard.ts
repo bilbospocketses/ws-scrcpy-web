@@ -1,6 +1,7 @@
 import type { FirstRunStatus } from '../../common/ConfigEvents';
 import { type DependencyInfo, DependencyStatus } from '../../common/DependencyTypes';
 import type { Role } from './AuthClient';
+import { onAdminAccessLost } from './adminAccess';
 import { adminApiReachable, canSeeSection } from './adminGate';
 import { SettingsModal } from './SettingsModal';
 
@@ -50,6 +51,8 @@ export class DependencyAlertCard {
     private readonly container: HTMLElement;
     private readonly text: HTMLElement;
     private pollHandle: ReturnType<typeof setInterval> | null = null;
+    /** Removes the admin-access-lost listener `startPolling` adds. */
+    private stopListening: (() => void) | null = null;
 
     private readonly button: HTMLButtonElement;
 
@@ -142,6 +145,12 @@ export class DependencyAlertCard {
 
     private startPolling(): void {
         if (this.pollHandle !== null) return;
+        // This page lost its admin access (Settings saved remote admin off from
+        // this device): stop before the next tick lands on the refusal.
+        this.stopListening = onAdminAccessLost(() => {
+            this.container.hidden = true;
+            this.stopPolling();
+        });
         // Deliberately unconditional, unlike FirstRunBanner's self-stopping
         // poll: a dependency that is up to date now grows an update later, and
         // this card is the only place the home page would ever say so.
@@ -155,6 +164,8 @@ export class DependencyAlertCard {
             clearInterval(this.pollHandle);
             this.pollHandle = null;
         }
+        this.stopListening?.();
+        this.stopListening = null;
     }
 
     private async refresh(): Promise<void> {
@@ -167,6 +178,10 @@ export class DependencyAlertCard {
             // an alert out of it.
             if (!res.ok) {
                 this.container.hidden = true;
+                // Refused: the admin API no longer answers this page (0.5.5).
+                // Asking again every 15 s would only be refused again; the
+                // next page load decides afresh whether to poll at all.
+                if (res.status === 403) this.stopPolling();
                 return;
             }
             const deps: DependencyInfo[] = await res.json();

@@ -1,4 +1,5 @@
 import type { UpdatesStatusResponse } from '../../common/UpdateEvents';
+import { onAdminAccessLost } from './adminAccess';
 import { reasonToUserMessage } from './serviceFailureMessage';
 import { runUpgradingHandoff } from './UpgradingOverlay';
 import { classifyFailedApply, LostApplyWatch } from './updateApplyOutcome';
@@ -20,7 +21,11 @@ import { classifyFailedApply, LostApplyWatch } from './updateApplyOutcome';
  * status read.
  *
  * Polling cadence: 30s default; 2s while in 'downloading' state for fresher
- * progress, and while the chip's own install runs. Frontend never derives
+ * progress, and while the chip's own install runs. A read the server refuses
+ * (403: the admin API does not answer this page, or no longer does) hides the
+ * pill and stops the poll for good, never an error pill, and so does Settings
+ * announcing this page lost its admin access (`adminAccess.ts`, 0.5.5); the
+ * next page load decides afresh. Frontend never derives
  * state itself — backend is the source of truth (contracts decision 5). All
  * dynamic text uses textContent only; no innerHTML interpolation. The spinner
  * is CSS-only (.update-button-spinner has its own keyframes in home.css).
@@ -53,6 +58,8 @@ export function createUpdateButton(): HTMLElement {
      * it turns out not to have happened.
      */
     let lost: { watch: LostApplyWatch; reason: string } | null = null;
+    /** Set once the admin API refused this page: no more reads, nothing shown. */
+    let stopped = false;
 
     function installFailedNote(reason: string): string {
         return `install failed: ${reason} — click to retry`;
@@ -67,6 +74,7 @@ export function createUpdateButton(): HTMLElement {
 
     function scheduleTimer(ms: number): void {
         clearTimer();
+        if (stopped) return;
         currentPollMs = ms;
         pollTimer = window.setInterval(() => {
             void poll();
@@ -248,11 +256,25 @@ export function createUpdateButton(): HTMLElement {
         }
     }
 
+    /** The admin API does not answer this page: hide, and never read again. */
+    function stopForGood(): void {
+        stopped = true;
+        clearTimer();
+        renderHidden();
+    }
+
     async function poll(): Promise<void> {
+        if (stopped) return;
         const started = epoch;
         let s: UpdatesStatusResponse;
         try {
             const r = await fetch('/api/updates/status');
+            // Refused, not failed: nothing to retry, nothing to show. An apply
+            // in flight, or one being followed, is still decided below.
+            if (r.status === 403 && !applyInFlight && !lost) {
+                stopForGood();
+                return;
+            }
             if (!r.ok) throw new Error(`status ${r.status}`);
             s = (await r.json()) as UpdatesStatusResponse;
         } catch (err) {
@@ -429,6 +451,12 @@ export function createUpdateButton(): HTMLElement {
             btn.textContent = prevText;
         }
     }
+
+    // This page lost its admin access (Settings saved remote admin off from this
+    // device): stop before the next tick lands on the refusal.
+    onAdminAccessLost(() => {
+        if (!applyInFlight && !restarting) stopForGood();
+    });
 
     // Initial poll + start the slow timer. Hidden until first poll resolves.
     scheduleTimer(SLOW_POLL_MS);

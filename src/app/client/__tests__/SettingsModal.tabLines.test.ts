@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfigEnvelope, FirstRunStatus } from '../../../common/ConfigEvents';
 import { authClient } from '../AuthClient';
+import { ADMIN_ACCESS_LOST_EVENT } from '../adminAccess';
 import { SettingsModal } from '../SettingsModal';
 import { SettingsSummaryModal } from '../settings/SettingsSummaryModal';
 import { tabAlertIn } from '../settings/settingsLayout';
@@ -149,10 +150,10 @@ describe("a save's result goes to the tab on screen", () => {
 
         const line = activeBody().querySelector<HTMLElement>('[data-settings-alert]')!;
         expect(activeBody().querySelector('h3')?.textContent).toBe('Server');
-        expect(line.hidden).toBe(false);
+        expect(line.textContent).not.toBe('');
         expect(line.textContent).toBe("couldn't save Remote admin without sign-in: nope");
         const users = sections().find((s) => s.querySelector('h3')?.textContent === 'Users')!;
-        expect(users.querySelector<HTMLElement>('[data-settings-alert]')!.hidden).toBe(true);
+        expect(users.querySelector<HTMLElement>('[data-settings-alert]')!.textContent).toBe('');
     });
 });
 
@@ -172,6 +173,60 @@ describe('the Users tab hears /api/config', () => {
         await flush();
         const box = document.querySelector<HTMLInputElement>('input[data-remote-admin]')!;
         expect(box.closest<HTMLElement>('.settings-item')!.hidden).toBe(false);
+    });
+});
+
+describe('where the admin API will not answer this page', () => {
+    it('holds back every admin control and read, and says why on each tab', async () => {
+        const f = stubServer(() => envelope({ adminScope: 'local', callerIsLocal: false }, false));
+        new SettingsModal();
+        await flush();
+
+        // Nothing the server would refuse was asked.
+        const urls = f.mock.calls.map((c) => String(c[0]));
+        expect(urls.filter((u) => /^\/api\/(service|updates|tls|dependencies|embed-origins|users)/.test(u))).toEqual(
+            [],
+        );
+
+        const byTitle = (t: string) => sections().find((s) => s.querySelector('h3')?.textContent === t);
+        // Users: manage users and enable login disabled.
+        for (const b of byTitle('Users')!.querySelectorAll<HTMLButtonElement>('.settings-card button')) {
+            expect(b.disabled, b.textContent ?? '').toBe(true);
+        }
+        // Server: the ports and stop & exit disabled.
+        const server = byTitle('Server')!;
+        for (const input of server.querySelectorAll<HTMLInputElement>('input[type="number"]')) {
+            expect(input.disabled).toBe(true);
+        }
+        const stop = [...server.querySelectorAll('button')].find((b) => b.textContent === 'stop server & exit');
+        expect(stop?.disabled).toBe(true);
+        // Every affected tab says why, once.
+        for (const t of ['Users', 'Embedding', 'Updates', 'Service', 'Dependencies', 'Server', 'Local HTTPS']) {
+            const s =
+                t === 'Dependencies' ? sections().find((x) => x.dataset['settingsTab'] === 'dependencies') : byTitle(t);
+            const shown = [...(s?.querySelectorAll<HTMLElement>('[data-admin-unreachable-note]') ?? [])].filter(
+                (n) => !n.hidden,
+            );
+            expect(shown, t).toHaveLength(1);
+            expect(shown[0]!.textContent, t).toBe('admin changes are limited to the machine running the server.');
+        }
+    });
+
+    it('where it answers, the Embedding list is read and no tab shows the note', async () => {
+        const f = stubServer(() => envelope({ adminScope: 'local', callerIsLocal: true }, false));
+        new SettingsModal();
+        await flush();
+        expect(f.mock.calls.map((c) => String(c[0]))).toContain('/api/embed-origins');
+        expect(
+            [...document.querySelectorAll<HTMLElement>('[data-admin-unreachable-note]')].filter((n) => !n.hidden),
+        ).toEqual([]);
+    });
+
+    it('on another machine with remote admin on, Embedding is not read: it answers this machine only', async () => {
+        const f = stubServer(() => envelope({ adminScope: 'remote', callerIsLocal: false }, true));
+        new SettingsModal();
+        await flush();
+        expect(f.mock.calls.map((c) => String(c[0]))).not.toContain('/api/embed-origins');
     });
 });
 
@@ -221,6 +276,54 @@ describe("a save that ends this device's admin access", () => {
         const since = f.mock.calls.slice(before).map((c) => String(c[0]));
         expect(since).toContain('/api/settings/batch');
         expect(since.filter((u) => /^\/api\/(dependencies|service|updates|tls)/.test(u))).toEqual([]);
+    });
+
+    it("tells the page's pollers to stop BEFORE the batch goes out", async () => {
+        const order: string[] = [];
+        window.addEventListener(ADMIN_ACCESS_LOST_EVENT, () => order.push('lost'));
+        let saved = false;
+        const f = stubServer(
+            () =>
+                saved
+                    ? envelope({ adminScope: 'local', callerIsLocal: false }, false)
+                    : envelope({ adminScope: 'remote', callerIsLocal: false }, true),
+            () => {
+                order.push('batch');
+                saved = true;
+                return { ok: true, applied: ['allowRemoteAdmin'] };
+            },
+        );
+        vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+        new SettingsModal();
+        await flush();
+        const box = document.querySelector<HTMLInputElement>('input[data-remote-admin]')!;
+        box.checked = false;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        document.querySelector<HTMLButtonElement>('dialog.settings-modal button.settings-save')!.click();
+        await flush();
+        await flush();
+        expect(order[0]).toBe('lost');
+        expect(order[1]).toBe('batch');
+        expect(f.mock.calls.filter((c) => c[0] === '/api/settings/batch')).toHaveLength(1);
+    });
+
+    it('does not tell them for a save that leaves this device an admin', async () => {
+        const order: string[] = [];
+        window.addEventListener(ADMIN_ACCESS_LOST_EVENT, () => order.push('lost'));
+        stubServer(
+            () => envelope({ adminScope: 'remote', callerIsLocal: true }, true),
+            () => ({ ok: true, applied: ['allowRemoteAdmin'] }),
+        );
+        vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+        new SettingsModal();
+        await flush();
+        const box = document.querySelector<HTMLInputElement>('input[data-remote-admin]')!;
+        box.checked = false;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        document.querySelector<HTMLButtonElement>('dialog.settings-modal button.settings-save')!.click();
+        await flush();
+        await flush();
+        expect(order).toEqual([]);
     });
 
     it('does nothing more when this device can still administer (sign-in or this machine)', async () => {

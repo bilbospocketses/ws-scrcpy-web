@@ -34,6 +34,8 @@
  * wraps the home page's dependency panel, which brings its own card.
  */
 
+import { ADMIN_UNREACHABLE_NOTE } from '../adminGate';
+
 /** A single-card tab: its title, and the one card its items go into. */
 export interface SettingsSection {
     section: HTMLElement;
@@ -235,7 +237,10 @@ const tabAlerts = new WeakMap<HTMLElement, TabAlert>();
  * above it, so the line is the last thing in the tab either way.
  *
  * `role="status"` makes it a polite live region, so a screen reader announces
- * the result without moving focus.
+ * the result without moving focus. It is never `hidden`: a live region that
+ * appears together with its text may not be announced at all, so the element
+ * stays in the accessibility tree and is EMPTY when idle, and modal.css's
+ * `.settings-tab-alert:empty` takes its margin away so it costs no room.
  */
 export function buildTabAlert(section: HTMLElement): TabAlert {
     const element = document.createElement('p');
@@ -243,7 +248,6 @@ export function buildTabAlert(section: HTMLElement): TabAlert {
     element.setAttribute('data-settings-alert', '');
     element.setAttribute('role', 'status');
     element.setAttribute('aria-live', 'polite');
-    element.hidden = true;
     section.appendChild(element);
 
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -252,6 +256,11 @@ export function buildTabAlert(section: HTMLElement): TabAlert {
     const stopClock = (): void => {
         if (timer !== null) clearTimeout(timer);
         timer = null;
+    };
+    /** Idle: no text (so `:empty` collapses it) and no tone. */
+    const empty = (): void => {
+        element.textContent = '';
+        element.classList.remove('settings-status-error', 'settings-status-ready');
     };
 
     const alert: TabAlert = {
@@ -269,21 +278,20 @@ export function buildTabAlert(section: HTMLElement): TabAlert {
                     element.appendChild(span);
                 }
             }
-            element.hidden = false;
             element.classList.toggle('settings-status-error', kind === 'error');
             element.classList.toggle('settings-status-ready', kind === 'success');
             if (kind === 'busy') return;
             timer = setTimeout(
                 () => {
                     timer = null;
-                    element.hidden = true;
+                    empty();
                 },
                 kind === 'success' ? TAB_ALERT_SUCCESS_MS : TAB_ALERT_ERROR_MS,
             );
         },
         clear() {
             stopClock();
-            element.hidden = true;
+            empty();
         },
         destroy() {
             destroyed = true;
@@ -303,4 +311,20 @@ export function tabAlertIn(root: HTMLElement): TabAlert | null {
 /** Destroy every status line inside `root`: the dialog is closing, or this body is being replaced. */
 export function destroyTabAlerts(root: HTMLElement): void {
     for (const el of root.querySelectorAll<HTMLElement>('[data-settings-alert]')) tabAlerts.get(el)?.destroy();
+}
+
+/**
+ * The muted note a tab shows, once, when its admin controls are held back
+ * because the admin API will not answer this page (`adminApiReachable` false;
+ * 0.5.5): `admin changes are limited to the machine running the server.`
+ * Built hidden, as its own item; the tab shows it when it learns.
+ */
+export function buildAdminUnreachableNote(): HTMLElement {
+    const note = document.createElement('p');
+    note.className = 'settings-status';
+    note.style.gridColumn = '1 / -1';
+    note.setAttribute('data-admin-unreachable-note', '');
+    note.textContent = ADMIN_UNREACHABLE_NOTE;
+    note.hidden = true;
+    return note;
 }

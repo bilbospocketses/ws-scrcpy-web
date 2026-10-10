@@ -5,7 +5,14 @@ import { adminApiReachable } from '../../adminGate';
 import { RemoteAdminWarningModal } from '../../RemoteAdminWarningModal';
 import { UsersModal } from '../../UsersModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildItem, buildRow, buildSection, buildTabAlert, setRowShown } from '../settingsLayout';
+import {
+    buildAdminUnreachableNote,
+    buildItem,
+    buildRow,
+    buildSection,
+    buildTabAlert,
+    setRowShown,
+} from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /** The staged field's summary label: `Remote admin without sign-in: off → on`. */
@@ -40,8 +47,9 @@ const configAppliers = new WeakMap<HTMLElement, (env: AppConfigEnvelope) => void
 /**
  * Hand a Users tab the /api/config envelope the dialog read, so its
  * remote-admin item can show the stored value, whether the environment forces
- * it, and whether sign-in is on. A no-op if `section` was never built through
- * `buildUsersTab`.
+ * it, and whether sign-in is on, and so the tab can hold back every admin
+ * control when the admin API will not answer this page (`adminApiReachable`).
+ * A no-op if `section` was never built through `buildUsersTab`.
  */
 export function applyUsersConfig(section: HTMLElement, env: AppConfigEnvelope): void {
     configAppliers.get(section)?.(env);
@@ -57,12 +65,21 @@ export function applyUsersConfig(section: HTMLElement, env: AppConfigEnvelope): 
  * screen lists it, and the dialog's Save applies it (SettingsBatchApi). It
  * moved here from the home page's banner, which could only turn it on and
  * then showed a warning nobody could dismiss.
+ *
+ * Where the admin API will not answer this page (another machine, sign-in off,
+ * remote admin off), every control here is disabled, with one note saying why
+ * at the top of the card: each of them would only be refused (0.5.5).
  */
 export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
     const { section, card } = buildSection('Users');
     // The tab's one status line. Built now, but it lands below the card all
     // the same: the card is already in the section and stays its last card.
     const tabAlert = buildTabAlert(section);
+
+    // Shown, first in the card, only when the admin API will not answer this
+    // page (applyUsersConfig).
+    const unreachableNote = buildAdminUnreachableNote();
+    card.appendChild(buildItem(unreachableNote));
 
     // 1. Manage users button — opens UsersModal (admin-only action).
     const manageBtn = document.createElement('button');
@@ -80,6 +97,7 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
     //    to window.location.reload(), matching every other action control in
     //    Settings that needs a reload — buildResetControl, buildInstallAllUsersControl).
     //    A failure is reported on the tab's line, below the card (`tabAlert`).
+    let loginBtn: HTMLButtonElement;
     if (ctx.authEnabled) {
         const disableBtn = document.createElement('button');
         disableBtn.type = 'button';
@@ -98,6 +116,7 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
             })();
         });
         card.appendChild(buildItem(buildRow('login', disableBtn)));
+        loginBtn = disableBtn;
     } else {
         const enableBtn = document.createElement('button');
         enableBtn.type = 'button';
@@ -126,6 +145,7 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
             })();
         });
         card.appendChild(buildItem(buildRow('login', enableBtn)));
+        loginBtn = enableBtn;
     }
 
     // 3. Remote admin without sign-in — STAGED. Hidden until the dialog hands
@@ -135,7 +155,14 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
     const remote = buildRemoteAdminItem(ctx, store);
     card.appendChild(remote.item);
 
-    configAppliers.set(section, remote.apply);
+    configAppliers.set(section, (env) => {
+        remote.apply(env);
+        // The remote-admin box is held back by `remote.apply` on the same rule.
+        if (adminApiReachable(env.runtime)) return;
+        manageBtn.disabled = true;
+        loginBtn.disabled = true;
+        unreachableNote.hidden = false;
+    });
     return section;
 }
 

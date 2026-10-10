@@ -495,7 +495,6 @@ describe('UpdatesTab', () => {
             await flush();
 
             const line = tabLineOf(el);
-            expect(line.hidden).toBe(false);
             expect(line.textContent).toBe('Administrative privileges were declined. Try again and approve the prompt.');
             expect(line.classList.contains('settings-status-error')).toBe(true);
             // The label is back on the state it showed before the click.
@@ -567,7 +566,6 @@ describe('UpdatesTab', () => {
             expect(actionStatusOf(el).textContent).toBe('update: v0.2.0');
             // ...but the reason the apply failed is still on screen, below the card.
             const line = tabLineOf(el);
-            expect(line.hidden).toBe(false);
             expect(line.textContent).toBe('apply failed: boom');
             expect(line.classList.contains('settings-status-error')).toBe(true);
         });
@@ -605,12 +603,12 @@ describe('UpdatesTab', () => {
                 );
                 applyBtnOf(el).click();
                 await vi.advanceTimersByTimeAsync(0);
-                expect(tabLineOf(el).hidden).toBe(false);
+                expect(tabLineOf(el).textContent).not.toBe('');
 
                 await vi.advanceTimersByTimeAsync(9_999);
-                expect(tabLineOf(el).hidden).toBe(false);
+                expect(tabLineOf(el).textContent).not.toBe('');
                 await vi.advanceTimersByTimeAsync(1);
-                expect(tabLineOf(el).hidden).toBe(true);
+                expect(tabLineOf(el).textContent).toBe('');
                 expect(actionStatusOf(el).textContent).toBe('update: v0.2.0');
             } finally {
                 vi.useRealTimers();
@@ -631,7 +629,7 @@ describe('UpdatesTab', () => {
             await flush();
 
             expect(tabLineOf(el).textContent).toBe('check failed (502)');
-            expect(tabLineOf(el).hidden).toBe(false);
+            expect(tabLineOf(el).textContent).not.toBe('');
             expect(actionStatusOf(el).textContent).toBe('up to date: v0.1.30');
             expect(actionStatusOf(el).classList.contains('settings-status-error')).toBe(false);
         });

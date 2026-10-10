@@ -4,7 +4,8 @@ import { REMOTE_ADMIN_ID } from '../../common/remoteAdmin';
 import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { authClient, type Role } from './AuthClient';
-import { adminApiReachable, canSeeSection } from './adminGate';
+import { announceAdminAccessLost } from './adminAccess';
+import { ADMIN_UNREACHABLE_NOTE, adminApiReachable, canSeeSection } from './adminGate';
 import { DEPENDENCY_INSTALLED_EVENT } from './DependencyPanel';
 import { closeIntent } from './settings/closeIntent';
 import { type BatchResult, runSave } from './settings/SaveRunner';
@@ -20,7 +21,13 @@ import {
 } from './settings/settingsLayout';
 import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
-import { applyEmbeddingContainerMode, buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
+import {
+    applyEmbeddingContainerMode,
+    applyEmbeddingHeldBack,
+    buildEmbeddingTab,
+    refreshEmbedding,
+    type TabContext,
+} from './settings/tabs/EmbeddingTab';
 import {
     applyLocalHttpsContainerMode,
     applyLocalHttpsDependencyInstalled,
@@ -30,6 +37,7 @@ import {
     TLS_CERT_CHANGED_EVENT,
 } from './settings/tabs/LocalHttpsTab';
 import {
+    applyServerAdminUnreachable,
     applyServerContainerMode,
     applyServerHostMode,
     applyServerServiceStatus,
@@ -39,7 +47,7 @@ import {
 } from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
 import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
-import { applyUsersConfig, buildUsersTab } from './settings/tabs/UsersTab';
+import { applyUsersConfig, buildUsersTab, REMOTE_ADMIN_OFF_BOX_WARNING } from './settings/tabs/UsersTab';
 
 /**
  * Settings modal — every tab in a card, each setting in a two-column grid.
@@ -151,6 +159,27 @@ export function buildDockerUpdatesNote(): HTMLElement {
  * `buildDockerNoteSection` already renders. The rule is "the note answers to the
  * same hooks its real body does", not "every note gets every hook".
  */
+/**
+ * What the Updates, Service, Dependencies and Local HTTPS tabs show where the
+ * admin API will not answer this page (`adminApiReachable` false, off a
+ * container): every one of their reads and controls would only be refused, so
+ * none is made, and the tab says why instead of "loading…" forever (0.5.5).
+ * `tabId` is the tab's `data-settings-tab` hook, which Dependencies needs to be
+ * found at all (see `buildDockerDependenciesNote`).
+ */
+export function buildAdminUnreachableSection(title: string, tabId: string): HTMLElement {
+    const { section, card } = buildSection(title);
+    section.dataset['settingsTab'] = tabId;
+    const note = document.createElement('p');
+    note.className = 'settings-status';
+    note.style.gridColumn = '1 / -1';
+    note.setAttribute('data-admin-unreachable-note', '');
+    note.textContent = ADMIN_UNREACHABLE_NOTE;
+    card.appendChild(buildItem(note));
+    buildTabAlert(section);
+    return section;
+}
+
 export function buildDockerDependenciesNote(): HTMLElement {
     const section = buildDockerNoteSection(
         'Dependencies',
@@ -386,11 +415,11 @@ export async function performDirtyClose(
  * from /api/config, the policy now in force, rather than worked out from the
  * batch.
  *
- * If so, Settings is opened again, on Users, where it can no longer act: the
- * new dialog reads the envelope as every dialog does and holds back each admin
- * read and poll the server would refuse (`adminApiReachable`). The dialog that
- * saved has closed by then, and its Dependencies poll with it, so nothing keeps
- * asking.
+ * If so, the page's pollers are told (`announceAdminAccessLost`; the save
+ * already told them before it went out, see `saveDeps`, and telling them twice
+ * is harmless), and Settings is opened again, on Users, where it can no longer
+ * act: the new dialog reads the envelope as every dialog does and holds back
+ * each admin read and control the server would refuse (`adminApiReachable`).
  */
 async function reopenIfAdminLost(): Promise<void> {
     try {
@@ -401,6 +430,7 @@ async function reopenIfAdminLost(): Promise<void> {
     } catch {
         return;
     }
+    announceAdminAccessLost();
     new SettingsModal({ initialTab: 'users' });
 }
 
@@ -604,6 +634,15 @@ export class SettingsModal extends Modal {
     private readonly saveDeps: SaveDeps = {
         confirm: (changes) => this.askChild(() => liveSaveDeps.confirm(changes), false),
         save: async (changes) => {
+            // A batch that ends this device's admin access (remote admin
+            // turned off by a device that is admin only because of it) stops
+            // the page's pollers BEFORE it goes out, so no tick can land on the
+            // refusal once it is applied. If the save then fails they stay
+            // stopped until the page is reloaded, which costs a badge, not a
+            // setting.
+            if (changes.some((c) => c.id === REMOTE_ADMIN_ID && c.warning === REMOTE_ADMIN_OFF_BOX_WARNING)) {
+                announceAdminAccessLost();
+            }
             const res = await liveSaveDeps.save(changes);
             if (res.ok) this.lastSaved = changes;
             return res;
@@ -689,6 +728,23 @@ export class SettingsModal extends Modal {
                     // the true answer is "not from here". Fails open when the probe
                     // itself failed, matching the role fail-open above.
                     this.adminReachable = runtime ? adminApiReachable(runtime) : true;
+                    // Where the admin API will not answer, every admin control
+                    // in the dialog is held back with a note saying why, so
+                    // nothing can be clicked into a 403 (0.5.5). Users decides
+                    // its own from the envelope (applyUsersConfig, above).
+                    if (!this.adminReachable && this.serverTabEl) applyServerAdminUnreachable(this.serverTabEl);
+                    // Embedding's list answers only an admin on the machine
+                    // itself (`requireLocalAdmin`), so it is read only there:
+                    // anywhere else it would be refused whatever the policy. An
+                    // unknown caller (a failed probe) reads, the fail-open
+                    // direction, as the tab did before the hold.
+                    if (this.embeddingTabEl) {
+                        if (this.adminReachable && runtime?.callerIsLocal !== false) {
+                            void refreshEmbedding(this.embeddingTabEl);
+                        } else {
+                            applyEmbeddingHeldBack(this.embeddingTabEl);
+                        }
+                    }
                     // The container branch runs FIRST and returns, so no tab
                     // gated by it ever starts anything.
                     //
@@ -724,6 +780,9 @@ export class SettingsModal extends Modal {
                     // A host: the Server tab's port rows, built hidden so none of
                     // their copy flashes in a container, can show now.
                     if (this.serverTabEl) applyServerHostMode(this.serverTabEl);
+                    // The tabs whose reads are held below say why, instead of
+                    // "loading…" forever.
+                    if (!this.adminReachable) this.applyAdminUnreachableNotes();
                     if (this.canUse('dependencies') && this.dependenciesTabEl) {
                         void refreshDependencies(this.dependenciesTabEl);
                     }
@@ -1147,6 +1206,33 @@ export class SettingsModal extends Modal {
         this.tabStrip?.replaceTabBody('dependencies', buildDockerDependenciesNote());
         this.updatesTabEl = null;
         this.dependenciesTabEl = null;
+    }
+
+    /**
+     * Replace the Updates, Service, Dependencies and Local HTTPS bodies with
+     * `buildAdminUnreachableSection` where the admin API will not answer this
+     * page, the way `applyDockerGating` replaces them in a container (and
+     * through `TabStrip.replaceTabBody` for the same reasons). None of the four
+     * has started anything: their refreshes are all held behind `canUse`. The
+     * refs are dropped so nothing drives a detached body later.
+     */
+    private applyAdminUnreachableNotes(): void {
+        const notes: Array<[string, string]> = [
+            ['updates', 'Updates'],
+            ['service', 'Service'],
+            ['dependencies', 'Dependencies'],
+            ['local-https', 'Local HTTPS'],
+        ];
+        for (const [id, title] of notes) {
+            const body = this.tabStrip?.body(id);
+            if (!body) continue;
+            destroyTabAlerts(body);
+            this.tabStrip?.replaceTabBody(id, buildAdminUnreachableSection(title, id));
+        }
+        this.updatesTabEl = null;
+        this.serviceTabEl = null;
+        this.dependenciesTabEl = null;
+        this.localHttpsTabEl = null;
     }
 
     /**

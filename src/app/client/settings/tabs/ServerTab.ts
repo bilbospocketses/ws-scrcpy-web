@@ -10,6 +10,7 @@ import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import {
     addCard,
+    buildAdminUnreachableNote,
     buildItem,
     buildRow,
     buildSplitSection,
@@ -467,6 +468,7 @@ const httpsRefreshers = new WeakMap<HTMLElement, () => Promise<void>>();
 const serviceStatusAppliers = new WeakMap<HTMLElement, (resp: ServiceStatusResponse) => void>();
 const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
 const hostModeAppliers = new WeakMap<HTMLElement, () => void>();
+const adminUnreachableAppliers = new WeakMap<HTMLElement, () => void>();
 
 /**
  * The Server tab — the consolidated app/server section (beta.62 folded the old
@@ -546,6 +548,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // Set by applyContainerMode. Read at click time by the reset control, which
     // is built before container mode is known.
     let containerMode = false;
+    // Set by applyAdminUnreachable: the admin API will not answer this page.
+    // Read at click time by the reset control, like `containerMode`.
+    let adminUnreachable = false;
+    let adminUnreachableNote: HTMLElement | null = null;
     // Set by applyServiceStatus. Read at click time by the uninstall control,
     // for the same reason.
     let servicePlatform: NodeJS.Platform | undefined;
@@ -557,7 +563,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     //    prefs are read fresh. In a container only the per-user half is sent.
     const reset = buildResetControl({
         reload: () => ctx.reload(),
-        sendFirstRunReset: () => !containerMode,
+        // The first-run half is a PATCH /api/config, an admin write: not
+        // sent where the server refuses it (a container, or a page the admin
+        // API will not answer). The per-user half is the user's own.
+        sendFirstRunReset: () => !containerMode && !adminUnreachable,
         askChild: ctx.askChild,
     });
     settingsCard.appendChild(buildItem(buildRow('reset all my settings', reset.button)));
@@ -828,6 +837,12 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         // always shows, so the card is never empty.
         const application = addCard(section, 'Application');
 
+        // Shown, first in the card, only when the admin API will not answer
+        // this page (applyAdminUnreachable): the one place the tab says why its
+        // admin controls are held back.
+        adminUnreachableNote = buildAdminUnreachableNote();
+        application.appendChild(buildItem(adminUnreachableNote));
+
         // 3. install for all users (Linux-only) — hidden until
         //    applyServerServiceStatus reveals it on Linux. POSTs
         //    /api/service/install-system-wide (pkexec → /opt → re-exec); the OS
@@ -987,7 +1002,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
     function applyHttpsGate(): void {
         const open = httpsGateOpen();
-        if (httpsPortInput) httpsPortInput.disabled = !open;
+        if (httpsPortInput) httpsPortInput.disabled = !open || adminUnreachable;
         if (httpsPortGateNote) httpsPortGateNote.hidden = open || !hostMode;
         updatePortDescriptions();
     }
@@ -1148,6 +1163,22 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
      * The third, Local HTTPS shown as a reverse-proxy note, belongs to the Local
      * HTTPS tab since 0.5.3 (LocalHttpsTab.ts's `applyLocalHttpsContainerMode`).
      */
+    /**
+     * The admin API will not answer this page (item 81's rule, 0.5.5): hold
+     * back every control that stages or posts an admin change -- the http port
+     * (the https port stays shut, since its read is never made), stop & exit --
+     * and say why once. Install for all users and uninstall never show, since
+     * the service status that reveals them is never read. Change password and
+     * log out are the user's own and stay.
+     */
+    function applyAdminUnreachable(): void {
+        adminUnreachable = true;
+        if (webPortInput) webPortInput.disabled = true;
+        if (httpsPortInput) httpsPortInput.disabled = true;
+        if (stopServerButton) stopServerButton.disabled = true;
+        if (adminUnreachableNote) adminUnreachableNote.hidden = false;
+    }
+
     function applyContainerMode(): void {
         containerMode = true;
         applyAppRows(appSectionButtonsState({ platform: 'linux', docker: true }), 'container');
@@ -1175,7 +1206,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         updateHttpsPrivilegeNotice();
         if (stopServerButton) {
             const stop = stopServerButtonState(resp);
-            stopServerButton.disabled = stop.disabled;
+            stopServerButton.disabled = stop.disabled || adminUnreachable;
             if (stopServerNote) {
                 stopServerNote.textContent = stop.note ?? '';
                 stopServerNote.hidden = stop.note === null;
@@ -1190,6 +1221,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     serviceStatusAppliers.set(section, applyServiceStatus);
     containerModeAppliers.set(section, applyContainerMode);
     hostModeAppliers.set(section, applyHostMode);
+    adminUnreachableAppliers.set(section, applyAdminUnreachable);
     return section;
 }
 
@@ -1248,4 +1280,13 @@ export function applyServerContainerMode(section: HTMLElement): void {
  */
 export function applyServerHostMode(section: HTMLElement): void {
     hostModeAppliers.get(section)?.();
+}
+
+/**
+ * Tell a Server tab the admin API will not answer this page
+ * (`adminApiReachable` false): its admin controls are held back, with one note
+ * saying why. A no-op if `section` was never built through `buildServerTab`.
+ */
+export function applyServerAdminUnreachable(section: HTMLElement): void {
+    adminUnreachableAppliers.get(section)?.();
 }

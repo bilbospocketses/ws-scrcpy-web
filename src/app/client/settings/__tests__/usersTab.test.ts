@@ -105,7 +105,7 @@ describe('the login toggle', () => {
         btn.click();
         await flush();
 
-        expect(ui.line.hidden).toBe(false);
+        expect(ui.line.textContent).not.toBe('');
         expect(ui.line.textContent).toBe('Add a user with an admin password first (Users → manage users)');
         expect(ui.line.classList.contains('settings-status-error')).toBe(true);
         expect(ui.section.querySelector('.settings-card')!.contains(ui.line)).toBe(false);
@@ -126,7 +126,7 @@ describe('the login toggle', () => {
         [...ui.section.querySelectorAll('button')].find((b) => /disable login/.test(b.textContent ?? ''))!.click();
         await flush();
         expect(ui.line.textContent).toBe('failed to disable login — see server logs.');
-        expect(ui.line.hidden).toBe(false);
+        expect(ui.line.textContent).not.toBe('');
     });
 });
 
@@ -224,6 +224,30 @@ describe('remote admin without sign-in: what the item shows', () => {
         ui.toggle(false);
         expect(ui.note.textContent).toBe(REMOTE_ADMIN_OFF_NOTE);
         expect(ui.store.changes()[0]?.warning).toBeUndefined();
+    });
+});
+
+describe('where the admin API will not answer this page', () => {
+    it('disables manage users and enable login, and says why once', () => {
+        const ui = mount();
+        applyUsersConfig(ui.section, envelope({ adminScope: 'local', callerIsLocal: false }, false));
+        const buttons = [...ui.section.querySelectorAll<HTMLButtonElement>('button')];
+        expect(buttons.map((b) => [b.textContent, b.disabled])).toEqual([
+            ['manage users', true],
+            ['enable login', true],
+        ]);
+        expect(ui.checkbox.disabled).toBe(true);
+        const notes = [...ui.section.querySelectorAll<HTMLElement>('[data-admin-unreachable-note]')];
+        expect(notes).toHaveLength(1);
+        expect(notes[0]!.hidden).toBe(false);
+        expect(notes[0]!.textContent).toBe('admin changes are limited to the machine running the server.');
+    });
+
+    it('leaves everything usable, and the note hidden, where it answers', () => {
+        const ui = mount();
+        applyUsersConfig(ui.section, envelope({ adminScope: 'remote', callerIsLocal: false }, true));
+        expect([...ui.section.querySelectorAll<HTMLButtonElement>('button')].every((b) => !b.disabled)).toBe(true);
+        expect(ui.section.querySelector<HTMLElement>('[data-admin-unreachable-note]')!.hidden).toBe(true);
     });
 });
 

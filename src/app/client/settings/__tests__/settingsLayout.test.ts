@@ -214,6 +214,12 @@ describe('the modal.css rules the layout relies on', () => {
         expect(rule('dialog.settings-modal .settings-label.settings-label-wide')).toContain('grid-column: 1 / -1;');
     });
 
+    it('collapses an empty tab status line, which is never hidden', () => {
+        const empty = rule('dialog.settings-modal .settings-status.settings-tab-alert:empty');
+        expect(empty).toContain('margin: 0;');
+        expect(empty).toContain('min-height: 0;');
+    });
+
     it('gives the section no divider of its own any more', () => {
         expect(rule('dialog.settings-modal .settings-section')).not.toContain('border-bottom');
     });
@@ -231,13 +237,16 @@ describe('buildTabAlert', () => {
         vi.useRealTimers();
     });
 
-    it('is the last thing in the section, outside every card, hidden until it has something to say', () => {
+    it('is the last thing in the section, outside every card, empty until it has something to say', () => {
         const { section, card } = buildSection('Users');
         card.appendChild(buildItem(buildRow('user accounts', null)));
         const alert = buildTabAlert(section);
         expect(section.lastElementChild).toBe(alert.element);
         expect(card.contains(alert.element)).toBe(false);
-        expect(alert.element.hidden).toBe(true);
+        expect(alert.element.textContent).toBe('');
+        // Never `hidden`: a live region must already be in the accessibility
+        // tree when its text arrives, or it may not be announced.
+        expect(alert.element.hidden).toBe(false);
         expect(alert.element.classList.contains('settings-status')).toBe(true);
         expect(alert.element.classList.contains('settings-tab-alert')).toBe(true);
         expect(alert.element.hasAttribute('data-settings-alert')).toBe(true);
@@ -264,22 +273,22 @@ describe('buildTabAlert', () => {
         expect(TAB_ALERT_ERROR_MS).toBe(10_000);
 
         alert.show('success', 'password changed');
-        expect(alert.element.hidden).toBe(false);
+        expect(alert.element.textContent).not.toBe('');
         expect(alert.element.textContent).toBe('password changed');
         expect(alert.element.classList.contains('settings-status-ready')).toBe(true);
         expect(alert.element.classList.contains('settings-status-error')).toBe(false);
         vi.advanceTimersByTime(TAB_ALERT_SUCCESS_MS - 1);
-        expect(alert.element.hidden).toBe(false);
+        expect(alert.element.textContent).not.toBe('');
         vi.advanceTimersByTime(1);
-        expect(alert.element.hidden).toBe(true);
+        expect(alert.element.textContent).toBe('');
 
         alert.show('error', 'current password incorrect');
         expect(alert.element.classList.contains('settings-status-error')).toBe(true);
         expect(alert.element.classList.contains('settings-status-ready')).toBe(false);
         vi.advanceTimersByTime(TAB_ALERT_SUCCESS_MS);
-        expect(alert.element.hidden, 'an error outlasts a success').toBe(false);
+        expect(alert.element.textContent, 'an error outlasts a success').not.toBe('');
         vi.advanceTimersByTime(TAB_ALERT_ERROR_MS - TAB_ALERT_SUCCESS_MS);
-        expect(alert.element.hidden).toBe(true);
+        expect(alert.element.textContent).toBe('');
     });
 
     it('a new message replaces the old one and restarts the clock', () => {
@@ -292,9 +301,9 @@ describe('buildTabAlert', () => {
         // The first message's timer would have fired here; the second's has
         // not run out.
         vi.advanceTimersByTime(1_000);
-        expect(alert.element.hidden).toBe(false);
+        expect(alert.element.textContent).not.toBe('');
         vi.advanceTimersByTime(TAB_ALERT_SUCCESS_MS - 1_000);
-        expect(alert.element.hidden).toBe(true);
+        expect(alert.element.textContent).toBe('');
     });
 
     it('a busy message stays until its result replaces it', () => {
@@ -304,12 +313,12 @@ describe('buildTabAlert', () => {
         expect(alert.element.classList.contains('settings-status-error')).toBe(false);
         expect(alert.element.classList.contains('settings-status-ready')).toBe(false);
         vi.advanceTimersByTime(TAB_ALERT_ERROR_MS * 10);
-        expect(alert.element.hidden).toBe(false);
+        expect(alert.element.textContent).not.toBe('');
         expect(alert.element.textContent).toBe('saving…');
 
         alert.show('success', 'password changed');
         vi.advanceTimersByTime(TAB_ALERT_SUCCESS_MS);
-        expect(alert.element.hidden).toBe(true);
+        expect(alert.element.textContent).toBe('');
     });
 
     it('a busy message after a timed one is not hidden by the old timer', () => {
@@ -318,15 +327,17 @@ describe('buildTabAlert', () => {
         alert.show('success', 'done');
         alert.show('busy', 'restarting → redirecting…');
         vi.advanceTimersByTime(TAB_ALERT_ERROR_MS);
-        expect(alert.element.hidden).toBe(false);
+        expect(alert.element.textContent).not.toBe('');
     });
 
-    it('clear hides it at once and stops its clock', () => {
+    it('clear empties it at once, drops its tone and stops its clock', () => {
         const { section } = buildSection('Users');
         const alert = buildTabAlert(section);
         alert.show('error', 'nope');
         alert.clear();
-        expect(alert.element.hidden).toBe(true);
+        expect(alert.element.textContent).toBe('');
+        expect(alert.element.hidden).toBe(false);
+        expect(alert.element.classList.contains('settings-status-error')).toBe(false);
         expect(vi.getTimerCount()).toBe(0);
     });
 

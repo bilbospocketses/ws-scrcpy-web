@@ -1,5 +1,7 @@
 import { type DependencyInfo, DependencyStatus, type UpdateResult } from '../../common/DependencyTypes';
 import { escapeHtml } from '../htmlEscape';
+import { onAdminAccessLost } from './adminAccess';
+import { ADMIN_UNREACHABLE_NOTE } from './adminGate';
 import type { TabAlert } from './settings/settingsLayout';
 import { isStaleTokenRefusal } from './staleToken';
 
@@ -41,6 +43,8 @@ export class DependencyPanel {
     private pollHandle: ReturnType<typeof setInterval> | null = null;
     private busy = false;
     private restarting = false;
+    /** Removes the admin-access-lost listener `startPolling` adds. */
+    private stopListening: (() => void) | null = null;
 
     constructor(private readonly alert: Pick<TabAlert, 'show'>) {
         this.container = document.createElement('div');
@@ -91,6 +95,8 @@ export class DependencyPanel {
 
     private startPolling(): void {
         if (this.pollHandle !== null) return;
+        // This page lost its admin access: no tick may land on the refusal.
+        this.stopListening = onAdminAccessLost(() => this.stopPolling());
         this.pollHandle = setInterval(() => {
             if (this.busy || this.restarting) return;
             void this.load();
@@ -102,11 +108,21 @@ export class DependencyPanel {
             clearInterval(this.pollHandle);
             this.pollHandle = null;
         }
+        this.stopListening?.();
+        this.stopListening = null;
     }
 
     private async load(): Promise<void> {
         try {
             const res = await fetch('/api/dependencies');
+            if (res.status === 403) {
+                // Refused: this page is no longer an admin (another device
+                // turned remote admin off, or a session ended). Say so and
+                // stop, rather than be refused every 15 s (0.5.5).
+                this.stopPolling();
+                this.renderError(ADMIN_UNREACHABLE_NOTE);
+                return;
+            }
             const deps: DependencyInfo[] = await res.json();
             this.render(deps);
         } catch {

@@ -1,6 +1,7 @@
 import type { FirstRunStatus } from '../../common/ConfigEvents';
 import type { DependencyInfo } from '../../common/DependencyTypes';
 import { DependencyStatus } from '../../common/DependencyTypes';
+import { onAdminAccessLost } from './adminAccess';
 import { adminApiReachable } from './adminGate';
 
 const POLL_INTERVAL_MS = 15_000;
@@ -9,6 +10,8 @@ export class FirstRunBanner {
     private container: HTMLElement;
     private retryButton: HTMLButtonElement | null = null;
     private pollHandle: ReturnType<typeof setInterval> | null = null;
+    /** Removes the admin-access-lost listener `startPolling` adds. */
+    private stopListening: (() => void) | null = null;
 
     constructor() {
         this.container = document.createElement('div');
@@ -47,6 +50,11 @@ export class FirstRunBanner {
 
     private startPolling(): void {
         if (this.pollHandle !== null) return;
+        // As DependencyAlertCard: no tick after this page loses its admin access.
+        this.stopListening = onAdminAccessLost(() => {
+            this.container.style.display = 'none';
+            this.stopPolling();
+        });
         this.pollHandle = setInterval(() => {
             void this.refresh();
         }, POLL_INTERVAL_MS);
@@ -57,11 +65,20 @@ export class FirstRunBanner {
             clearInterval(this.pollHandle);
             this.pollHandle = null;
         }
+        this.stopListening?.();
+        this.stopListening = null;
     }
 
     private async refresh(): Promise<void> {
         try {
             const res = await fetch('/api/dependencies');
+            if (res.status === 403) {
+                // Refused: the admin API no longer answers this page. Stop
+                // rather than be refused every 15 s (0.5.5).
+                this.container.style.display = 'none';
+                this.stopPolling();
+                return;
+            }
             const deps: DependencyInfo[] = await res.json();
             const pending = FirstRunBanner.pendingDeps(deps);
             if (pending.length === 0) {

@@ -891,13 +891,13 @@ describe('the restart redirect actually navigates', () => {
         // moved yet — navigating before the supervisor rebinds the port gets a
         // connection refused.
         expect(activeTabLine()?.textContent, 'the notice while waiting').toBe('restarting → redirecting…');
-        expect(activeTabLine()?.hidden, 'the notice is showing').toBe(false);
+        expect(activeTabLine()?.textContent, 'the notice is showing').not.toBe('');
         expect(navigate, 'before any time passes').not.toHaveBeenCalled();
 
         await vi.advanceTimersByTimeAsync(RESTART_REDIRECT_DELAY_MS - 1);
         expect(navigate, 'one millisecond before the delay elapses').not.toHaveBeenCalled();
         // A busy message: nothing hides it while the page waits to leave.
-        expect(activeTabLine()?.hidden, 'the notice is still up').toBe(false);
+        expect(activeTabLine()?.textContent, 'the notice is still up').not.toBe('');
 
         await vi.advanceTimersByTimeAsync(1);
 

@@ -6,6 +6,7 @@ import { settingsService } from '../../SettingsService';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { askUnbound } from '../tabs/EmbeddingTab';
 import {
+    applyServerAdminUnreachable,
     applyServerContainerMode,
     applyServerHostMode,
     applyServerServiceStatus,
@@ -73,11 +74,37 @@ describe('ServerTab: Settings, Ports and Application cards', () => {
         expect(labelsIn(cards[0]!.card)).toEqual(['reset all my settings', 'password', 'session']);
         // The http and https ports are separate items.
         expect(labelsIn(cards[1]!.card)).toEqual(['http port', 'https port']);
+        // First, the note the tab shows only where the admin API will not
+        // answer this page (applyServerAdminUnreachable): an item of its own,
+        // hidden, with no row.
         expect(labelsIn(cards[2]!.card)).toEqual([
+            undefined,
             'install for all users',
             'stop the server and close the app',
             'uninstall ws-scrcpy-web',
         ]);
+        const note = cards[2]!.card.querySelector<HTMLElement>(
+            ':scope > .settings-item > [data-admin-unreachable-note]',
+        );
+        expect(note?.hidden).toBe(true);
+    });
+
+    it('where the admin API will not answer, holds back the ports and stop & exit, and says why once', () => {
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        const el = buildServerTab({ ...ctx, authEnabled: true }, new StagedSettingsStore());
+        applyServerHostMode(el);
+        applyServerAdminUnreachable(el);
+        expect(rowOf(el, 'http port').querySelector('input')!.disabled).toBe(true);
+        expect(rowOf(el, 'https port').querySelector('input')!.disabled).toBe(true);
+        expect(rowOf(el, 'stop the server and close the app').querySelector('button')!.disabled).toBe(true);
+        const notes = [...el.querySelectorAll<HTMLElement>('[data-admin-unreachable-note]')];
+        expect(notes).toHaveLength(1);
+        expect(notes[0]!.hidden).toBe(false);
+        expect(notes[0]!.textContent).toBe('admin changes are limited to the machine running the server.');
+        // The user's own controls stay.
+        expect(rowOf(el, 'reset all my settings').querySelector('button')!.disabled).toBe(false);
+        expect(el.querySelector<HTMLButtonElement>('[data-action="change-password"]')!.disabled).toBe(false);
+        expect(el.querySelector<HTMLButtonElement>('[data-action="logout"]')!.disabled).toBe(false);
     });
 
     it('puts every https-port note, and the restart note both ports share, under the https port', () => {

@@ -8,6 +8,7 @@ import type { AppConfigEnvelope, FirstRunStatus } from '../common/ConfigEvents';
 import type { ServiceStatusResponse } from '../common/ServiceEvents';
 import { AdminScopeBanner } from './client/AdminScopeBanner';
 import { authClient, type Role } from './client/AuthClient';
+import { adminApiReachable } from './client/adminGate';
 import { shouldShowBookmark } from './client/bookmarkGate';
 import { mountsUpdateButton, offersSystemWideUpdate, showsWelcomeWizard } from './client/containerGate';
 import { DependencyAlertCard } from './client/DependencyAlertCard';
@@ -311,10 +312,15 @@ window.onload = async (): Promise<void> => {
 
     // The update pill waits for the runtime envelope: a container has no in-app
     // updater, so the pill is never mounted there (and never starts its 30 s
-    // /api/updates/status poll). Prepended, so it stays left of the dependency
+    // /api/updates/status poll). Nor where the admin API will not answer this
+    // page (item 81; 0.5.5): every read would be refused. An envelope that could
+    // not be read mounts it, the fail-open the rest of the page uses, and a
+    // refused read then stops it. Prepended, so it stays left of the dependency
     // badge whichever of the two resolves first.
     void runtimeFetch.then((runtime) => {
-        if (mountsUpdateButton(runtime)) topBarIndicators.prepend(createUpdateButton());
+        if (mountsUpdateButton(runtime) && (runtime === null || adminApiReachable(runtime))) {
+            topBarIndicators.prepend(createUpdateButton());
+        }
     });
 
     void runtimeFetch.then(async (runtime) => {
@@ -372,8 +378,9 @@ window.onload = async (): Promise<void> => {
     // bfcache/unload. destroy() (= stopPolling) is idempotent.
     // Another local app can ask permission to embed this one; the prompt is
     // raised here and nowhere else, because approving is what writes the origin
-    // to config.
-    startEmbedRequestWatch();
+    // to config. Only on the machine itself: the routes it reads answer nobody
+    // else, so a page on another machine would be refused every 5 s.
+    void runtimeFetch.then((runtime) => startEmbedRequestWatch(runtime?.callerIsLocal));
 
     onPageTeardown(() => {
         adminScopeBanner.destroy();

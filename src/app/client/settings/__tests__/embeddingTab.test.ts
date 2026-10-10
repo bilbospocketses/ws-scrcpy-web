@@ -2,16 +2,19 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FRAME_ANCESTORS_ADD_ID } from '../../../../common/embedderOrigin';
+import { ADMIN_UNREACHABLE_NOTE } from '../../adminGate';
 import { performDirtyClose, performStagedSave, type SaveDeps } from '../../SettingsModal';
 import type { BatchResult } from '../SaveRunner';
 import { type Change, StagedSettingsStore } from '../StagedSettingsStore';
 import {
     applyEmbeddingContainerMode,
+    applyEmbeddingHeldBack,
     askUnbound,
     buildEmbeddingTab,
     embedHttpsNote,
     formatEmbedAdditions,
     pendingEmbedOrigins,
+    refreshEmbedding,
 } from '../tabs/EmbeddingTab';
 
 /**
@@ -74,6 +77,8 @@ async function flush(): Promise<void> {
 async function buildTab(store = new StagedSettingsStore()) {
     const section = buildEmbeddingTab(ctx(), store);
     document.body.appendChild(section);
+    // The read the dialog makes once it knows this page may (0.5.5).
+    void refreshEmbedding(section);
     await flush();
     const q = <T extends Element>(sel: string): T => {
         const el = section.querySelector<T>(sel);
@@ -111,10 +116,34 @@ function writes(): string[] {
     return calls.filter((c) => !c.startsWith('GET '));
 }
 
+describe('the read waits for the dialog (0.5.5)', () => {
+    it('makes no read when it is built: only the dialog knows whether this page may', async () => {
+        const section = buildEmbeddingTab(ctx(), new StagedSettingsStore());
+        await flush();
+        expect(calls).toEqual([]);
+        expect(section.textContent).toContain('loading…');
+    });
+
+    it('held back, it reads nothing, says why, and offers no add or revoke', async () => {
+        approved = ['https://frame.example'];
+        const section = buildEmbeddingTab(ctx(), new StagedSettingsStore());
+        document.body.appendChild(section);
+        applyEmbeddingHeldBack(section);
+        await flush();
+        expect(calls).toEqual([]);
+        const list = section.querySelector<HTMLElement>('[data-embed-list]')!;
+        expect(list.textContent).toBe(ADMIN_UNREACHABLE_NOTE);
+        expect(list.textContent).toBe('admin changes are limited to the machine running the server.');
+        expect(section.querySelector<HTMLElement>('[data-embed-add]')!.hidden).toBe(true);
+        expect([...section.querySelectorAll('button')].filter((b) => !b.closest('[hidden]'))).toEqual([]);
+    });
+});
+
 describe('the add row', () => {
     it('stays hidden until the approved list has loaded, then shows', async () => {
         hangList = true;
         const section = buildEmbeddingTab(ctx(), new StagedSettingsStore());
+        void refreshEmbedding(section);
         await flush();
         const adder = section.querySelector<HTMLElement>('[data-embed-add]');
         // An item of the card since 0.5.5; modal.css's `.settings-item[hidden]`
@@ -514,7 +543,7 @@ describe('a revoke that never reaches the server', () => {
         await flush();
 
         const line = ui.section.querySelector<HTMLElement>(':scope > [data-settings-alert]');
-        expect(line?.hidden).toBe(false);
+        expect(line?.textContent).not.toBe('');
         expect(line?.textContent).toBe('could not reach the server.');
         expect(line?.classList.contains('settings-status-error')).toBe(true);
         expect(ui.section.querySelector('.settings-card')?.contains(line ?? null)).toBe(false);

@@ -215,7 +215,7 @@ describe('SettingsModal auth controls', () => {
             await flush();
 
             const line = tabLine('Users');
-            expect(line?.hidden).toBe(false);
+            expect(line?.textContent).not.toBe('');
             expect(line?.textContent).toBe('Add a user with an admin password first (Users → manage users)');
             expect(line?.classList.contains('settings-status-error')).toBe(true);
             // Nothing is said beside the button any more.
@@ -257,7 +257,7 @@ describe('SettingsModal auth controls', () => {
             expect(changePwSpy).not.toHaveBeenCalled();
             expect(bodyText()).toContain('enter your current and new password');
             // A field's validation: under the form, not on the tab's line.
-            expect(tabLine('Server')?.hidden).toBe(true);
+            expect(tabLine('Server')?.textContent).toBe('');
             const guard = [...document.querySelectorAll<HTMLElement>('.settings-card .settings-status')].find(
                 (el) => el.textContent === 'enter your current and new password',
             );
@@ -306,7 +306,7 @@ describe('SettingsModal auth controls', () => {
 
             expect(changePwSpy).toHaveBeenCalledWith('cur', 'new');
             expect(tabLine('Server')?.textContent).toBe('password changed');
-            expect(tabLine('Server')?.hidden).toBe(false);
+            expect(tabLine('Server')?.textContent).not.toBe('');
         });
 
         it('on false return from changePassword, says so on the Server tab line', async () => {
@@ -335,7 +335,7 @@ describe('SettingsModal auth controls', () => {
 
             const line = tabLine('Server');
             expect(line?.textContent).toBe('current password incorrect');
-            expect(line?.hidden).toBe(false);
+            expect(line?.textContent).not.toBe('');
             expect(line?.classList.contains('settings-status-error')).toBe(true);
         });
     });

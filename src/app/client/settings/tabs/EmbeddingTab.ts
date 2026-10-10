@@ -6,6 +6,7 @@ import {
     isEmbedderScheme,
 } from '../../../../common/embedderOrigin';
 import type { Role } from '../../AuthClient';
+import { ADMIN_UNREACHABLE_NOTE } from '../../adminGate';
 import { ConfirmModal } from '../../ConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import { buildItem, buildRow, buildSection, buildTabAlert, type TabAlert } from '../settingsLayout';
@@ -87,6 +88,30 @@ export function embedHttpsNote(container: boolean): string {
  * is learned after every tab is built.
  */
 const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
+const refreshers = new WeakMap<HTMLElement, () => Promise<void>>();
+const heldBackAppliers = new WeakMap<HTMLElement, () => void>();
+
+/**
+ * Read the allowed list for an Embedding tab `buildEmbeddingTab` built, which
+ * fills it and shows the add row. Held until the dialog knows the read will be
+ * answered: `/api/embed-origins` answers only an admin on the machine itself
+ * (`requireLocalAdmin`), so SettingsModal calls this only then (0.5.5; the tab
+ * used to read at build and show a refusal to anyone else). A no-op if
+ * `section` was never built through `buildEmbeddingTab`.
+ */
+export async function refreshEmbedding(section: HTMLElement): Promise<void> {
+    await refreshers.get(section)?.();
+}
+
+/**
+ * Tell an Embedding tab its list will not be read on this page: it says why
+ * (`ADMIN_UNREACHABLE_NOTE`) where the list would be, and the add row, and
+ * with it every add and revoke, stays hidden. A no-op if `section` was never
+ * built through `buildEmbeddingTab`.
+ */
+export function applyEmbeddingHeldBack(section: HTMLElement): void {
+    heldBackAppliers.get(section)?.();
+}
 
 /**
  * Tell an Embedding tab it is running in a container, so its https note names
@@ -146,6 +171,8 @@ interface EmbeddingView {
     error: string | null;
     /** The tab's status line, below the card: where a revoke that never reached the server says so. */
     alert: TabAlert;
+    /** The list will not be read on this page (`applyEmbeddingHeldBack`): say why, offer nothing. */
+    heldBack: boolean;
 }
 
 /**
@@ -188,6 +215,7 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
         // Built now, but below the card all the same: the card is already in
         // the section and is its only one.
         alert: buildTabAlert(section),
+        heldBack: false,
     };
     view.adder = buildAddRow(view);
     card.append(list, view.adder);
@@ -207,7 +235,14 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
         renderEmbedOrigins(view);
     });
 
-    void refreshEmbedOrigins(view);
+    // No read here: the dialog decides whether this page may make it
+    // (refreshEmbedding / applyEmbeddingHeldBack), and until then the list says
+    // "loading…".
+    refreshers.set(section, () => refreshEmbedOrigins(view));
+    heldBackAppliers.set(section, () => {
+        view.heldBack = true;
+        renderEmbedOrigins(view);
+    });
     containerModeAppliers.set(section, () => {
         const note = view.adder.querySelector<HTMLElement>('[data-embed-https-note]');
         if (note) note.textContent = embedHttpsNote(true);
@@ -240,7 +275,14 @@ function renderEmbedOrigins(view: EmbeddingView): void {
     list.textContent = '';
     // The add row needs the approved list for its duplicate check, and a list
     // that could not be read (another machine, say) means Save would be refused.
-    setAdderVisible(view.adder, view.approved !== null && view.error === null);
+    setAdderVisible(view.adder, view.approved !== null && view.error === null && !view.heldBack);
+    if (view.heldBack) {
+        // Every add and revoke would only be refused from this page.
+        const note = buildRow(ADMIN_UNREACHABLE_NOTE, null);
+        note.setAttribute('data-admin-unreachable-note', '');
+        list.appendChild(note);
+        return;
+    }
 
     const pending = pendingEmbedOrigins(store);
     // On a read error the approved list is unknown, but anything already

@@ -756,9 +756,9 @@ describe('local https panel: where the transient alert shows', () => {
         expect(cards[2]!.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
 
-    it('is the last element of the tab, after the Exposure card, and starts hidden', async () => {
+    it('is the last element of the tab, after the Exposure card, and starts empty', async () => {
         const { el, alert } = await build();
-        expect(alert.hidden).toBe(true);
+        expect(alert.textContent).toBe('');
         expectAtTheBottom(el, alert);
         expect(el.querySelectorAll('[data-tls-alert]')).toHaveLength(1);
     });
@@ -772,13 +772,13 @@ describe('local https panel: where the transient alert shows', () => {
         const { el, alert } = await build();
         el.querySelector<HTMLButtonElement>(button)!.click();
         await vi.advanceTimersByTimeAsync(0);
-        expect(alert.hidden).toBe(false);
+        expect(alert.textContent).not.toBe('');
         expect(alert.textContent).toBe(text);
         expectAtTheBottom(el, alert);
         await vi.advanceTimersByTimeAsync(9_999);
-        expect(alert.hidden).toBe(false);
+        expect(alert.textContent).not.toBe('');
         await vi.advanceTimersByTimeAsync(2);
-        expect(alert.hidden).toBe(true);
+        expect(alert.textContent).toBe('');
     });
 
     it('revoke: reports there too', async () => {
@@ -1103,13 +1103,13 @@ describe('local https panel — transient alert convention', () => {
             await vi.advanceTimersByTimeAsync(0);
 
             const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             expect(alert.textContent).toMatch(/certificate generated/i);
 
             await vi.advanceTimersByTimeAsync(4_999);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             await vi.advanceTimersByTimeAsync(2);
-            expect(alert.hidden).toBe(true);
+            expect(alert.textContent).toBe('');
         } finally {
             vi.useRealTimers();
         }
@@ -1172,11 +1172,11 @@ describe('local https panel — transient alert convention', () => {
             // this is the assertion that would catch a copy-paste of the wrong
             // constant into the error branch.
             await vi.advanceTimersByTimeAsync(5_000);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             await vi.advanceTimersByTimeAsync(4_999);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             await vi.advanceTimersByTimeAsync(2);
-            expect(alert.hidden).toBe(true);
+            expect(alert.textContent).toBe('');
         } finally {
             vi.useRealTimers();
         }
@@ -1192,11 +1192,11 @@ describe('local https panel — transient alert convention', () => {
         const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
         el.querySelector<HTMLButtonElement>('[data-exposure-ok]')!.click();
         await new Promise((r) => setTimeout(r, 0));
-        // Scoped to the alert element and its visibility, not whole-panel
-        // textContent -- mechanical rule: if the thing under test can be
-        // hidden, assert `hidden`, not text.
+        // Scoped to the alert element, not whole-panel textContent. The line
+        // is never `hidden` (0.5.5: a live region stays in the accessibility
+        // tree), so its text IS whether it shows.
         const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
-        expect(alert.hidden).toBe(false);
+        expect(alert.textContent).not.toBe('');
         expect(alert.textContent).toMatch(/does not support saving this setting yet/i);
     });
 
@@ -1209,8 +1209,9 @@ describe('local https panel — transient alert convention', () => {
         // showed a transient alert, so no timer was ever armed, and
         // textContent still matches a HIDDEN element in jsdom. Neither half
         // of that was actually exercising persistence. This version drives a
-        // real transient alert through its own window and asserts `.hidden`
-        // on both elements, so it fails if the persistent notice were ever
+        // real transient alert through its own window and asserts the notice's
+        // `.hidden` and the alert's text (empty when idle: the line is never
+        // hidden since 0.5.5), so it fails if the persistent notice were ever
         // wired through the SAME timer as the transient one.
         vi.useFakeTimers();
         try {
@@ -1231,15 +1232,15 @@ describe('local https panel — transient alert convention', () => {
             const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
 
             expect(mismatch.hidden).toBe(false);
-            expect(alert.hidden).toBe(true); // nothing transient has happened yet
+            expect(alert.textContent).toBe(''); // nothing transient has happened yet
 
             el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
             await vi.advanceTimersByTimeAsync(0);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
 
-            // Past the transient alert's own 10s (error) window: IT hides...
+            // Past the transient alert's own 10s (error) window: IT empties...
             await vi.advanceTimersByTimeAsync(10_001);
-            expect(alert.hidden).toBe(true);
+            expect(alert.textContent).toBe('');
             // ...but the persistent condition is untouched by that timer.
             expect(mismatch.hidden).toBe(false);
             expect(mismatch.textContent).toMatch(/no longer an address of this machine/i);
@@ -1293,13 +1294,13 @@ describe('local https panel — transient alert convention', () => {
             // hidden despite the second alert still being well within its
             // own window.
             await vi.advanceTimersByTimeAsync(4_001);
-            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).not.toBe('');
             expect(alert.textContent).toMatch(/too many ca downloads/i);
 
             // t=11001: past the SECOND alert's own 10s deadline (measured
             // from ITS start at t=1000) -- now it hides.
             await vi.advanceTimersByTimeAsync(6_000);
-            expect(alert.hidden).toBe(true);
+            expect(alert.textContent).toBe('');
         } finally {
             vi.useRealTimers();
         }
