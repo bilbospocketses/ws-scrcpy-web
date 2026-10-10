@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **test: the settings-cards e2e waits for the app's own theme write before setting its own.** Its dark-theme run set `data-theme` before the boot's `applyStoredTheme()` had landed, so that write could turn the page light again and the run measured the light colors (it failed twice on #961's CI). It now calls `waitForThemeSettled` first, the barrier the other theme specs already use (`tests/e2e/settings-cards.spec.ts`).
+
 ### Fixed
 - **Where admin changes are limited to the machine running the server, the Users and Server tabs show the note alone, like the tabs it replaces.** On another machine (sign-in off, remote admin off), or once the server refuses this page's admin reads, the Updates, Service, Dependencies and Local HTTPS tabs show only the muted note `admin changes are limited to the machine running the server.`, but the Users tab still showed **manage users**, the login toggle and the remote-admin box under it, disabled, and the Server tab its **Ports** and **Application** boxes with their controls disabled. Now the Users tab shows the note and nothing else, and the Server tab keeps its **Settings** box as it was (reset all my settings, and change password and log out when sign-in is on, all still usable) with one box under it holding only the note; the **Ports** and **Application** boxes are hidden, headings and all, and stay hidden whatever order Settings learns the rest in. The hidden controls are still disabled. Embedding's note, and its `only an admin can change these settings.` for a user who is not an admin, now look like the same muted note instead of a setting's label (`src/app/client/settings/tabs/UsersTab.ts`, `src/app/client/settings/tabs/ServerTab.ts`, `src/app/client/settings/tabs/EmbeddingTab.ts`, `src/app/client/settings/settingsLayout.ts`, `src/style/modal.css`).
 
