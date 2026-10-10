@@ -222,6 +222,53 @@ describe('where the admin API will not answer this page', () => {
         ).toEqual([]);
     });
 
+    // 0.5.6: the dialog's own check fails open when /api/config cannot be
+    // read, so the tabs read anyway; the server's refusal then does what the
+    // check would have done, instead of "couldn't reach server" and a retry.
+    it('when the check could not be made and the server refuses a read, holds everything back the same way', async () => {
+        const operator403 = () =>
+            Promise.resolve({
+                ok: false,
+                status: 403,
+                json: () => Promise.resolve({ error: 'admin actions are limited to this machine' }),
+            });
+        const f = vi.fn((url: string) => {
+            if (url === '/api/config')
+                return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) });
+            if (url === '/api/updates/status' || url === '/api/service/status') return operator403();
+            return new Promise(() => undefined);
+        });
+        vi.stubGlobal('fetch', f);
+        const lost = vi.fn();
+        window.addEventListener(ADMIN_ACCESS_LOST_EVENT, lost);
+        try {
+            new SettingsModal();
+            await flush();
+        } finally {
+            window.removeEventListener(ADMIN_ACCESS_LOST_EVENT, lost);
+        }
+
+        expect(lost).toHaveBeenCalledTimes(1);
+        const byTitle = (t: string) => sections().find((s) => s.querySelector('h3')?.textContent === t);
+        for (const t of ['Updates', 'Service', 'Dependencies', 'Local HTTPS']) {
+            const s =
+                t === 'Dependencies' ? sections().find((x) => x.dataset['settingsTab'] === 'dependencies') : byTitle(t);
+            const shown = [...(s?.querySelectorAll<HTMLElement>('[data-admin-unreachable-note]') ?? [])].filter(
+                (n) => !n.hidden,
+            );
+            expect(shown, t).toHaveLength(1);
+            expect(s!.textContent, t).not.toContain("couldn't reach server");
+            expect(s!.querySelectorAll('.settings-card button'), t).toHaveLength(0);
+        }
+        for (const b of byTitle('Users')!.querySelectorAll<HTMLButtonElement>('.settings-card button')) {
+            expect(b.disabled, b.textContent ?? '').toBe(true);
+        }
+        const stop = [...byTitle('Server')!.querySelectorAll('button')].find(
+            (b) => b.textContent === 'stop server & exit',
+        );
+        expect(stop?.disabled).toBe(true);
+    });
+
     it('on another machine with remote admin on, Embedding is not read: it answers this machine only', async () => {
         const f = stubServer(() => envelope({ adminScope: 'remote', callerIsLocal: false }, true));
         new SettingsModal();

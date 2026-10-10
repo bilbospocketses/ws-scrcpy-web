@@ -3,12 +3,14 @@ import { DependencyStatus } from '../../../../common/DependencyTypes';
 import { isPublicSuffix } from '../../../../common/publicSuffix';
 import { refusedSubjectMessage } from '../../../../common/refusedSubject';
 import type { ServiceStatusResponse } from '../../../../common/ServiceEvents';
+import { type AdminRefusal, adminRefusal } from '../../adminGate';
 import { ConfirmModal } from '../../ConfirmModal';
 import { themeHelpLink } from '../../helpLink';
 import { buildCombobox } from '../Combobox';
 import {
     addCard,
     buildItem,
+    buildRefusedNote,
     buildRow,
     buildSection,
     buildSplitSection,
@@ -428,13 +430,31 @@ export async function recheckLocalHttpsMkcert(panel: HTMLElement): Promise<void>
     await mkcertRecheckers.get(panel)?.();
 }
 
+/**
+ * `GET /api/tls/state` failed, so `buildLocalHttpsPanel` has nothing true to
+ * show (0.5.6). Until then a failed read built the panel as if there were no
+ * certificate. `refusal` says whether the server refused it (`adminRefusal`);
+ * null for a network failure or a server error, which a retry may get past.
+ */
+export class TlsStateReadError extends Error {
+    constructor(readonly refusal: AdminRefusal | null) {
+        super(refusal ? `GET /api/tls/state refused (${refusal})` : 'GET /api/tls/state failed');
+        this.name = 'TlsStateReadError';
+    }
+}
+
 async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
+    let res: Response;
     try {
-        const res = await fetchFn('/api/tls/state');
-        if (!res.ok) return { status: 'none' };
+        res = await fetchFn('/api/tls/state');
+    } catch {
+        throw new TlsStateReadError(null);
+    }
+    if (!res.ok) throw new TlsStateReadError(await adminRefusal(res));
+    try {
         return (await res.json()) as TlsCertState;
     } catch {
-        return { status: 'none' };
+        throw new TlsStateReadError(null);
     }
 }
 
@@ -443,7 +463,8 @@ async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
  * generation, the CA download + per-OS trust instructions, and the plain-HTTP
  * exposure radios. Async: it fetches `/api/tls/state` before returning so the
  * caller (and every test) gets a panel already reflecting the real cert state,
- * rather than a placeholder that fills in later.
+ * rather than a placeholder that fills in later. When that read fails it
+ * rejects with a `TlsStateReadError` and builds nothing (0.5.6).
  *
  * Deliberately does NOT touch `StagedSettingsStore`. The exposure mode has
  * its OWN dedicated "ok" button and route (task 11) rather than staging into
@@ -1311,6 +1332,7 @@ export function buildLocalHttpsContainerNote(): HTMLElement {
  */
 const serviceStatusAppliers = new WeakMap<HTMLElement, (resp: ServiceStatusResponse) => void>();
 const serviceStatusFailureAppliers = new WeakMap<HTMLElement, (retry: () => void) => void>();
+const serviceStatusRefusalAppliers = new WeakMap<HTMLElement, (refusal: AdminRefusal) => void>();
 const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
 const dependencyInstalledAppliers = new WeakMap<HTMLElement, () => Promise<void>>();
 
@@ -1374,6 +1396,17 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
     function applyServiceStatus(_resp: ServiceStatusResponse): void {
         if (decided) return;
         decided = true;
+        buildPanel();
+    }
+
+    /**
+     * Build the panel into the tab. Its /api/tls/state read failing builds
+     * nothing (0.5.6; it used to build the panel as if there were no
+     * certificate): a refusal says why, with no retry, and an operator refusal
+     * tells the dialog; any other failure shows "couldn't reach server" with a
+     * retry that builds again.
+     */
+    function buildPanel(): void {
         void buildLocalHttpsPanel({
             // C1: wrapped, not passed by reference -- an unbound `fetch` throws
             // "Illegal invocation" in Chrome (same precedent as
@@ -1386,11 +1419,38 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
             askChild: ctx.askChild,
             // The mkcert callout's link to the Dependencies tab.
             ...(ctx.showTab ? { showTab: ctx.showTab } : {}),
-        }).then((built) => {
-            panel = built;
-            destroyTabAlerts(root);
-            root.replaceChildren(built);
-        });
+        }).then(
+            (built) => {
+                panel = built;
+                destroyTabAlerts(root);
+                root.replaceChildren(built);
+            },
+            (err: unknown) => {
+                const refusal = err instanceof TlsStateReadError ? err.refusal : null;
+                if (refusal) {
+                    showRefused(refusal);
+                    if (refusal === 'operator') ctx.onAdminRefused?.();
+                    return;
+                }
+                showRetry(buildPanel);
+            },
+        );
+    }
+
+    /** Say why the server refused this tab's read, in place of "loading…", with no retry. */
+    function showRefused(refusal: AdminRefusal): void {
+        placeholder.card.replaceChildren(buildItem(buildRefusedNote(refusal)));
+    }
+
+    /**
+     * The /api/service/status read this tab waits on was refused (0.5.6). Says
+     * what the Service tab says, with no retry; the tab is decided, so a later
+     * status cannot build the panel over it.
+     */
+    function applyServiceStatusRefused(refusal: AdminRefusal): void {
+        if (decided) return;
+        decided = true;
+        showRefused(refusal);
     }
 
     /**
@@ -1404,6 +1464,11 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
      */
     function applyServiceStatusFailed(retry: () => void): void {
         if (decided) return;
+        showRetry(retry);
+    }
+
+    /** "couldn't reach server" in the error tone, with a retry that puts "loading…" back and runs `retry`. */
+    function showRetry(retry: () => void): void {
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
         retryBtn.className = 'settings-btn';
@@ -1430,6 +1495,7 @@ export function buildLocalHttpsTab(ctx: TabContext): HTMLElement {
 
     serviceStatusAppliers.set(root, applyServiceStatus);
     serviceStatusFailureAppliers.set(root, applyServiceStatusFailed);
+    serviceStatusRefusalAppliers.set(root, applyServiceStatusRefused);
     containerModeAppliers.set(root, applyContainerMode);
     dependencyInstalledAppliers.set(root, applyDependencyInstalled);
     return root;
@@ -1452,6 +1518,16 @@ export function applyLocalHttpsServiceStatus(tab: HTMLElement, resp: ServiceStat
  */
 export function applyLocalHttpsServiceStatusFailed(tab: HTMLElement, retry: () => void): void {
     serviceStatusFailureAppliers.get(tab)?.(retry);
+}
+
+/**
+ * Tell a Local HTTPS tab that the server refused the /api/service/status read
+ * it waits on (0.5.6): it says why, as the Service tab does, with no retry. A
+ * no-op if `tab` was never built through `buildLocalHttpsTab`, or once the tab
+ * has been decided.
+ */
+export function applyLocalHttpsServiceStatusRefused(tab: HTMLElement, refusal: AdminRefusal): void {
+    serviceStatusRefusalAppliers.get(tab)?.(refusal);
 }
 
 /**

@@ -1,10 +1,18 @@
 import type { UpdateChannel } from '../../../../common/ConfigEvents';
 import type { UpdatesStatusResponse } from '../../../../common/UpdateEvents';
+import { type AdminRefusal, adminRefusal } from '../../adminGate';
 import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { runUpgradingHandoff } from '../../UpgradingOverlay';
 import { classifyFailedApply, LostApplyWatch } from '../../updateApplyOutcome';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildDynamicLabelRow, buildItem, buildRow, buildSection, buildTabAlert } from '../settingsLayout';
+import {
+    buildDynamicLabelRow,
+    buildItem,
+    buildRefusedNote,
+    buildRow,
+    buildSection,
+    buildTabAlert,
+} from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /** The staged-field ids, as `SettingsBatchApi.STAGEABLE_IDS` spells them. */
@@ -155,7 +163,9 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         try {
             const r = await fetch('/api/updates/status');
             if (!r.ok) {
-                renderError("couldn't reach server");
+                const refusal = await adminRefusal(r);
+                if (refusal) renderRefused(refusal);
+                else renderError("couldn't reach server");
                 return;
             }
             resp = (await r.json()) as UpdatesStatusResponse;
@@ -197,6 +207,19 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         const { row, labelEl } = buildDynamicLabelRow(msg, retryBtn);
         labelEl.classList.add('settings-status-error');
         body.appendChild(buildItem(row));
+    }
+
+    /**
+     * The server refused the read: say why, with no retry, which could only be
+     * refused again (0.5.6). An operator refusal tells the dialog, which holds
+     * back every admin control the same way and replaces this tab's body.
+     */
+    function renderRefused(refusal: AdminRefusal): void {
+        body.replaceChildren();
+        statusEl = null;
+        actionBtn = null;
+        body.appendChild(buildItem(buildRefusedNote(refusal)));
+        if (refusal === 'operator') ctx.onAdminRefused?.();
     }
 
     function renderSection(s: UpdatesStatusResponse): void {

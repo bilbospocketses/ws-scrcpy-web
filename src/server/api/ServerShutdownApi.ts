@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { OPERATOR_REFUSAL_ERROR } from '../../common/remoteAdmin';
 import { isAuthEnabled } from '../auth/authState';
 import { requireAdmin } from '../auth/requireAdmin';
 import { allowRemoteAdmin, hasAuthenticatedUser } from '../auth/requireOperator';
@@ -121,7 +122,7 @@ export class ServerShutdownApi {
                     `refusing shutdown from ${req.socket?.remoteAddress ?? '<unknown>'}: remote admin not allowed`,
                 );
                 res.writeHead(403);
-                res.end(JSON.stringify({ error: 'admin actions are limited to this machine' }));
+                res.end(JSON.stringify({ error: OPERATOR_REFUSAL_ERROR }));
                 return true;
             }
             if (isAuthEnabled(Config.getInstance().db) && !hasAuthenticatedUser(req)) {

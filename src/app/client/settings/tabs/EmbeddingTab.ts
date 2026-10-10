@@ -45,6 +45,16 @@ export interface TabContext {
      * built on its own (its unit tests) needs no dialog behind it.
      */
     showTab?: (id: string) => void;
+    /**
+     * The server refused one of this page's admin reads as not from the
+     * operator (`adminRefusal` → `operator`), though the dialog's own check said
+     * it would answer: that check fails open when it cannot be made. The dialog
+     * then does what it does when it knows from the start, holding back every
+     * admin control with the note, so no tab shows the refusal as "couldn't
+     * reach server" with a retry that can only be refused again (0.5.6).
+     * Optional, so a tab built on its own (its unit tests) needs no dialog.
+     */
+    onAdminRefused?: () => void;
 }
 
 export type AskChild = <T>(ask: () => Promise<T>, unanswered: T) => Promise<T>;
@@ -253,7 +263,14 @@ export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): 
 async function refreshEmbedOrigins(view: EmbeddingView): Promise<void> {
     try {
         const res = await fetch('/api/embed-origins', { headers: { Accept: 'application/json' } });
-        if (!res.ok) {
+        if (res.status === 403) {
+            // Refused: the list answers only an admin on the machine itself,
+            // whatever the remote-admin policy, so this is held back as the
+            // dialog holds it back when it knows from the start; never an
+            // error to retry (0.5.6). The rest of the dialog is not told: a
+            // page this route refuses may still be an admin everywhere else.
+            view.heldBack = true;
+        } else if (!res.ok) {
             view.error = 'could not read the list — see server logs.';
         } else {
             const data = (await res.json()) as { origins?: string[] };

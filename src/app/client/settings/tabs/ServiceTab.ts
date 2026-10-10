@@ -5,6 +5,7 @@ import type {
 } from '../../../../common/ServiceEvents';
 import { sameOriginUrl } from '../../../sameOriginUrl';
 import { AdminConfirmModal, type AdminConfirmOptions } from '../../AdminConfirmModal';
+import { type AdminRefusal, adminRefusal } from '../../adminGate';
 import {
     INSTALL_HANDOFF_RECONNECT_DELAY_MS,
     INSTALL_HANDOFF_TIMEOUT_MESSAGE,
@@ -15,7 +16,14 @@ import { ServiceOperationModal } from '../../ServiceOperationModal';
 import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { isStaleTokenRefusal } from '../../staleToken';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildDynamicLabelRow, buildItem, buildRow, buildSection, buildTabAlert } from '../settingsLayout';
+import {
+    buildDynamicLabelRow,
+    buildItem,
+    buildRefusedNote,
+    buildRow,
+    buildSection,
+    buildTabAlert,
+} from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
 /**
@@ -166,6 +174,12 @@ export interface ServiceTabCallbacks {
      * status arrives) can offer a retry of its own instead of waiting forever.
      */
     onServiceStatusFailed?(retry: () => void): void;
+    /**
+     * The status read was refused (`adminRefusal`), and this tab says why with
+     * no retry (0.5.6). The Local HTTPS tab, which waits on the response, says
+     * the same instead of offering a retry that can only be refused again.
+     */
+    onServiceStatusRefused?(refusal: AdminRefusal): void;
 }
 
 /**
@@ -238,6 +252,18 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         const { row, labelEl } = buildDynamicLabelRow(msg, retryBtn);
         labelEl.classList.add('settings-status-error');
         body.appendChild(buildItem(row));
+    }
+
+    /**
+     * The server refused the status read: say why, with no retry, which could
+     * only be refused again (0.5.6). Local HTTPS hears it too; an operator
+     * refusal tells the dialog, which holds back every admin control the same
+     * way and replaces this tab's body.
+     */
+    function renderServiceRefused(refusal: AdminRefusal, callbacks: ServiceTabCallbacks): void {
+        body.replaceChildren(buildItem(buildRefusedNote(refusal)));
+        callbacks.onServiceStatusRefused?.(refusal);
+        if (refusal === 'operator') ctx.onAdminRefused?.();
     }
 
     /**
@@ -404,6 +430,11 @@ export function buildServiceTab(ctx: TabContext, _store: StagedSettingsStore): H
         try {
             const r = await fetch('/api/service/status');
             if (!r.ok) {
+                const refusal = await adminRefusal(r);
+                if (refusal) {
+                    renderServiceRefused(refusal, callbacks);
+                    return;
+                }
                 renderServiceError("couldn't reach server", retry);
                 callbacks.onServiceStatusFailed?.(retry);
                 return;

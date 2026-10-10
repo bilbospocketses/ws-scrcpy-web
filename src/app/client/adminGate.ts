@@ -1,4 +1,5 @@
 import type { FirstRunStatus } from '../../common/ConfigEvents';
+import { OPERATOR_REFUSAL_ERROR } from '../../common/remoteAdmin';
 import type { Role } from './AuthClient';
 
 // Settings areas that only an admin may see/use. Everything NOT listed here is
@@ -57,3 +58,32 @@ export function adminApiReachable(runtime: Pick<FirstRunStatus, 'adminScope' | '
  * refused (0.5.5).
  */
 export const ADMIN_UNREACHABLE_NOTE = 'admin changes are limited to the machine running the server.';
+
+/**
+ * Said in place of a tab's controls when the server refused its read because
+ * this user is not an admin (`requireAdmin`'s `forbidden`; 0.5.6). The tab is
+ * not normally shown to such a user at all: this is the role check that
+ * failed open (`SettingsModal`), met by the server's own.
+ */
+export const ADMIN_ONLY_NOTE = 'only an admin can change these settings.';
+
+/** Which refusal a 403 was: see `adminRefusal`. */
+export type AdminRefusal = 'operator' | 'role';
+
+/**
+ * Why the server refused an admin read, or null when it did not refuse (any
+ * status but 403), read from the 403's body (0.5.6):
+ * - `operator`: `requireOperator` refused this page, which is not the
+ *   operator, so every admin call from here will be refused the same way;
+ * - `role`: any other 403, which is `requireAdmin` refusing a user who is not
+ *   an admin.
+ *
+ * Neither is worth a retry: only a network failure or a server error can
+ * answer differently next time. Reads the body, so call it only on a response
+ * whose body nothing else will read.
+ */
+export async function adminRefusal(res: Response): Promise<AdminRefusal | null> {
+    if (res.status !== 403) return null;
+    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+    return body?.error === OPERATOR_REFUSAL_ERROR ? 'operator' : 'role';
+}

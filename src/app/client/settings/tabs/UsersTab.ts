@@ -64,6 +64,19 @@ export function applyUsersConfig(section: HTMLElement, env: AppConfigEnvelope): 
     configAppliers.get(section)?.(env);
 }
 
+const adminUnreachableAppliers = new WeakMap<HTMLElement, () => void>();
+
+/**
+ * Tell a Users tab the admin API refused this page after all (0.5.6; the
+ * dialog's `onAdminRefused`), though the envelope said it would answer or
+ * could not be read: every control is held back with the note, as
+ * `applyUsersConfig` holds them back when it knows from the start. A no-op if
+ * `section` was never built through `buildUsersTab`.
+ */
+export function applyUsersAdminUnreachable(section: HTMLElement): void {
+    adminUnreachableAppliers.get(section)?.();
+}
+
 /**
  * The Users tab (admin-only) — manage-users entry point, the auth on/off
  * toggle, and (0.5.5) remote admin without sign-in.
@@ -164,13 +177,21 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
     const remote = buildRemoteAdminItem(ctx, store);
     card.appendChild(remote.item);
 
+    function holdBack(): void {
+        manageBtn.disabled = true;
+        loginBtn.disabled = true;
+        unreachableNote.hidden = false;
+    }
+
     configAppliers.set(section, (env) => {
         remote.apply(env);
         // The remote-admin box is held back by `remote.apply` on the same rule.
         if (adminApiReachable(env.runtime)) return;
-        manageBtn.disabled = true;
-        loginBtn.disabled = true;
-        unreachableNote.hidden = false;
+        holdBack();
+    });
+    adminUnreachableAppliers.set(section, () => {
+        holdBack();
+        remote.holdBack();
     });
     return section;
 }
@@ -197,7 +218,7 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
 function buildRemoteAdminItem(
     ctx: TabContext,
     store: StagedSettingsStore,
-): { item: HTMLElement; apply: (env: AppConfigEnvelope) => void } {
+): { item: HTMLElement; apply: (env: AppConfigEnvelope) => void; holdBack: () => void } {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.setAttribute('data-remote-admin', '');
@@ -238,6 +259,8 @@ function buildRemoteAdminItem(
     // and the setting in force.
     let adminBecauseOfIt = false;
     let known = false;
+    // The admin API refused this page after the envelope was read (`holdBack`).
+    let heldBack = false;
 
     const stored = (): boolean => {
         const change = store.changes().find((c) => c.id === REMOTE_ADMIN_ID);
@@ -324,12 +347,18 @@ function buildRemoteAdminItem(
         // Disabled when forced (nothing can turn it off), and when the admin
         // API will not answer this caller at all (off this machine with the
         // setting off): Save would only be refused.
-        checkbox.disabled = forced || !adminApiReachable(runtime);
+        checkbox.disabled = forced || heldBack || !adminApiReachable(runtime);
         item.hidden = false;
         setRowShown(row, true);
         note.hidden = false;
         render();
     }
 
-    return { item, apply };
+    /** The admin API refused this page after all: Save would only be refused (0.5.6). */
+    function holdBack(): void {
+        heldBack = true;
+        checkbox.disabled = true;
+    }
+
+    return { item, apply, holdBack };
 }

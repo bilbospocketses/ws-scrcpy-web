@@ -182,8 +182,20 @@ describe('the add row', () => {
         expect(row.querySelector('.settings-control')).toBeNull();
     });
 
-    it('stays hidden when the list cannot be read (another machine is refused), with the reason shown', async () => {
+    // 0.5.6: a refused read is held back as the dialog holds it back when it
+    // knows from the start -- the reason, and nothing to retry or click into
+    // another refusal.
+    it('stays hidden when the list read is refused (another machine), saying why', async () => {
         listStatus = 403;
+        const ui = await buildTab();
+        expect(ui.adder.hidden).toBe(true);
+        expect(ui.listText()).toBe(ADMIN_UNREACHABLE_NOTE);
+        expect(ui.section.querySelector('[data-embed-list] [data-admin-unreachable-note]')).not.toBeNull();
+        expect(ui.listText()).not.toContain('could not read the list');
+    });
+
+    it('stays hidden when the list cannot be read (a server error), with the reason shown', async () => {
+        listStatus = 500;
         const ui = await buildTab();
         expect(ui.adder.hidden).toBe(true);
         expect(ui.listText()).toContain('could not read the list');
