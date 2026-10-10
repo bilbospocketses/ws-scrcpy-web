@@ -71,6 +71,16 @@ export class SettingsSummaryModal extends Modal {
             warning.textContent = 'Changing the HTTPS port will restart the server; any active streams will drop.';
             container.appendChild(warning);
         }
+
+        // What a change says about itself (StagedField.warning): remote admin
+        // turned off from the device it is the only way in for.
+        for (const c of this.changes) {
+            if (!c.warning) continue;
+            const warning = document.createElement('p');
+            warning.className = 'settings-summary__warning';
+            warning.textContent = c.warning;
+            container.appendChild(warning);
+        }
     }
 
     protected override buildFooter(): HTMLElement | null {

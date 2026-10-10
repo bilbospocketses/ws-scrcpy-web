@@ -33,7 +33,6 @@ describe('action-only tabs register nothing', () => {
     // action has become stageable and can reach the change summary -- which
     // would make Save claim it is about to install a service or delete a user.
     it.each([
-        ['Users', buildUsersTab],
         ['Service', buildServiceTab],
         ['Dependencies', buildDependenciesTab],
     ])('%s contributes no staged fields', (_name, build) => {
@@ -53,6 +52,18 @@ describe('action-only tabs register nothing', () => {
         stubHangingFetch();
         const store = new StagedSettingsStore();
         buildEmbeddingTab(ctx(), store);
+        expect(store.isDirty()).toBe(false);
+        expect(store.changes()).toEqual([]);
+        vi.unstubAllGlobals();
+    });
+
+    // Users is no longer action-only either (0.5.5): its remote-admin checkbox
+    // stages `allowRemoteAdmin` (usersTab.test.ts). Its other rows are still
+    // actions, and an untouched tab stages nothing.
+    it('Users contributes no change until the remote-admin box is changed', () => {
+        stubHangingFetch();
+        const store = new StagedSettingsStore();
+        buildUsersTab(ctx(), store);
         expect(store.isDirty()).toBe(false);
         expect(store.changes()).toEqual([]);
         vi.unstubAllGlobals();

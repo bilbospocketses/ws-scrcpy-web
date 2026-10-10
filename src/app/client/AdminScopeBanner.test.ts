@@ -43,9 +43,11 @@ describe('bannerStateFor', () => {
         expect(bannerStateFor(runtime({ adminScope: 'local', callerIsLocal: false }))).toBe('local-readonly');
     });
 
-    it('warns persistently once the opt-out is active', () => {
-        expect(bannerStateFor(runtime({ adminScope: 'remote', callerIsLocal: false }))).toBe('remote-warning');
-        expect(bannerStateFor(runtime({ adminScope: 'remote', callerIsLocal: true }))).toBe('remote-warning');
+    // 0.5.5: the warning moved to Settings -> Users, under the checkbox that
+    // turns the opt-out off as well as on. The home page says nothing.
+    it('hides once the opt-out is active', () => {
+        expect(bannerStateFor(runtime({ adminScope: 'remote', callerIsLocal: false }))).toBe('hidden');
+        expect(bannerStateFor(runtime({ adminScope: 'remote', callerIsLocal: true }))).toBe('hidden');
     });
 });
 
@@ -168,11 +170,24 @@ describe('AdminScopeBanner opt-out wiring', () => {
 });
 
 describe('AdminScopeBanner dismissal', () => {
-    it('the remote-warning state has no dismiss control', () => {
+    it('renders nothing at all under the remote policy', () => {
+        for (const callerIsLocal of [true, false]) {
+            const banner = new AdminScopeBanner();
+            banner.render(runtime({ adminScope: 'remote', callerIsLocal }));
+            expect(banner.getElement().style.display).toBe('none');
+            expect(banner.getElement().childElementCount).toBe(0);
+            expect(banner.getElement().textContent).toBe('');
+        }
+    });
+
+    it('a banner that was showing goes away when the opt-out is turned on', () => {
         const banner = new AdminScopeBanner();
+        banner.render(runtime({ adminScope: 'local', callerIsLocal: true }));
+        expect(banner.getElement().style.display).not.toBe('none');
         banner.render(runtime({ adminScope: 'remote', callerIsLocal: true }));
-        const labels = [...banner.getElement().querySelectorAll('button')].map((b) => b.textContent);
-        expect(labels).not.toContain('Dismiss');
+        expect(banner.getElement().style.display).toBe('none');
+        expect(banner.getElement().childElementCount).toBe(0);
+        expect(banner.getElement().dataset['state']).toBeUndefined();
     });
 
     it('offers Dismiss in both local states', () => {
@@ -183,13 +198,6 @@ describe('AdminScopeBanner dismissal', () => {
         const readonly = new AdminScopeBanner();
         readonly.render(runtime({ adminScope: 'local', callerIsLocal: false }));
         expect([...readonly.getElement().querySelectorAll('button')].map((b) => b.textContent)).toContain('Dismiss');
-    });
-
-    it('a dismissed banner still shows the remote-warning state', () => {
-        const banner = new AdminScopeBanner();
-        (banner as unknown as { dismissed: boolean }).dismissed = true;
-        banner.render(runtime({ adminScope: 'remote', callerIsLocal: true }));
-        expect(banner.getElement().style.display).not.toBe('none');
     });
 
     it('a dismissed banner hides the local states', () => {

@@ -28,15 +28,6 @@
     color: var(--text-color-light);
 }
 
-/* The opt-out is live: anyone who can reach the server can administer it. */
-.admin-scope-banner--warning {
-    border-color: var(--warning-color);
-}
-
-.admin-scope-banner--warning strong {
-    color: var(--warning-color);
-}
-
 .admin-scope-banner__actions {
     display: flex;
     flex-wrap: wrap;

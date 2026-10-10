@@ -1,5 +1,6 @@
-import type { AppConfigEnvelope, FirstRunStatus } from '../../common/ConfigEvents';
+import type { AppConfigEnvelope } from '../../common/ConfigEvents';
 import { FRAME_ANCESTORS_ADD_ID } from '../../common/embedderOrigin';
+import { REMOTE_ADMIN_ID } from '../../common/remoteAdmin';
 import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { authClient, type Role } from './AuthClient';
@@ -38,7 +39,7 @@ import {
 } from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
 import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
-import { buildUsersTab } from './settings/tabs/UsersTab';
+import { applyUsersConfig, buildUsersTab } from './settings/tabs/UsersTab';
 
 /**
  * Settings modal — every tab in a card, each setting in a two-column grid.
@@ -379,6 +380,31 @@ export async function performDirtyClose(
 }
 
 /**
+ * After a save that changed remote admin: has this device just lost its admin
+ * access? It has when the device is off this machine, sign-in is off, and the
+ * save turned remote admin off -- the server now refuses its admin calls. Read
+ * from /api/config, the policy now in force, rather than worked out from the
+ * batch.
+ *
+ * If so, Settings is opened again, on Users, where it can no longer act: the
+ * new dialog reads the envelope as every dialog does and holds back each admin
+ * read and poll the server would refuse (`adminApiReachable`). The dialog that
+ * saved has closed by then, and its Dependencies poll with it, so nothing keeps
+ * asking.
+ */
+async function reopenIfAdminLost(): Promise<void> {
+    try {
+        const r = await fetch('/api/config');
+        if (!r.ok) return;
+        const env = (await r.json()) as AppConfigEnvelope;
+        if (adminApiReachable(env.runtime)) return;
+    } catch {
+        return;
+    }
+    new SettingsModal({ initialTab: 'users' });
+}
+
+/**
  * The Save / Discard / Cancel prompt raised when a dirty dialog is dismissed.
  *
  * Every ambiguous dismissal (Escape, the backdrop, the ×) resolves `cancel`,
@@ -515,6 +541,18 @@ export class SettingsModal extends Modal {
      */
     private embeddingTabEl: HTMLElement | null = null;
     /**
+     * The Users tab's section, captured the same way: its remote-admin item
+     * waits for the /api/config envelope the constructor reads
+     * (`applyUsersConfig()`). Stays null when the role cannot see Users.
+     */
+    private usersTabEl: HTMLElement | null = null;
+    /**
+     * The changes in the last batch the server accepted. Read once the dialog
+     * closes after it: a batch that turned remote admin off may have ended
+     * this device's admin access (see `reopenIfAdminLost`).
+     */
+    private lastSaved: Change[] = [];
+    /**
      * The Updates tab's root element, captured the same way and for the same
      * reason as `serviceTabEl`. Its /api/updates/status read is held until
      * container mode is known, so the constructor's post-probe block is what
@@ -565,7 +603,11 @@ export class SettingsModal extends Modal {
      */
     private readonly saveDeps: SaveDeps = {
         confirm: (changes) => this.askChild(() => liveSaveDeps.confirm(changes), false),
-        save: (changes) => liveSaveDeps.save(changes),
+        save: async (changes) => {
+            const res = await liveSaveDeps.save(changes);
+            if (res.ok) this.lastSaved = changes;
+            return res;
+        },
         promptDirtyClose: () => this.askChild(() => liveSaveDeps.promptDirtyClose(), 'cancel'),
         navigate: (url) => liveSaveDeps.navigate(url),
     };
@@ -605,7 +647,8 @@ export class SettingsModal extends Modal {
                 // dialog — this modal's own tests stub fetch as a never-resolving
                 // promise precisely to pin "the body still renders", and that is a
                 // real guarantee, not a test artifact.
-                const runtimeProbe = this.probeRuntime();
+                const configProbe = this.probeConfig();
+                const runtimeProbe = configProbe.then((env) => env?.runtime ?? null);
                 try {
                     const me = await authClient.me();
                     role = me.user?.role ?? null;
@@ -633,6 +676,12 @@ export class SettingsModal extends Modal {
                     // Before the container branch returns: a container runs a
                     // version too, and the footer is the only place it shows.
                     this.showVersion(runtime?.appVersion);
+                    // Remote admin is allowed in a container as well, so the
+                    // Users tab hears about it before that branch returns. A
+                    // failed probe, or an envelope missing either half, leaves
+                    // its item hidden.
+                    const env = await configProbe;
+                    if (env?.runtime && env.config && this.usersTabEl) applyUsersConfig(this.usersTabEl, env);
                     this.docker = runtime?.docker === true;
                     // Item 81: an admin whose calls would 403 regardless (a
                     // container with no opt-out) must not have these fired at them
@@ -724,12 +773,13 @@ export class SettingsModal extends Modal {
         // The "Users" section (manage users button + auth toggle) is admin-only.
         //
         // `store` is a single StagedSettingsStore shared by every tab this
-        // dialog builds. Users/Service (below) take it and register nothing —
-        // they are actions, not staged values (see StagedSettingsStore's class
-        // doc). Embedding registers `frameAncestorsAdd` (the pre-approvals its
-        // add row stages; its revoke is an action). Server registers `webPort`;
-        // Updates registers `channel`, `autoUpdate`,
-        // `updateCheckIntervalMinutes` and `githubOwner`.
+        // dialog builds. Service (below) takes it and registers nothing — its
+        // controls are actions, not staged values (see StagedSettingsStore's
+        // class doc). Users registers `allowRemoteAdmin` (its other two rows
+        // are actions). Embedding registers `frameAncestorsAdd` (the
+        // pre-approvals its add row stages; its revoke is an action). Server
+        // registers `webPort` and `httpsPort`; Updates registers `channel`,
+        // `autoUpdate`, `updateCheckIntervalMinutes` and `githubOwner`.
         const store = new StagedSettingsStore();
         this.store = store;
         const ctx: TabContext = {
@@ -752,7 +802,15 @@ export class SettingsModal extends Modal {
         };
         const tabs: TabDef[] = [];
         if (canSeeSection(this.role, 'users')) {
-            tabs.push({ id: 'users', label: 'Users', build: () => buildUsersTab(ctx, store) });
+            tabs.push({
+                id: 'users',
+                label: 'Users',
+                build: () => {
+                    const el = buildUsersTab(ctx, store);
+                    this.usersTabEl = el; // so the constructor can hand it the /api/config envelope
+                    return el;
+                },
+            });
         }
         // Next to Users: both answer "who is allowed to do what with this server".
         if (canSeeSection(this.role, 'embedOrigins')) {
@@ -1035,6 +1093,7 @@ export class SettingsModal extends Modal {
                 return;
             case 'close':
                 this.close();
+                if (this.lastSaved.some((c) => c.id === REMOTE_ADMIN_ID)) void reopenIfAdminLost();
                 return;
             case 'failed':
                 // Stays open, changes still staged — see performStagedSave.
@@ -1091,22 +1150,23 @@ export class SettingsModal extends Modal {
     }
 
     /**
-     * Ask the server whether it is running in a container (SP4 E4).
+     * Ask the server whether it is running in a container (SP4 E4), among the
+     * rest of the /api/config envelope.
      *
-     * Reads `runtime.docker` off the /api/config envelope — the runtime side, not
-     * `config`, because the flag is an env implication the server deliberately
-     * never persists to config.json.
+     * Reads `runtime.docker` off the envelope — the runtime side, not `config`,
+     * because the flag is an env implication the server deliberately never
+     * persists to config.json. The Users tab reads its remote-admin item off
+     * both halves (`applyUsersConfig`).
      *
      * Fails open to `false`. That is the desktop answer and the one that shows
      * MORE, matching the role fail-open in the constructor: a transient fetch
      * error should not silently strip a host user's Service and Updates sections.
      */
-    private async probeRuntime(): Promise<FirstRunStatus | null> {
+    private async probeConfig(): Promise<AppConfigEnvelope | null> {
         try {
             const r = await fetch('/api/config');
             if (!r.ok) return null;
-            const env = (await r.json()) as AppConfigEnvelope;
-            return env.runtime;
+            return (await r.json()) as AppConfigEnvelope;
         } catch {
             return null;
         }

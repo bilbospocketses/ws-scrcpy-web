@@ -23,6 +23,12 @@ export interface Change {
     fromText?: string;
     /** `format(to)` when the field has a formatter; absent otherwise. */
     toText?: string;
+    /**
+     * What saving this change will do that the user must know before saying
+     * yes, from the field's `warning`; the summary shows it under the list.
+     * Absent when there is nothing to say.
+     */
+    warning?: string;
 }
 
 export interface StagedField {
@@ -31,6 +37,11 @@ export interface StagedField {
     initial: unknown;
     /** Render a value for the summary — e.g. true -> "on". Identity when absent. */
     format?(v: unknown): string;
+    /**
+     * A warning for the summary about saving `to`, or null for none: remote
+     * admin turned off by the device that is admin only because of it.
+     */
+    warning?(to: unknown): string | null;
 }
 
 /**
@@ -116,6 +127,8 @@ export class StagedSettingsStore {
                 change.fromText = field.format(field.initial);
                 change.toText = field.format(current);
             }
+            const warning = field.warning?.(current);
+            if (warning) change.warning = warning;
             out.push(change);
         }
         return out;

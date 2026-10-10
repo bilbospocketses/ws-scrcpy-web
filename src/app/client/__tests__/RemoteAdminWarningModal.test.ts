@@ -78,3 +78,39 @@ describe('RemoteAdminWarningModal', () => {
         await expect(p).resolves.toBe(false);
     });
 });
+
+// `choose()` tells the recommended way out apart from a dismissal, for Settings
+// -> Users, which opens manage users on the first and does nothing on the second.
+describe('RemoteAdminWarningModal.choose', () => {
+    it("answers 'accept' only for the explicit accept button", async () => {
+        const p = RemoteAdminWarningModal.choose();
+        button('I understand — allow remote admin').click();
+        await expect(p).resolves.toBe('accept');
+    });
+
+    it("answers 'sign-in' for the recommended button", async () => {
+        const p = RemoteAdminWarningModal.choose();
+        button('Set up sign-in instead').click();
+        await expect(p).resolves.toBe('sign-in');
+    });
+
+    it("answers 'dismiss' for Escape, the backdrop and the ×", async () => {
+        const esc = RemoteAdminWarningModal.choose();
+        (document.querySelector('dialog') as HTMLDialogElement).dispatchEvent(
+            new Event('cancel', { cancelable: true }),
+        );
+        await expect(esc).resolves.toBe('dismiss');
+        document.body.replaceChildren();
+
+        const backdrop = RemoteAdminWarningModal.choose();
+        (document.querySelector('dialog') as HTMLDialogElement).dispatchEvent(
+            new MouseEvent('click', { bubbles: false }),
+        );
+        await expect(backdrop).resolves.toBe('dismiss');
+        document.body.replaceChildren();
+
+        const x = RemoteAdminWarningModal.choose();
+        button('×').click();
+        await expect(x).resolves.toBe('dismiss');
+    });
+});

@@ -2,20 +2,23 @@ import type { FirstRunStatus } from '../../common/ConfigEvents';
 
 const POLL_INTERVAL_MS = 30_000;
 
-export type BannerState = 'hidden' | 'local-actionable' | 'local-readonly' | 'remote-warning';
+export type BannerState = 'hidden' | 'local-actionable' | 'local-readonly';
 
 /**
  * Which banner, if any, this envelope calls for.
  *
  * `adminScope` absent means a server older than the guard: show nothing rather than claim a posture
  * we cannot verify. Pure and exported so the decision is testable without a DOM.
+ *
+ * `remote` shows nothing since 0.5.5. Remote admin without sign-in is a setting now, a checkbox on
+ * Settings → Users that turns it off as well as on, and its warning lives under that checkbox. The
+ * home page used to carry it as a banner nobody could dismiss or act on.
  */
 export function bannerStateFor(runtime: FirstRunStatus): BannerState {
     switch (runtime.adminScope) {
         case 'authenticated':
-            return 'hidden';
         case 'remote':
-            return 'remote-warning';
+            return 'hidden';
         case 'local':
             return runtime.callerIsLocal ? 'local-actionable' : 'local-readonly';
         default:
@@ -36,10 +39,7 @@ export function bannerStateFor(runtime: FirstRunStatus): BannerState {
 export class AdminScopeBanner {
     private container: HTMLElement;
     private pollHandle: ReturnType<typeof setInterval> | null = null;
-    /**
-     * Per-user "don't show again", seeded from /api/settings. Never suppresses
-     * `remote-warning` — see `render()`.
-     */
+    /** Per-user "don't show again", seeded from /api/settings. */
     private dismissed = false;
 
     constructor() {
@@ -120,11 +120,9 @@ export class AdminScopeBanner {
     render(runtime: FirstRunStatus): void {
         const state = bannerStateFor(runtime);
         this.container.replaceChildren();
-        // `remote-warning` is deliberately NOT dismissible: it describes an
-        // exposure that is live right now, not a setup step the user has read
-        // and moved past. Everything else can be put away.
-        if (state === 'hidden' || (this.dismissed && state !== 'remote-warning')) {
+        if (state === 'hidden' || this.dismissed) {
             this.container.style.display = 'none';
+            delete this.container.dataset['state'];
             return;
         }
         this.container.style.display = '';
@@ -132,16 +130,6 @@ export class AdminScopeBanner {
 
         const title = document.createElement('strong');
         const body = document.createElement('p');
-
-        if (state === 'remote-warning') {
-            this.container.classList.add('admin-scope-banner--warning');
-            title.textContent = 'Remote admin is enabled without sign-in.';
-            body.textContent = 'Any device that can reach this server can administer it. Set up sign-in to close this.';
-            this.container.append(title, body);
-            return;
-        }
-
-        this.container.classList.remove('admin-scope-banner--warning');
 
         if (state === 'local-readonly') {
             title.textContent = 'Admin actions are disabled for remote clients.';

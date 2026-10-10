@@ -1,17 +1,31 @@
 import { Modal } from '../ui/Modal';
 
 /**
+ * How the warning was answered: the explicit accept, the recommended "set up
+ * sign-in instead", or any other way out (Esc, the backdrop, the ×, or the
+ * dialog that raised it closing first).
+ */
+export type RemoteAdminChoice = 'accept' | 'sign-in' | 'dismiss';
+
+/**
  * The red confirmation in front of "allow remote admin without sign-in".
  *
  * Resolves true ONLY for the explicit accept button. Every other exit — the recommended button,
  * Esc, backdrop, the × — resolves false, so a mis-click or a dismissal can never widen the
  * server's exposure. The recommended button takes initial focus for the same reason.
+ *
+ * `choose()` tells the two declines apart, for a caller that sends "set up sign-in instead" somewhere
+ * (Settings → Users opens its manage-users dialog) and lets a dismissal simply do nothing.
  */
 export class RemoteAdminWarningModal extends Modal {
-    private resolveFn: ((value: boolean) => void) | null = null;
+    private resolveFn: ((value: RemoteAdminChoice) => void) | null = null;
     private resolved = false;
 
     public static confirm(): Promise<boolean> {
+        return RemoteAdminWarningModal.choose().then((choice) => choice === 'accept');
+    }
+
+    public static choose(): Promise<RemoteAdminChoice> {
         return new Promise((resolve) => {
             // See AdminConfirmModal's note: the Modal base constructor already
             // appends the dialog to document.body AND calls showModal(). Doing
@@ -22,7 +36,7 @@ export class RemoteAdminWarningModal extends Modal {
         });
     }
 
-    private constructor(resolve: (value: boolean) => void) {
+    private constructor(resolve: (value: RemoteAdminChoice) => void) {
         super({ title: 'Allow remote admin without sign-in?' });
         this.resolveFn = resolve;
         this.dialog.classList.add('remote-admin-warning-modal');
@@ -71,36 +85,47 @@ export class RemoteAdminWarningModal extends Modal {
         signIn.type = 'button';
         signIn.className = 'modal-button remote-admin-warning__recommended';
         signIn.textContent = 'Set up sign-in instead';
-        signIn.addEventListener('click', () => this.resolveAndClose(false));
+        signIn.addEventListener('click', () => this.resolveAndClose('sign-in'));
         footer.appendChild(signIn);
 
         const accept = document.createElement('button');
         accept.type = 'button';
         accept.className = 'modal-button remote-admin-warning__accept';
         accept.textContent = 'I understand — allow remote admin';
-        accept.addEventListener('click', () => this.resolveAndClose(true));
+        accept.addEventListener('click', () => this.resolveAndClose('accept'));
         footer.appendChild(accept);
 
         return footer;
     }
 
     protected override onEscapeKey(_event: Event): void {
-        this.resolveAndClose(false);
+        this.resolveAndClose('dismiss');
     }
 
     protected override onBackdropClick(_event: MouseEvent): void {
-        this.resolveAndClose(false);
+        this.resolveAndClose('dismiss');
     }
 
     protected override onCloseButtonClick(): void {
-        this.resolveAndClose(false);
+        this.resolveAndClose('dismiss');
     }
 
-    private resolveAndClose(value: boolean): void {
+    // Closed without an answer (the Settings dialog that raised it closed
+    // first): settle as a dismissal, so nothing awaits forever.
+    protected override onBeforeClose(): void {
+        this.settle('dismiss');
+    }
+
+    private resolveAndClose(value: RemoteAdminChoice): void {
+        if (this.resolved) return;
+        this.settle(value);
+        this.close(value === 'accept');
+    }
+
+    private settle(value: RemoteAdminChoice): void {
         if (this.resolved) return;
         this.resolved = true;
         this.resolveFn?.(value);
         this.resolveFn = null;
-        this.close(value);
     }
 }

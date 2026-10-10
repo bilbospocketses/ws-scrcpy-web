@@ -1,18 +1,64 @@
+import type { AppConfigEnvelope } from '../../../../common/ConfigEvents';
+import { REMOTE_ADMIN_FORCED_MESSAGE, REMOTE_ADMIN_ID } from '../../../../common/remoteAdmin';
 import { authClient } from '../../AuthClient';
+import { adminApiReachable } from '../../adminGate';
+import { RemoteAdminWarningModal } from '../../RemoteAdminWarningModal';
 import { UsersModal } from '../../UsersModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildItem, buildRow, buildSection, buildTabAlert } from '../settingsLayout';
+import { buildItem, buildRow, buildSection, buildTabAlert, setRowShown } from '../settingsLayout';
 import type { TabContext } from './EmbeddingTab';
 
+/** The staged field's summary label: `Remote admin without sign-in: off → on`. */
+export const REMOTE_ADMIN_LABEL = 'Remote admin without sign-in';
+
+/** Under the checkbox while it is checked (warning tone): the notice that used to be the home page's banner. */
+export const REMOTE_ADMIN_ON_NOTE =
+    'any device that can reach this server can administer it. set up sign-in, or uncheck this, to close it.';
+
+/** Under the checkbox while it is unchecked. */
+export const REMOTE_ADMIN_OFF_NOTE = 'admin actions are limited to this machine unless sign-in is set up.';
+
+/** Under the checkbox while sign-in is on, which makes the setting moot until it is turned off again. */
+export const REMOTE_ADMIN_SIGN_IN_NOTE = 'ignored while sign-in is on; it applies again if sign-in is turned off.';
+
 /**
- * The Users tab (admin-only) — manage-users entry point plus the auth on/off
- * toggle.
- *
- * Registers nothing with `store`: opening the manage-users modal and
- * flipping auth are both actions (a modal launch and an immediate POST,
- * respectively), not values to stage and save later.
+ * Under the checkbox, and on the review screen, when the device turning it off
+ * is an admin only BECAUSE of it: once saved, this device is refused.
  */
-export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
+export const REMOTE_ADMIN_OFF_BOX_WARNING = 'you are on another device: saving this ends your admin access from here.';
+
+/** Ids for the remote-admin row's label, unique across every dialog opened on the page. */
+let remoteAdminDomSeq = 0;
+
+/**
+ * Per-instance appliers, keyed by the section `buildUsersTab` returned (the
+ * same WeakMap shape as the other tabs' appliers): the remote-admin item needs
+ * the /api/config envelope, which the dialog reads after every tab is built.
+ */
+const configAppliers = new WeakMap<HTMLElement, (env: AppConfigEnvelope) => void>();
+
+/**
+ * Hand a Users tab the /api/config envelope the dialog read, so its
+ * remote-admin item can show the stored value, whether the environment forces
+ * it, and whether sign-in is on. A no-op if `section` was never built through
+ * `buildUsersTab`.
+ */
+export function applyUsersConfig(section: HTMLElement, env: AppConfigEnvelope): void {
+    configAppliers.get(section)?.(env);
+}
+
+/**
+ * The Users tab (admin-only) — manage-users entry point, the auth on/off
+ * toggle, and (0.5.5) remote admin without sign-in.
+ *
+ * Opening the manage-users modal and flipping auth are actions (a modal launch
+ * and an immediate POST) and register nothing with `store`. Remote admin is a
+ * STAGED setting (`allowRemoteAdmin`): the checkbox only stages it, the review
+ * screen lists it, and the dialog's Save applies it (SettingsBatchApi). It
+ * moved here from the home page's banner, which could only turn it on and
+ * then showed a warning nobody could dismiss.
+ */
+export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
     const { section, card } = buildSection('Users');
     // The tab's one status line. Built now, but it lands below the card all
     // the same: the card is already in the section and stays its last card.
@@ -34,7 +80,6 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
     //    to window.location.reload(), matching every other action control in
     //    Settings that needs a reload — buildResetControl, buildInstallAllUsersControl).
     //    A failure is reported on the tab's line, below the card (`tabAlert`).
-
     if (ctx.authEnabled) {
         const disableBtn = document.createElement('button');
         disableBtn.type = 'button';
@@ -83,5 +128,156 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
         card.appendChild(buildItem(buildRow('login', enableBtn)));
     }
 
+    // 3. Remote admin without sign-in — STAGED. Hidden until the dialog hands
+    //    over the /api/config envelope (applyUsersConfig): until then nothing
+    //    says what is stored, whether the environment forces it, or who is
+    //    asking.
+    const remote = buildRemoteAdminItem(ctx, store);
+    card.appendChild(remote.item);
+
+    configAppliers.set(section, remote.apply);
     return section;
+}
+
+/**
+ * The remote-admin item: a checkbox named by its row's label, and one note
+ * under it that says what the current state means.
+ *
+ * The note, in order of precedence:
+ * - forced on by the environment: the checkbox is checked and disabled, since
+ *   no save can turn it off (the server refuses the attempt);
+ * - sign-in is on: the setting is ignored, but a stored `on` comes back into
+ *   force if sign-in is turned off, so the row stays editable to clear it;
+ * - this device is an admin only because of the setting and has staged it
+ *   off: saving ends its admin access (the review screen says so too);
+ * - checked: the warning the home page used to show; unchecked: what holds.
+ *
+ * Checking it when it is stored off raises `RemoteAdminWarningModal` first,
+ * and stages only on its explicit accept. "Set up sign-in instead" opens the
+ * manage-users dialog over Settings, where the first admin with a password is
+ * created; any other way out of the warning just leaves the box unchecked.
+ * Unchecking needs no confirmation.
+ */
+function buildRemoteAdminItem(
+    ctx: TabContext,
+    store: StagedSettingsStore,
+): { item: HTMLElement; apply: (env: AppConfigEnvelope) => void } {
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.setAttribute('data-remote-admin', '');
+
+    const row = buildRow('remote admin without sign-in', checkbox);
+    const label = row.querySelector<HTMLElement>('.settings-label');
+    if (label) {
+        remoteAdminDomSeq += 1;
+        label.id = `settings-remote-admin-${remoteAdminDomSeq}`;
+        checkbox.setAttribute('aria-labelledby', label.id);
+    }
+
+    const note = document.createElement('p');
+    note.className = 'settings-status';
+    note.style.gridColumn = '1 / -1';
+    note.setAttribute('data-remote-admin-note', '');
+    remoteAdminDomSeq += 1;
+    note.id = `settings-remote-admin-${remoteAdminDomSeq}`;
+    checkbox.setAttribute('aria-describedby', note.id);
+
+    const item = buildItem(row, note);
+    item.hidden = true;
+    setRowShown(row, false);
+    note.hidden = true;
+
+    let forced = false;
+    let signInOn = false;
+    // An admin only because of this setting: off this machine, sign-in off,
+    // and the setting in force.
+    let adminBecauseOfIt = false;
+    let known = false;
+
+    const stored = (): boolean => {
+        const change = store.changes().find((c) => c.id === REMOTE_ADMIN_ID);
+        const current = store.get(REMOTE_ADMIN_ID);
+        return change ? change.from === true : current === true;
+    };
+
+    function render(): void {
+        if (!known) return;
+        const value = forced || store.get(REMOTE_ADMIN_ID) === true;
+        checkbox.checked = value;
+        let text: string;
+        let warn: boolean;
+        if (forced) {
+            text = REMOTE_ADMIN_FORCED_MESSAGE;
+            warn = true;
+        } else if (signInOn) {
+            text = REMOTE_ADMIN_SIGN_IN_NOTE;
+            warn = false;
+        } else if (!value && stored() && adminBecauseOfIt) {
+            text = REMOTE_ADMIN_OFF_BOX_WARNING;
+            warn = true;
+        } else if (value) {
+            text = REMOTE_ADMIN_ON_NOTE;
+            warn = true;
+        } else {
+            text = REMOTE_ADMIN_OFF_NOTE;
+            warn = false;
+        }
+        note.textContent = text;
+        note.classList.toggle('settings-status-warning', warn);
+    }
+
+    function register(initial: boolean): void {
+        store.register({
+            id: REMOTE_ADMIN_ID,
+            label: REMOTE_ADMIN_LABEL,
+            initial,
+            format: (v) => (v === true ? 'on' : 'off'),
+            warning: (to) => (to === false && adminBecauseOfIt ? REMOTE_ADMIN_OFF_BOX_WARNING : null),
+        });
+    }
+
+    checkbox.addEventListener('change', () => {
+        if (!checkbox.checked) {
+            store.set(REMOTE_ADMIN_ID, false);
+            return;
+        }
+        // Back to a stored `on`: an undo, not a decision to open the server up.
+        if (stored()) {
+            store.set(REMOTE_ADMIN_ID, true);
+            return;
+        }
+        // Unchecked until the warning is accepted, so a dismissal leaves it as it was.
+        checkbox.checked = false;
+        void (async () => {
+            const choice = await ctx.askChild(() => RemoteAdminWarningModal.choose(), 'dismiss');
+            if (choice === 'accept') {
+                store.set(REMOTE_ADMIN_ID, true);
+            } else if (choice === 'sign-in') {
+                ctx.openChild(() => new UsersModal());
+            }
+        })();
+    });
+
+    store.subscribe(render);
+
+    function apply(env: AppConfigEnvelope): void {
+        const runtime = env.runtime;
+        forced = runtime.remoteAdminForced === true;
+        signInOn = runtime.adminScope === 'authenticated';
+        adminBecauseOfIt = runtime.adminScope === 'remote' && runtime.callerIsLocal === false;
+        known = true;
+        // Re-registered from the stored value, like the other tabs' baselines:
+        // nothing staged yet, since the item has been hidden until now.
+        register(env.config.allowRemoteAdmin === true);
+        // Disabled when forced (nothing can turn it off), and when the admin
+        // API will not answer this caller at all (off this machine with the
+        // setting off): Save would only be refused.
+        checkbox.disabled = forced || !adminApiReachable(runtime);
+        item.hidden = false;
+        setRowShown(row, true);
+        note.hidden = false;
+        render();
+    }
+
+    return { item, apply };
 }
