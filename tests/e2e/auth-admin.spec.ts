@@ -1283,16 +1283,28 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
             expect(await scope(probe)).toEqual({ adminScope: 'local', callerIsLocal: true, allowRemoteAdmin: false });
             expect(readConfigFile(server.paths)).not.toHaveProperty('allowRemoteAdmin');
             expect((await scope(offBox)).callerIsLocal).toBe(false);
-            // Settings opens again on Users, in the view that cannot act from here.
+            // Settings opens again on Users, in the view that cannot act from
+            // here: the note and nothing else (0.5.8). The box, manage users
+            // and the login toggle are hidden, and still disabled underneath.
+            // Found by CSS, not by role: a hidden control has no role to find.
             const reopened = remotePage.locator('dialog.settings-modal[open]');
             await expect(reopened).toHaveCount(1);
             const reUsers = settingsSection(reopened, 'Users');
             await expect(reUsers).toBeVisible();
-            await expect(remoteAdminBox(reUsers)).not.toBeChecked();
-            await expect(remoteAdminBox(reUsers)).toBeDisabled();
-            await expect(reUsers.locator('[data-admin-unreachable-note]')).toHaveText(
-                'admin changes are limited to the machine running the server.',
-            );
+            const reNote = reUsers.locator('[data-admin-unreachable-note]');
+            await expect(reNote).toBeVisible();
+            await expect(reNote).toHaveText('admin changes are limited to the machine running the server.');
+            const reBox = reUsers.locator('input[data-remote-admin]');
+            await expect(reBox).toBeHidden();
+            await expect(reBox).not.toBeChecked();
+            await expect(reBox).toBeDisabled();
+            // manage users and enable login (sign-in is off here).
+            await expect(reUsers.locator('.settings-card button')).toHaveCount(2);
+            for (const control of await reUsers.locator('.settings-card button').all()) {
+                await expect(control).toBeHidden();
+                await expect(control).toBeDisabled();
+            }
+            await expect(reUsers.locator('.settings-card .settings-item:visible')).toHaveCount(1);
             // Past every poller's next tick: the home page's dependency badge
             // and first-run banner (15 s), the update pill (30 s), the
             // embed-request watch (5 s). Each was told to stop before the batch

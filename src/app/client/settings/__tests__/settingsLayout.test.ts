@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     addCard,
+    addUntitledCard,
     buildDynamicLabelRow,
     buildItem,
     buildRow,
@@ -72,6 +73,34 @@ describe('buildSplitSection and addCard', () => {
         setCardShown(card, true);
         expect(card.hidden).toBe(false);
         expect(heading.hidden).toBe(false);
+    });
+
+    // 0.5.8: the Server tab's note where the admin API will not answer.
+    it('addUntitledCard adds a card with no heading, in order with the titled ones and above the status line', () => {
+        const { section, heading } = buildSplitSection('Server');
+        const alert = buildTabAlert(section);
+        const settings = addCard(section, 'Settings');
+        const untitled = addUntitledCard(section);
+        const ports = addCard(section, 'Ports');
+        expect(untitled.className).toBe('settings-card');
+        const kids = [...section.children];
+        expect(kids).toEqual([
+            heading,
+            settings.previousElementSibling,
+            settings,
+            untitled,
+            ports.previousElementSibling,
+            ports,
+            alert.element,
+        ]);
+        // No heading of its own: setCardShown touches the card alone, and the
+        // heading before it (Settings') is left as it was.
+        expect(section.querySelectorAll('h4')).toHaveLength(2);
+        setCardShown(untitled, false);
+        expect(untitled.hidden).toBe(true);
+        expect((settings.previousElementSibling as HTMLElement).hidden).toBe(false);
+        setCardShown(untitled, true);
+        expect(untitled.hidden).toBe(false);
     });
 
     it('setCardShown on a single-card tab card (no heading of its own) touches only the card', () => {
@@ -167,6 +196,10 @@ describe('the modal.css rules the layout relies on', () => {
         expect(card).toContain('padding: 4px 16px;');
         expect(card).toContain('background: var(--settings-card-bg);');
         expect(rule('dialog.settings-modal .settings-card[hidden]')).toContain('display: none;');
+    });
+
+    it('sets a card with no heading off from the card before it, as a heading would (0.5.8)', () => {
+        expect(rule('dialog.settings-modal .settings-card + .settings-card')).toContain('margin-top: 1.25rem;');
     });
 
     it('gives every item the two-column grid with an 18rem labels column and 0.6rem padding', () => {

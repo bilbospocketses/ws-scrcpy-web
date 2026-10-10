@@ -6,11 +6,11 @@ import {
     isEmbedderScheme,
 } from '../../../../common/embedderOrigin';
 import type { Role } from '../../AuthClient';
-import { ADMIN_ONLY_NOTE, ADMIN_UNREACHABLE_NOTE, refusalFromBody } from '../../adminGate';
+import { refusalFromBody } from '../../adminGate';
 import { ConfirmModal } from '../../ConfirmModal';
 import { isStaleTokenRefusal } from '../../staleToken';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildItem, buildRow, buildSection, buildTabAlert, type TabAlert } from '../settingsLayout';
+import { buildItem, buildRefusedNote, buildRow, buildSection, buildTabAlert, type TabAlert } from '../settingsLayout';
 
 /**
  * What every tab builder gets, regardless of whether it uses it.
@@ -303,17 +303,15 @@ function renderEmbedOrigins(view: EmbeddingView): void {
     // The add row needs the approved list for its duplicate check, and a list
     // that could not be read (another machine, say) means Save would be refused.
     setAdderVisible(view.adder, view.approved !== null && view.error === null && !view.heldBack && !view.adminOnly);
+    // Both refusals are the muted note every other tab shows (`buildRefusedNote`;
+    // 0.5.8). Until 0.5.8 they were label-only rows, styled as a setting's label.
     if (view.heldBack) {
         // Every add and revoke would only be refused from this page.
-        const note = buildRow(ADMIN_UNREACHABLE_NOTE, null);
-        note.setAttribute('data-admin-unreachable-note', '');
-        list.appendChild(note);
+        list.appendChild(buildRefusedNote('operator'));
         return;
     }
     if (view.adminOnly) {
-        const note = buildRow(ADMIN_ONLY_NOTE, null);
-        note.setAttribute('data-admin-only-note', '');
-        list.appendChild(note);
+        list.appendChild(buildRefusedNote('role'));
         return;
     }
 

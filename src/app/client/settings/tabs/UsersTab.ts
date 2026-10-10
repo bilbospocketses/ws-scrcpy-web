@@ -69,9 +69,9 @@ const adminUnreachableAppliers = new WeakMap<HTMLElement, () => void>();
 /**
  * Tell a Users tab the admin API refused this page after all (0.5.6; the
  * dialog's `onAdminRefused`), though the envelope said it would answer or
- * could not be read: every control is held back with the note, as
- * `applyUsersConfig` holds them back when it knows from the start. A no-op if
- * `section` was never built through `buildUsersTab`.
+ * could not be read: every control is hidden and disabled, leaving the note
+ * alone (0.5.8), as `applyUsersConfig` holds them back when it knows from the
+ * start. A no-op if `section` was never built through `buildUsersTab`.
  */
 export function applyUsersAdminUnreachable(section: HTMLElement): void {
     adminUnreachableAppliers.get(section)?.();
@@ -89,8 +89,9 @@ export function applyUsersAdminUnreachable(section: HTMLElement): void {
  * then showed a warning nobody could dismiss.
  *
  * Where the admin API will not answer this page (another machine, sign-in off,
- * remote admin off), every control here is disabled, with one note saying why
- * at the top of the card: each of them would only be refused (0.5.5).
+ * remote admin off), the card shows one note saying why and nothing else: each
+ * control would only be refused (0.5.5). Since 0.5.8 the controls are hidden
+ * as well as disabled; until then they stayed on screen, disabled, under it.
  */
 export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
     const { section, card } = buildSection('Users');
@@ -112,7 +113,8 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
         // A child of Settings: it closes if Settings does.
         ctx.openChild(() => new UsersModal());
     });
-    card.appendChild(buildItem(buildRow('user accounts', manageBtn)));
+    const manageItem = buildItem(buildRow('user accounts', manageBtn));
+    card.appendChild(manageItem);
 
     // 2. Auth toggle — disable login (authEnabled=true) or enable login
     //    (authEnabled=false). ctx.reload() on success (SettingsModal wires this
@@ -120,6 +122,7 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
     //    Settings that needs a reload — buildResetControl, buildInstallAllUsersControl).
     //    A failure is reported on the tab's line, below the card (`tabAlert`).
     let loginBtn: HTMLButtonElement;
+    let loginItem: HTMLElement;
     // Set once the controls are held back (`holdBack`): a click already on its
     // way out when that happened must not give the button back when it fails.
     let heldBack = false;
@@ -140,7 +143,7 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
                 }
             })();
         });
-        card.appendChild(buildItem(buildRow('login', disableBtn)));
+        loginItem = buildItem(buildRow('login', disableBtn));
         loginBtn = disableBtn;
     } else {
         const enableBtn = document.createElement('button');
@@ -169,9 +172,10 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
                 }
             })();
         });
-        card.appendChild(buildItem(buildRow('login', enableBtn)));
+        loginItem = buildItem(buildRow('login', enableBtn));
         loginBtn = enableBtn;
     }
+    card.appendChild(loginItem);
 
     // 3. Remote admin without sign-in — STAGED. Hidden until the dialog hands
     //    over the /api/config envelope (applyUsersConfig): until then nothing
@@ -180,23 +184,29 @@ export function buildUsersTab(ctx: TabContext, store: StagedSettingsStore): HTML
     const remote = buildRemoteAdminItem(ctx, store);
     card.appendChild(remote.item);
 
+    /**
+     * The card shows the note and nothing else (0.5.8): the manage-users and
+     * login items and the remote-admin item are hidden, and stay disabled
+     * underneath as defense in depth. Until 0.5.8 they stayed on screen,
+     * disabled, under the note.
+     */
     function holdBack(): void {
         heldBack = true;
         manageBtn.disabled = true;
         loginBtn.disabled = true;
+        manageItem.hidden = true;
+        loginItem.hidden = true;
+        remote.holdBack();
         unreachableNote.hidden = false;
     }
 
     configAppliers.set(section, (env) => {
         remote.apply(env);
-        // The remote-admin box is held back by `remote.apply` on the same rule.
+        // `remote.apply` disables the box on the same rule; `holdBack` hides it.
         if (adminApiReachable(env.runtime)) return;
         holdBack();
     });
-    adminUnreachableAppliers.set(section, () => {
-        holdBack();
-        remote.holdBack();
-    });
+    adminUnreachableAppliers.set(section, holdBack);
     return section;
 }
 
@@ -352,16 +362,23 @@ function buildRemoteAdminItem(
         // API will not answer this caller at all (off this machine with the
         // setting off): Save would only be refused.
         checkbox.disabled = forced || heldBack || !adminApiReachable(runtime);
-        item.hidden = false;
+        // Not over a hold that came first: a refusal can reach the tab before
+        // the envelope does (0.5.8).
+        item.hidden = heldBack;
         setRowShown(row, true);
         note.hidden = false;
         render();
     }
 
-    /** The admin API refused this page after all: Save would only be refused (0.5.6). */
+    /**
+     * The admin API will not answer this page, known from the envelope or
+     * refused after it (0.5.6): Save would only be refused. Hidden since 0.5.8,
+     * leaving the tab's note alone in the card; disabled as well.
+     */
     function holdBack(): void {
         heldBack = true;
         checkbox.disabled = true;
+        item.hidden = true;
     }
 
     return { item, apply, holdBack };

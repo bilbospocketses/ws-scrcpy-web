@@ -10,6 +10,7 @@ import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import {
     addCard,
+    addUntitledCard,
     buildAdminUnreachableNote,
     buildItem,
     buildRow,
@@ -500,7 +501,9 @@ const adminUnreachableAppliers = new WeakMap<HTMLElement, () => void>();
  * is on), Ports (the http and https port, admin-only) and Application (install
  * for all users, stop & exit, uninstall; admin-only). The http and https ports
  * are separate items, and every note about the https port, including the
- * restart note both ports share, sits under the https port.
+ * restart note both ports share, sits under the https port. Where the admin
+ * API will not answer this page, Ports and Application give way to one
+ * untitled card holding only the note (0.5.8, `applyAdminUnreachable`).
  */
 export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement {
     const { section } = buildSplitSection('Server');
@@ -514,6 +517,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // row was never built (role-gated out), and every consumer below guards on
     // that exactly as the old `if (this.x)` checks did.
     let portsCard: HTMLElement | null = null;
+    let applicationCard: HTMLElement | null = null;
     let webPortInput: HTMLInputElement | null = null;
     let webPortRow: HTMLElement | null = null;
     let webPortStatus: HTMLElement | null = null;
@@ -551,6 +555,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // Set by applyAdminUnreachable: the admin API will not answer this page.
     // Read at click time by the reset control, like `containerMode`.
     let adminUnreachable = false;
+    let adminUnreachableCard: HTMLElement | null = null;
     let adminUnreachableNote: HTMLElement | null = null;
     // Set by applyServiceStatus. Read at click time by the uninstall control,
     // for the same reason.
@@ -712,6 +717,19 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         settingsCard.appendChild(buildItem(buildRow('session', logoutBtn)));
     }
 
+    // The card that stands in for Ports and Application where the admin API
+    // will not answer this page (applyAdminUnreachable; 0.5.8): no heading,
+    // right under Settings, holding the note alone. Built hidden, and only
+    // where there are admin cards for it to stand in for. Until 0.5.8 the note
+    // was the first item of the Application card, under rows left on screen
+    // disabled.
+    if (canSeeSection(ctx.role, 'webPort') || canSeeSection(ctx.role, 'serverControls')) {
+        adminUnreachableCard = addUntitledCard(section);
+        adminUnreachableNote = buildAdminUnreachableNote();
+        adminUnreachableCard.appendChild(buildItem(adminUnreachableNote));
+        setCardShown(adminUnreachableCard, false);
+    }
+
     // 2–5 below are admin-only. Skip building + storing them entirely for
     //    non-admin users so no DOM or ref is created. The external re-entry
     //    points (refreshServer, applyServerServiceStatus) are null-safe on every
@@ -836,12 +854,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         // The Application card: the install lifecycle. "stop server & exit"
         // always shows, so the card is never empty.
         const application = addCard(section, 'Application');
-
-        // Shown, first in the card, only when the admin API will not answer
-        // this page (applyAdminUnreachable): the one place the tab says why its
-        // admin controls are held back.
-        adminUnreachableNote = buildAdminUnreachableNote();
-        application.appendChild(buildItem(adminUnreachableNote));
+        applicationCard = application;
 
         // 3. install for all users (Linux-only) — hidden until
         //    applyServerServiceStatus reveals it on Linux. POSTs
@@ -1015,7 +1028,11 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     function applyHostMode(): void {
         if (containerMode || hostMode) return;
         hostMode = true;
-        if (portsCard) setCardShown(portsCard, true);
+        // Not over a hold that came first (the post-probe block holds the tab
+        // back before it learns this is a host): the Ports card stays hidden
+        // behind the note (0.5.8). The rows inside are shown all the same, so
+        // nothing about them depends on which call came first.
+        if (portsCard && !adminUnreachable) setCardShown(portsCard, true);
         if (webPortRow) setRowShown(webPortRow, true);
         if (httpsPortRow) setRowShown(httpsPortRow, true);
         if (portRestartNote) portRestartNote.hidden = false;
@@ -1144,6 +1161,32 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     }
 
     /**
+     * The admin API will not answer this page (item 81's rule, 0.5.5): hold
+     * back every control that stages or posts an admin change and say why
+     * once. Since 0.5.8 the Ports and Application cards are hidden, headings
+     * and all, and the untitled card under Settings shows the note alone; the
+     * Settings card (reset, change password, log out: the user's own) stays as
+     * it is. The controls in the hidden cards are disabled as well, as defense
+     * in depth -- the http port, the https port (which stays shut anyway, since
+     * its read is never made) and stop & exit.
+     *
+     * Nothing re-shows the two cards afterwards, whatever order the dialog's
+     * calls arrive in: `applyHostMode` leaves the Ports card hidden once this
+     * has run, `applyContainerMode` only ever hides it, and `applyServiceStatus`
+     * reveals rows inside the Application card but never the card itself.
+     */
+    function applyAdminUnreachable(): void {
+        adminUnreachable = true;
+        if (webPortInput) webPortInput.disabled = true;
+        if (httpsPortInput) httpsPortInput.disabled = true;
+        if (stopServerButton) stopServerButton.disabled = true;
+        if (portsCard) setCardShown(portsCard, false);
+        if (applicationCard) setCardShown(applicationCard, false);
+        if (adminUnreachableNote) adminUnreachableNote.hidden = false;
+        if (adminUnreachableCard) setCardShown(adminUnreachableCard, true);
+    }
+
+    /**
      * Container mode's decision for the install-lifecycle rows, made explicitly.
      * A container never fetches /api/service/status (SettingsModal gates Service
      * and Updates first and returns), so `applyServiceStatus` is never reached
@@ -1163,22 +1206,6 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
      * The third, Local HTTPS shown as a reverse-proxy note, belongs to the Local
      * HTTPS tab since 0.5.3 (LocalHttpsTab.ts's `applyLocalHttpsContainerMode`).
      */
-    /**
-     * The admin API will not answer this page (item 81's rule, 0.5.5): hold
-     * back every control that stages or posts an admin change -- the http port
-     * (the https port stays shut, since its read is never made), stop & exit --
-     * and say why once. Install for all users and uninstall never show, since
-     * the service status that reveals them is never read. Change password and
-     * log out are the user's own and stay.
-     */
-    function applyAdminUnreachable(): void {
-        adminUnreachable = true;
-        if (webPortInput) webPortInput.disabled = true;
-        if (httpsPortInput) httpsPortInput.disabled = true;
-        if (stopServerButton) stopServerButton.disabled = true;
-        if (adminUnreachableNote) adminUnreachableNote.hidden = false;
-    }
-
     function applyContainerMode(): void {
         containerMode = true;
         applyAppRows(appSectionButtonsState({ platform: 'linux', docker: true }), 'container');
@@ -1284,8 +1311,9 @@ export function applyServerHostMode(section: HTMLElement): void {
 
 /**
  * Tell a Server tab the admin API will not answer this page
- * (`adminApiReachable` false): its admin controls are held back, with one note
- * saying why. A no-op if `section` was never built through `buildServerTab`.
+ * (`adminApiReachable` false): its Ports and Application cards are hidden and
+ * their controls disabled, and one untitled card under Settings says why
+ * (0.5.8). A no-op if `section` was never built through `buildServerTab`.
  */
 export function applyServerAdminUnreachable(section: HTMLElement): void {
     adminUnreachableAppliers.get(section)?.();
