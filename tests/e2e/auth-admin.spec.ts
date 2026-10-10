@@ -49,7 +49,7 @@ import {
 import { footerSave, reviewDialog, reviewLines } from './support/settingsUi';
 
 /**
- * Smoke rows 12.8 and 18.16–18.22 — who may administer the server, and what
+ * Smoke rows 12.8, 18.13 and 18.16–18.22 — who may administer the server, and what
  * happens to a login's live surfaces when it ends. Fast tier only.
  *
  * Every row runs on a server this file owns (`OwnedServer`, support/ownedServer.ts), one port per
@@ -147,7 +147,7 @@ function isNavigationTo(pathname: string) {
         r.request().isNavigationRequest() && new URL(r.url()).pathname === pathname;
 }
 
-test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
+test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('12.8 shutdown from this machine with login on: a signed-in non-admin is refused 403 forbidden, logs nothing and the server stays up; a signed-in admin is the control that stops it', async () => {
         test.setTimeout(150_000);
         // Finding 12.12 (fixed 2026-10-05): /api/server/shutdown is allow-listed,

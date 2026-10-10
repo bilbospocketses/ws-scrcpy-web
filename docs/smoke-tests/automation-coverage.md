@@ -624,7 +624,7 @@ in the product (item 167 added it on 2026-10-06; `mkcert-provenance.spec.ts` cov
 |---|---|
 | `server-api.spec.ts` | 1.12, 1.14, 3.9, 7.9, 9.8, 10.12, 10.13, 10.17, 10.18 |
 | `config-overrides.spec.ts` | 10.14, 12.9 |
-| `auth-admin.spec.ts` | 12.8, 18.16-18.22 |
+| `auth-admin.spec.ts` | 12.8, 18.13, 18.16-18.22 |
 | `settings-dialog.spec.ts` | 6.9, 13.4-13.9, 13.11 |
 | `first-run-and-reminders.spec.ts` | 1.11, 13.10 |
 | `devices-ui.spec.ts` | 7.10, 7.11, 7.13, 7.14 |
