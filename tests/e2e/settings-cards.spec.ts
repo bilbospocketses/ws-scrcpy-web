@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import { openSettings, openSettingsTab, type SettingsTabTitle, settingsRow } from './support/auth';
 import { gotoHome } from './support/consent';
+import { waitForThemeSettled } from './support/theme';
 import { guardTlsWrites, stubTlsState } from './support/tlsPanel';
 
 /**
@@ -23,6 +24,10 @@ const LABELS_COLUMN_PX = 18 * 14;
 const CARD_TABS: SettingsTabTitle[] = ['Users', 'Embedding', 'Updates', 'Service', 'Server', 'Local HTTPS'];
 
 async function setTheme(page: Page, theme: 'dark' | 'light'): Promise<void> {
+    // The boot's own theme write (applyStoredTheme, after a settings fetch)
+    // must land first, or it overwrites this one and the dark run measures the
+    // light colors -- as on #961's CI (2026-10-10).
+    await waitForThemeSettled(page);
     // The attribute only, nothing persisted: the shared server's theme is not this spec's to change.
     await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
 }
