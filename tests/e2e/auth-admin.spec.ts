@@ -1233,6 +1233,23 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
             // saving ends its admin access, and Settings reopens without it.
             remote = await browser.newContext({ baseURL: offBoxURL(server.paths.port) });
             const remotePage = await remote.newPage();
+            // A controllable clock, installed before the page loads so every
+            // poller's timer is on it. Time still runs as normal until
+            // `runFor` jumps it past their ticks below.
+            await remotePage.clock.install();
+            // Every request this page makes, and every refusal it gets, from
+            // the moment the batch goes out: the transition must produce none.
+            let batchSent = false;
+            const afterSave: string[] = [];
+            const refusedAfterSave: string[] = [];
+            remotePage.on('request', (r) => {
+                const path = new URL(r.url()).pathname;
+                if (batchSent) afterSave.push(`${r.method()} ${path}`);
+                if (r.method() === 'POST' && path === '/api/settings/batch') batchSent = true;
+            });
+            remotePage.on('response', (r) => {
+                if (batchSent && r.status() === 403) refusedAfterSave.push(new URL(r.url()).pathname);
+            });
             await remotePage.goto('/');
             settings = await openSettings(remotePage);
             users = await openSettingsTab(settings, 'Users');
@@ -1255,8 +1272,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
             await review.getByRole('button', { name: 'Save', exact: true }).click();
             res = await batch;
             expect(res.status()).toBe(200);
-            const afterSave: string[] = [];
-            remotePage.on('request', (r) => afterSave.push(new URL(r.url()).pathname));
             // Back to the local policy, and the key is gone from config.json.
             expect(await scope(probe)).toEqual({ adminScope: 'local', callerIsLocal: true, allowRemoteAdmin: false });
             expect(readConfigFile(server.paths)).not.toHaveProperty('allowRemoteAdmin');
@@ -1268,9 +1283,22 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
             await expect(reUsers).toBeVisible();
             await expect(remoteAdminBox(reUsers)).not.toBeChecked();
             await expect(remoteAdminBox(reUsers)).toBeDisabled();
+            await expect(reUsers.locator('[data-admin-unreachable-note]')).toHaveText(
+                'admin changes are limited to the machine running the server.',
+            );
+            // Past every poller's next tick: the home page's dependency badge
+            // and first-run banner (15 s), the update pill (30 s), the
+            // embed-request watch (5 s). Each was told to stop before the batch
+            // went out (adminAccess.ts), so none of them asks.
+            await remotePage.clock.runFor(31_000);
             await remotePage.waitForLoadState('networkidle');
-            // None of the admin reads the server now refuses was asked by it.
-            expect(afterSave.filter((p) => /^\/api\/(service|updates|tls)\//.test(p))).toEqual([]);
+            // Nothing operator-gated was asked after the batch, and nothing was refused.
+            const gated =
+                /^(GET|POST|PATCH|PUT|DELETE) \/api\/(service|updates|tls|dependencies|embed-origins|embed-request|users|settings\/batch)(\/|$)/;
+            expect(afterSave.filter((r) => gated.test(r))).toEqual([]);
+            expect(refusedAfterSave).toEqual([]);
+            // The control: the page did keep talking to the server meanwhile.
+            expect(afterSave).toContain('GET /api/config');
 
             // --- forced on by the environment: checked and disabled, and the
             // server refuses an attempt to turn it off.
