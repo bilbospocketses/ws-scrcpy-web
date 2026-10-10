@@ -1187,7 +1187,14 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
             await expect(note).toHaveText(
                 'any device that can reach this server can administer it. set up sign-in, or uncheck this, to close it.',
             );
-            await expect(note).toHaveClass(/settings-status-warning/);
+            // Checked but not yet saved: the item takes the home page banner's look,
+            // its title saying it applies on save; the note reads as the box's body.
+            const item = users.locator('.settings-item:has(input[data-remote-admin])');
+            await expect(item).toHaveClass(/settings-item--alert/);
+            await expect(users.locator('[data-remote-admin-title]')).toHaveText(
+                'remote admin will be enabled without sign-in when you save.',
+            );
+            await expect(note).not.toHaveClass(/settings-status-warning/);
             expect(writes).toEqual([]);
             expect((await scope(probe)).allowRemoteAdmin).toBe(false);
 
