@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **ci: the American-spelling gate moves to v1.0.3.** `build-and-test` checks out `bilbospocketses/american-spelling` at `4fe6f6e2` (v1.0.3, was v1.0.1 at `cfefb24e`). v1.0.2 added an allow entry for another repository; v1.0.3 adds the British spellings of materialize and its inflections to the word list. The gate still checks only the lines a branch adds, so nothing already on `main` is affected.
 - **docs: the technical guide explains how Settings tells a refusal from a failure.** §24.0 gains a paragraph on 0.5.6's refusal handling: a 403 is classified by its body (`refusalFromBody` / `adminRefusal`), the operator refusal holds the whole dialog back (`SettingsModal.onAdminRefused`), a role refusal shows `only an admin can change these settings.` on that tab alone, a stale token keeps its retry, Embedding's own rules, and Local HTTPS's retry for a failed `/api/tls/state` read. The key-files rows for `adminGate.ts`, `settingsLayout.ts` and `remoteAdmin.ts` name the new exports. Found by the 2026-10-10 wrap-up's doc sweep: nothing in the guide was wrong, but 0.5.6 was missing from it.
 - **docs: the technical guide names the right test for the certificate-subject explainer.** §14's note on the explainer's theme bootstrap named `tests/unit/certificateSubjectHelp.test.ts`, which never existed; the test is `src/common/__tests__/certificateSubjectHelp.test.ts`. Found by the same sweep's check of every path the docs name.
 

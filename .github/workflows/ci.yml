@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bilbospocketses/american-spelling
-          ref: cfefb24e68cd125e2a2d836584c36f51afd50f42 # v1.0.1
+          ref: 4fe6f6e29181ae120545165643d81e601e376092 # v1.0.3
           path: .american-spelling
           persist-credentials: false
       - name: Check American spelling
