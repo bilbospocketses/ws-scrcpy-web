@@ -22,11 +22,15 @@ import { cookieSecurity } from './cookiePolicy';
  * browser and so cookieless: the launcher's `GET /api/config` upgrade probe,
  * which only reads non-sensitive config to detect the live server; the sibling
  * guard's `GET /api/whoami` identity probe (siblingInstance.ts); and the tray
- * helper's `POST /api/server/shutdown` quit (tray/src/main.rs). Each of those
- * handlers is loopback-only, so no exemption reaches anything off-box.
+ * helper's `POST /api/server/shutdown` quit (tray/src/main.rs). None of them
+ * gives an off-box caller anything the token would have kept back: `/api/config`
+ * answers every machine, as the readiness probe and the Docker HEALTHCHECK must,
+ * and its envelope holds no secrets; `/api/whoami` answers this machine only;
+ * and `ServerShutdownApi` re-imposes the token on an off-box caller, then the
+ * operator ladder.
  *
- * A fourth, `GET /api/tls/ca-root`, is the one exemption that DOES reach off-box,
- * and deliberately: a device installing the local CA has never loaded the page.
+ * A fourth, `GET /api/tls/ca-root`, is exempt so that an off-box caller can
+ * use it, deliberately: a device installing the local CA has never loaded the page.
  * It returns a public certificate, and it does not bypass sign-in: AuthGate and
  * TlsApi's admin gate still apply in locked mode — see `requiresToken`.
  *
@@ -109,7 +113,7 @@ export function isValidToken(provided: string | null | undefined): boolean {
 
 /**
  * Whether a request to the given API path must carry a valid token. The whole
- * API surface is protected except the two process-to-process probes above.
+ * API surface is protected except the five exemptions described above.
  * Exact path and method only: `/api/whoami/` or a POST are gated as usual.
  */
 export function requiresToken(method: string | undefined, pathname: string): boolean {
@@ -124,17 +128,18 @@ export function requiresToken(method: string | undefined, pathname: string): boo
         return false;
     }
     // The tray helper's quit. Cookieless by nature (a process, not a browser);
-    // `ServerShutdownApi` refuses any caller that is not on loopback, and the
-    // Origin check above still rejects a cross-origin browser POST.
+    // `ServerShutdownApi` asks an off-box caller for the token anyway (then the
+    // operator ladder), and the Origin check still rejects a cross-origin
+    // browser POST.
     if (m === 'POST' && pathname === '/api/server/shutdown') {
         return false;
     }
     // The root CA certificate, for a device to install: a phone following a
     // link or a QR code, `curl` from another machine. That caller never loaded
-    // the page, so it has no cookie. Unlike the three above this one IS
-    // reachable off-box, on purpose (user decision 2026-09-27): what it returns
-    // is a public certificate, never the key. It does not bypass sign-in: in
-    // locked mode AuthGate answers a caller with no session 401 before TlsApi
+    // the page, so it has no cookie. Unlike whoami and shutdown, this one
+    // serves an off-box caller with no token, on purpose (user decision
+    // 2026-09-27): what it returns is a public certificate, never the key. It
+    // does not bypass sign-in: in locked mode AuthGate answers a caller with no session 401 before TlsApi
     // runs, and TlsApi's admin gate answers a signed-in non-admin 403.
     // Rate-limited and logged by TlsApi as before.
     if (m === 'GET' && pathname === '/api/tls/ca-root') {
