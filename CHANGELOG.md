@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-10-11
+
 ### Added
 - **Settings → Server: restart server.** The first row of the **Application** box restarts the server. After a confirmation, the page shows `restarting the server… this page will reload once it is back.` and reloads once the server answers again. It reloads only when a NEW server process answers (the page's instance token is refused, which only a new process does), so it never reloads onto the old one in the second before it exits. If the server has not come back within a minute, the overlay says so. With unsaved changes staged in Settings, the confirmation says they will be lost. Unlike **stop server & exit**, it stays available under a system service and in a container: the launcher's supervisor and the container's `start.sh` both start the app again on its restart signal (exit 75), the one a port change already uses. It is an admin action like the rest of the box (`POST /api/server/restart`, `src/server/api/ServerRestartApi.ts`, `src/server/api/restartRequest.ts`, `src/app/client/settings/tabs/ServerTab.ts`).
 
