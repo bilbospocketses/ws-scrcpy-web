@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FirstRunStatus } from '../../common/ConfigEvents';
 import { AdminScopeBanner, bannerStateFor } from './AdminScopeBanner';
+import { announceRemoteAdminChanged } from './adminAccess';
 
 /**
  * `vi.waitFor` with a budget that survives a loaded machine (item 140).
@@ -102,6 +103,113 @@ describe('AdminScopeBanner polling lifecycle', () => {
         expect(fetchSpy.mock.calls.length).toBe(callsAfterStart);
         vi.useRealTimers();
         vi.unstubAllGlobals();
+    });
+});
+
+// 0.5.9: saving remote admin in Settings acts on the banner at once, both ways,
+// instead of on the next 30 s poll (or a manual reload).
+describe('AdminScopeBanner follows a remote-admin save', () => {
+    let current: FirstRunStatus;
+    let settings: Record<string, unknown>;
+
+    beforeEach(async () => {
+        current = runtime({ adminScope: 'local', callerIsLocal: true });
+        settings = {};
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (url: string) => ({
+                ok: true,
+                json: async () => (url === '/api/config' ? { runtime: current } : settings),
+            })),
+        );
+        // loadGlobal() memoizes per page; forget it so each test seeds its own
+        // dismissal flag from `settings`.
+        const { settingsService } = await import('./SettingsService');
+        (settingsService as unknown as { globalCache: unknown }).globalCache = null;
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    const shown = (b: AdminScopeBanner) => b.getElement().style.display !== 'none';
+
+    it('hides when remote admin is turned on, and comes back when it is turned off', async () => {
+        const banner = new AdminScopeBanner();
+        banner.start();
+        await vi.waitFor(() => expect(shown(banner)).toBe(true));
+
+        current = runtime({ adminScope: 'remote', callerIsLocal: true });
+        announceRemoteAdminChanged();
+        await vi.waitFor(() => expect(shown(banner)).toBe(false));
+
+        current = runtime({ adminScope: 'local', callerIsLocal: true });
+        announceRemoteAdminChanged();
+        await vi.waitFor(() => expect(shown(banner)).toBe(true));
+        banner.destroy();
+    });
+
+    it('stays hidden when turned off again if it had been dismissed', async () => {
+        settings = { adminScopeBannerDismissed: true };
+        const banner = new AdminScopeBanner();
+        banner.start();
+        // Wait for the seed and the first read to land, so the events below
+        // are judged by a banner that knows it was dismissed.
+        await vi.waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(2));
+        await new Promise((r) => setTimeout(r, 20));
+        current = runtime({ adminScope: 'remote', callerIsLocal: true });
+        announceRemoteAdminChanged();
+        await new Promise((r) => setTimeout(r, 20));
+        current = runtime({ adminScope: 'local', callerIsLocal: true });
+        announceRemoteAdminChanged();
+        await vi.waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(4));
+        await new Promise((r) => setTimeout(r, 20));
+        expect(shown(banner)).toBe(false);
+        banner.destroy();
+    });
+
+    it('a slow read that set off before the save does not overwrite the newer one', async () => {
+        // The first /api/config read (an earlier poll) is held until the
+        // save's own read has rendered, then answers with the old policy.
+        let releaseOld: (() => void) | undefined;
+        let configReads = 0;
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (url: string) => {
+                if (url !== '/api/config') return { ok: true, json: async () => settings };
+                configReads += 1;
+                if (configReads === 1) {
+                    const old = runtime({ adminScope: 'local', callerIsLocal: true });
+                    await new Promise<void>((r) => {
+                        releaseOld = r;
+                    });
+                    return { ok: true, json: async () => ({ runtime: old }) };
+                }
+                return { ok: true, json: async () => ({ runtime: current }) };
+            }),
+        );
+        const banner = new AdminScopeBanner();
+        banner.start();
+        await vi.waitFor(() => expect(releaseOld).toBeDefined());
+        current = runtime({ adminScope: 'remote', callerIsLocal: true });
+        announceRemoteAdminChanged();
+        await vi.waitFor(() => expect(configReads).toBe(2));
+        await new Promise((r) => setTimeout(r, 20));
+        releaseOld?.();
+        await new Promise((r) => setTimeout(r, 20));
+        expect(shown(banner)).toBe(false);
+        banner.destroy();
+    });
+
+    it('destroy() stops listening', async () => {
+        const banner = new AdminScopeBanner();
+        banner.start();
+        await vi.waitFor(() => expect(shown(banner)).toBe(true));
+        banner.destroy();
+        const calls = (fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+        announceRemoteAdminChanged();
+        await new Promise((r) => setTimeout(r, 20));
+        expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(calls);
     });
 });
 

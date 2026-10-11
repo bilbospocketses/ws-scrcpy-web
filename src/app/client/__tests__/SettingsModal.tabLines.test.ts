@@ -3,7 +3,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfigEnvelope, FirstRunStatus } from '../../../common/ConfigEvents';
 import { authClient } from '../AuthClient';
-import { ADMIN_ACCESS_LOST_EVENT } from '../adminAccess';
+import { ADMIN_ACCESS_LOST_EVENT, REMOTE_ADMIN_CHANGED_EVENT } from '../adminAccess';
+import { RemoteAdminWarningModal } from '../RemoteAdminWarningModal';
 import { SettingsModal } from '../SettingsModal';
 import { SettingsSummaryModal } from '../settings/SettingsSummaryModal';
 import { tabAlertIn } from '../settings/settingsLayout';
@@ -433,6 +434,88 @@ describe("a save that ends this device's admin access", () => {
         await flush();
         await flush();
         expect(order).toEqual([]);
+    });
+
+    // 0.5.9: the home page's admin banner hears every applied remote-admin save, both ways.
+    for (const [from, to] of [
+        [true, false],
+        [false, true],
+    ] as const) {
+        it(`announces the remote-admin change after the batch is applied (${from ? 'on -> off' : 'off -> on'})`, async () => {
+            const order: string[] = [];
+            const changed = () => order.push('changed');
+            window.addEventListener(REMOTE_ADMIN_CHANGED_EVENT, changed);
+            try {
+                stubServer(
+                    () => envelope({ adminScope: from ? 'remote' : 'local', callerIsLocal: true }, from),
+                    () => {
+                        order.push('batch');
+                        return { ok: true, applied: ['allowRemoteAdmin'] };
+                    },
+                );
+                vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+                // Checking the box raises the risk warning first; accept it.
+                vi.spyOn(RemoteAdminWarningModal, 'choose').mockResolvedValue('accept');
+                new SettingsModal();
+                await flush();
+                const box = document.querySelector<HTMLInputElement>('input[data-remote-admin]')!;
+                box.checked = to;
+                box.dispatchEvent(new Event('change', { bubbles: true }));
+                await flush();
+                document.querySelector<HTMLButtonElement>('dialog.settings-modal button.settings-save')!.click();
+                await flush();
+                await flush();
+                expect(order).toEqual(['batch', 'changed']);
+            } finally {
+                window.removeEventListener(REMOTE_ADMIN_CHANGED_EVENT, changed);
+            }
+        });
+    }
+
+    it('does not announce a remote-admin change the server refused', async () => {
+        const changed = vi.fn();
+        window.addEventListener(REMOTE_ADMIN_CHANGED_EVENT, changed);
+        try {
+            stubServer(
+                () => envelope({ adminScope: 'remote', callerIsLocal: true }, true),
+                () => ({ ok: false, applied: [], failed: { id: 'allowRemoteAdmin', error: 'nope' } }),
+            );
+            vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+            new SettingsModal();
+            await flush();
+            const box = document.querySelector<HTMLInputElement>('input[data-remote-admin]')!;
+            box.checked = false;
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+            document.querySelector<HTMLButtonElement>('dialog.settings-modal button.settings-save')!.click();
+            await flush();
+            await flush();
+            expect(changed).not.toHaveBeenCalled();
+        } finally {
+            window.removeEventListener(REMOTE_ADMIN_CHANGED_EVENT, changed);
+        }
+    });
+
+    it('announces a remote-admin change the server applied even when a later change in the batch failed', async () => {
+        const changed = vi.fn();
+        window.addEventListener(REMOTE_ADMIN_CHANGED_EVENT, changed);
+        try {
+            stubServer(
+                () => envelope({ adminScope: 'remote', callerIsLocal: true }, true),
+                () => ({ ok: false, applied: ['allowRemoteAdmin'], failed: { id: 'webPort', error: 'nope' } }),
+            );
+            vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+            new SettingsModal();
+            await flush();
+            const box = document.querySelector<HTMLInputElement>('input[data-remote-admin]')!;
+            box.checked = false;
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+            document.querySelector<HTMLButtonElement>('dialog.settings-modal button.settings-save')!.click();
+            await flush();
+            await flush();
+            expect(changed).toHaveBeenCalledTimes(1);
+        } finally {
+            window.removeEventListener(REMOTE_ADMIN_CHANGED_EVENT, changed);
+        }
     });
 
     it('does nothing more when this device can still administer (sign-in or this machine)', async () => {

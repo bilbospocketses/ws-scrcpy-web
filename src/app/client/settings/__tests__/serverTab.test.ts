@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ConfirmModal } from '../../ConfirmModal';
 import { ResetConfirmModal } from '../../ResetConfirmModal';
 import { settingsService } from '../../SettingsService';
+import type { TokenProbe } from '../../staleTokenReload';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { askUnbound } from '../tabs/EmbeddingTab';
 import {
@@ -11,11 +13,16 @@ import {
     applyServerHostMode,
     applyServerServiceStatus,
     buildServerTab,
+    HTTPS_PORT_GATE_NOTE,
+    HTTPS_PORT_GATE_NOTE_PARTS,
     PORT_COLLISION_ERROR,
     PORT_RESTART_NOTE,
+    RESTARTING_MESSAGE,
     refreshServer,
     refreshServerHttps,
+    restartConfirmMessage,
     subPrivilegedPortNotice,
+    waitForServerRestart,
 } from '../tabs/ServerTab';
 
 afterEach(() => {
@@ -75,6 +82,7 @@ describe('ServerTab: Settings, Ports and Application cards', () => {
         // The http and https ports are separate items.
         expect(labelsIn(cards[1]!.card)).toEqual(['http port', 'https port']);
         expect(labelsIn(cards[2]!.card)).toEqual([
+            'restart the server',
             'install for all users',
             'stop the server and close the app',
             'uninstall ws-scrcpy-web',
@@ -132,6 +140,7 @@ describe('ServerTab: Settings, Ports and Application cards', () => {
         expect(rowOf(el, 'http port').querySelector('input')!.disabled).toBe(true);
         expect(rowOf(el, 'https port').querySelector('input')!.disabled).toBe(true);
         expect(rowOf(el, 'stop the server and close the app').querySelector('button')!.disabled).toBe(true);
+        expect(rowOf(el, 'restart the server').querySelector('button')!.disabled).toBe(true);
         // The user's own controls stay.
         expect(rowOf(el, 'reset all my settings').querySelector('button')!.disabled).toBe(false);
         expect(el.querySelector<HTMLButtonElement>('[data-action="change-password"]')!.disabled).toBe(false);
@@ -282,6 +291,133 @@ describe('ServerTab: the install-lifecycle rows are a DECISION, never the defaul
         applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
         expect(el.dataset['appRowsDecided']).toBe('service-status');
         for (const label of APP_ROWS) expect(rowOf(el, label).style.display).toBe('');
+    });
+});
+
+// 0.5.9: "restart server", the first row of Application.
+describe('ServerTab: restart server', () => {
+    afterEach(() => {
+        document.body.replaceChildren();
+    });
+
+    const restartButton = (el: HTMLElement) => rowOf(el, 'restart the server').querySelector('button')!;
+
+    it('stays enabled in service mode and in a container, unlike stop & exit', () => {
+        const service = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerServiceStatus(service, { supported: true, platform: 'win32', status: 'running' });
+        expect(rowOf(service, 'stop the server and close the app').querySelector('button')!.disabled).toBe(true);
+        expect(restartButton(service).disabled).toBe(false);
+
+        const container = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerContainerMode(container);
+        expect(restartButton(container).disabled).toBe(false);
+    });
+
+    it('declining the confirm sends nothing', async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const confirm = vi.spyOn(ConfirmModal, 'confirm').mockResolvedValue(false);
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        restartButton(el).click();
+        await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
+        await new Promise((r) => setTimeout(r, 0));
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('confirmed: POSTs the restart, shows the overlay, and reloads once the NEW process answers', async () => {
+        let probes = 0;
+        const fetchMock = vi.fn(async (url: string) => {
+            if (url === '/api/server/restart') return { ok: true };
+            probes += 1;
+            // The old process (its token still works), then nothing, then the
+            // new process refusing this page's token.
+            if (probes === 1) return { ok: true, status: 200, json: async () => ({}) };
+            if (probes === 2) throw new TypeError('Failed to fetch');
+            return {
+                ok: false,
+                status: 403,
+                json: async () => ({ error: 'forbidden', reason: 'missing or invalid token' }),
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        vi.spyOn(ConfirmModal, 'confirm').mockResolvedValue(true);
+        const reload = vi.fn();
+        const el = buildServerTab({ ...ctx, reload }, new StagedSettingsStore());
+        document.body.appendChild(el);
+        restartButton(el).click();
+
+        await vi.waitFor(() => expect(document.querySelector('[data-restarting-overlay]')).not.toBeNull());
+        expect(document.querySelector('[data-restarting-overlay]')!.textContent).toBe(RESTARTING_MESSAGE);
+        expect(fetchMock).toHaveBeenCalledWith('/api/server/restart', { method: 'POST' });
+        await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+        expect(probes).toBe(3);
+        expect(fetchMock.mock.calls.filter(([u]) => u !== '/api/server/restart').map(([u]) => u)).toEqual([
+            '/api/auth/me',
+            '/api/auth/me',
+            '/api/auth/me',
+        ]);
+    });
+
+    it('the confirm warns about unsaved Settings changes only when there are some', async () => {
+        vi.stubGlobal('fetch', vi.fn());
+        const confirm = vi.spyOn(ConfirmModal, 'confirm').mockResolvedValue(false);
+        const store = new StagedSettingsStore();
+        const el = buildServerTab(ctx, store);
+        restartButton(el).click();
+        await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+        expect(confirm.mock.calls[0]![0].message).toBe(restartConfirmMessage(false));
+        expect(restartConfirmMessage(false)).not.toContain('unsaved');
+
+        store.register({ id: 'probe', label: 'probe', initial: 1 });
+        store.set('probe', 2);
+        restartButton(el).click();
+        await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+        expect(confirm.mock.calls[1]![0].message).toBe(restartConfirmMessage(true));
+        expect(restartConfirmMessage(true)).toMatch(/^your unsaved settings changes will be lost\. /);
+    });
+
+    it('a refused restart says so and gives the button back', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+        vi.spyOn(ConfirmModal, 'confirm').mockResolvedValue(true);
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        const btn = restartButton(el);
+        btn.click();
+        await vi.waitFor(() => expect(el.textContent).toContain("couldn't restart the server."));
+        expect(btn.disabled).toBe(false);
+        expect(btn.textContent).toBe('restart server');
+        expect(document.querySelector('[data-restarting-overlay]')).toBeNull();
+    });
+});
+
+describe('waitForServerRestart', () => {
+    /** A fake clock: each sleep advances it, so the loop runs without real time. */
+    function clock() {
+        let t = 0;
+        return { now: () => t, sleep: async (ms: number) => void (t += ms) };
+    }
+
+    it('does not count the old process still answering, or the gap, as "back"', async () => {
+        const answers: TokenProbe[] = ['ok', 'ok', 'unknown', 'unknown', 'stale'];
+        const c = clock();
+        const back = await waitForServerRestart({ probe: async () => answers.shift() ?? 'ok', ...c });
+        expect(back).toBe(true);
+        expect(answers).toEqual([]);
+    });
+
+    it('needs no "down" in between: a stale token straight after ok is the new process', async () => {
+        const answers: TokenProbe[] = ['ok', 'stale'];
+        const c = clock();
+        expect(await waitForServerRestart({ probe: async () => answers.shift() ?? 'ok', ...c })).toBe(true);
+    });
+
+    it('gives up at the deadline when the server never comes back', async () => {
+        const c = clock();
+        expect(await waitForServerRestart({ probe: async () => 'unknown', ...c, timeoutMs: 5_000 })).toBe(false);
+    });
+
+    it('gives up when the old process never goes away', async () => {
+        const c = clock();
+        expect(await waitForServerRestart({ probe: async () => 'ok', ...c, timeoutMs: 5_000 })).toBe(false);
     });
 });
 
@@ -574,6 +710,27 @@ describe('ServerTab: the https port row', () => {
         expect(p.restartNote.hidden).toBe(false);
         expect(p.restartNote.textContent).toBe(PORT_RESTART_NOTE);
         expect(PORT_RESTART_NOTE).toBe('changing either port restarts the server; any active streams will drop.');
+        // 0.5.9: the standard orange warning, set apart from the gate note above it.
+        expect(p.restartNote.classList.contains('settings-status-warning')).toBe(true);
+        expect(p.gateNote.classList.contains('settings-status-warning')).toBe(false);
+    });
+
+    it('links "mkcert" to Dependencies and "generate" to Local HTTPS in the gate note', () => {
+        const showTab = vi.fn();
+        const el = buildServerTab({ ...ctx, showTab }, new StagedSettingsStore());
+        applyServerHostMode(el);
+        const { gateNote } = parts(el);
+        // The pieces still read exactly the note.
+        expect(gateNote.textContent).toBe(HTTPS_PORT_GATE_NOTE);
+        expect(HTTPS_PORT_GATE_NOTE_PARTS.map((p) => (typeof p === 'string' ? p : p.text)).join('')).toBe(
+            HTTPS_PORT_GATE_NOTE,
+        );
+        const links = [...gateNote.querySelectorAll<HTMLButtonElement>('button.settings-inline-link')];
+        expect(links.map((l) => l.textContent)).toEqual(['mkcert', 'generate']);
+        links[0]!.click();
+        expect(showTab).toHaveBeenLastCalledWith('dependencies');
+        links[1]!.click();
+        expect(showTab).toHaveBeenLastCalledWith('local-https');
     });
 
     it('starts disabled with the note shown, and reads nothing on its own', () => {

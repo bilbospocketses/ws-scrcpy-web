@@ -11,6 +11,7 @@ import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
 import { EmbedRequestApi } from './api/EmbedRequestApi';
 import { PairingApi } from './api/PairingApi';
+import { ServerRestartApi } from './api/ServerRestartApi';
 import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { SettingsApi } from './api/SettingsApi';
@@ -192,6 +193,9 @@ if (__ssArgs) {
         },
     });
     HttpServer.addApiHandler(shutdownApi);
+
+    const restartApi = new ServerRestartApi();
+    HttpServer.addApiHandler(restartApi);
 
     // A container never self-updates (the image is the update), so its updater
     // is never started; the routes refuse with 409 (container audit). Before

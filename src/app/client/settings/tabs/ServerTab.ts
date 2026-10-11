@@ -6,6 +6,7 @@ import { ConfirmModal } from '../../ConfirmModal';
 import { ResetConfirmModal } from '../../ResetConfirmModal';
 import { settingsService } from '../../SettingsService';
 import { isElevationDeclined, reasonToUserMessage } from '../../serviceFailureMessage';
+import { probeStaleToken, type TokenProbe } from '../../staleTokenReload';
 import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import {
@@ -21,7 +22,7 @@ import {
     type TabAlert,
 } from '../settingsLayout';
 import { type AskChild, askUnbound, type TabContext } from './EmbeddingTab';
-import { fetchMkcertInstalled } from './LocalHttpsTab';
+import { DEPENDENCIES_TAB_ID, fetchMkcertInstalled, LOCAL_HTTPS_TAB_ID } from './LocalHttpsTab';
 // Type-only, so it is erased at build time and adds no runtime dependency on the
 // sibling tab. `ScopeRadioInputs` is the three-field subset of
 // /api/service/status that BOTH tabs derive state from (Service: the scope
@@ -45,6 +46,21 @@ const DEFAULT_HTTPS_PORT = 8443;
 /** Under the https port while it is unavailable: no mkcert, or no certificate yet. */
 export const HTTPS_PORT_GATE_NOTE =
     'applies to the certificate local https generates; install mkcert and generate one first.';
+
+/**
+ * HTTPS_PORT_GATE_NOTE in pieces: "mkcert" links to the Dependencies tab, where
+ * it is installed, and "generate" to the Local HTTPS tab, where the certificate
+ * is made. Spelled out rather than found by searching the sentence, because
+ * "generate" first occurs inside "generates". Joined, the pieces read exactly
+ * HTTPS_PORT_GATE_NOTE (a unit test holds them to it).
+ */
+export const HTTPS_PORT_GATE_NOTE_PARTS: ReadonlyArray<string | { text: string; tab: string }> = [
+    'applies to the certificate local https generates; install ',
+    { text: 'mkcert', tab: DEPENDENCIES_TAB_ID },
+    ' and ',
+    { text: 'generate', tab: LOCAL_HTTPS_TAB_ID },
+    ' one first.',
+];
 
 /** Below both port rows, always: saving either one restarts the server (SettingsBatchApi). */
 export const PORT_RESTART_NOTE = 'changing either port restarts the server; any active streams will drop.';
@@ -455,6 +471,114 @@ async function onStopServerExit(btn: HTMLButtonElement, askChild: AskChild): Pro
     showAppStoppedOverlay();
 }
 
+/** The overlay's words while the server restarts, and if it does not come back. */
+export const RESTARTING_MESSAGE = 'restarting the server… this page will reload once it is back.';
+export const RESTART_TIMEOUT_MESSAGE =
+    "the server hasn't come back yet. reload this page to check, or look at the server log.";
+
+/**
+ * Wait for a restart to finish, by asking whether this page's instance token
+ * is still the running process's (`probeStaleToken`). Every process mints a new
+ * token, so `stale` is proof that the NEW process holds the port; `ok` is the
+ * old one, which answers for about a second after accepting the request (see
+ * `scheduleRestart`), and `unknown` is the gap between them. Reloading on
+ * `stale` alone is what stops the page reloading onto the process about to
+ * exit, and needs no "saw it go down" state a slow refused connect could miss.
+ * Resolves true once the new process answers, false when `timeoutMs` passes
+ * first. Every seam is injected so the unit test runs without a clock.
+ */
+export async function waitForServerRestart(opts: {
+    probe: () => Promise<TokenProbe>;
+    sleep: (ms: number) => Promise<void>;
+    now: () => number;
+    intervalMs?: number;
+    timeoutMs?: number;
+}): Promise<boolean> {
+    const interval = opts.intervalMs ?? 500;
+    const deadline = opts.now() + (opts.timeoutMs ?? 60_000);
+    while (opts.now() < deadline) {
+        await opts.sleep(interval);
+        if ((await opts.probe()) === 'stale') return true;
+    }
+    return false;
+}
+
+/** Blank the page with a centered notice while the server restarts; returns its text node's holder. */
+function showRestartingOverlay(): HTMLParagraphElement {
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-restarting-overlay', '');
+    overlay.style.cssText =
+        'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+        'padding:1rem;text-align:center;opacity:0.85;';
+    const msg = document.createElement('p');
+    msg.setAttribute('role', 'status');
+    msg.textContent = RESTARTING_MESSAGE;
+    overlay.appendChild(msg);
+    document.body.replaceChildren(overlay);
+    return msg;
+}
+
+/**
+ * The restart confirm's words. The reload throws away whatever is staged in
+ * Settings and not saved, so when something is, the confirm says so first.
+ */
+export function restartConfirmMessage(unsavedChanges: boolean): string {
+    return (
+        (unsavedChanges ? 'your unsaved settings changes will be lost. ' : '') +
+        'the server will restart and this page will reload once it is back. ' +
+        'any active device connections will end. continue?'
+    );
+}
+
+/**
+ * Confirm, then POST /api/server/restart, blank the page with a "restarting"
+ * notice, and reload once the server answers again. A refused request leaves
+ * the page as it was and says so on the tab's status line.
+ */
+async function onRestartServer(
+    btn: HTMLButtonElement,
+    askChild: AskChild,
+    alert: Pick<TabAlert, 'show'>,
+    reload: () => void,
+    hasUnsavedChanges: () => boolean,
+): Promise<void> {
+    const confirmed = await askChild(
+        () =>
+            ConfirmModal.confirm({
+                title: 'restart server',
+                message: restartConfirmMessage(hasUnsavedChanges()),
+            }),
+        false,
+    );
+    if (!confirmed) return;
+
+    btn.disabled = true;
+    btn.textContent = 'restarting…';
+    let accepted = false;
+    try {
+        accepted = (await fetch('/api/server/restart', { method: 'POST' })).ok;
+    } catch {
+        accepted = false;
+    }
+    if (!accepted) {
+        alert.show('error', "couldn't restart the server.");
+        btn.disabled = false;
+        btn.textContent = 'restart server';
+        return;
+    }
+
+    const msg = showRestartingOverlay();
+    const back = await waitForServerRestart({
+        // Wrapped, not passed by reference: an unbound `fetch` throws
+        // "Illegal invocation" in Chrome.
+        probe: () => probeStaleToken((...args: Parameters<typeof fetch>) => fetch(...args)),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        now: () => Date.now(),
+    });
+    if (back) reload();
+    else msg.textContent = RESTART_TIMEOUT_MESSAGE;
+}
+
 /**
  * Per-instance re-entry points, keyed by the section `buildServerTab` returned.
  * Same shape — and the same reason — as ServiceTab.ts's `refreshers`:
@@ -542,6 +666,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // until then the port rows stay hidden, so none of their copy flashes in a
     // container before the probe answers.
     let hostMode = false;
+    let restartServerButton: HTMLButtonElement | null = null;
     let stopServerButton: HTMLButtonElement | null = null;
     let stopServerNote: HTMLElement | null = null;
     let installAllUsersRow: HTMLElement | null = null;
@@ -815,7 +940,22 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         gateNote.style.gridColumn = '1 / -1';
         gateNote.id = nextPortDomId();
         gateNote.setAttribute('data-https-port-gate-note', '');
-        gateNote.textContent = HTTPS_PORT_GATE_NOTE;
+        for (const part of HTTPS_PORT_GATE_NOTE_PARTS) {
+            if (typeof part === 'string') {
+                gateNote.appendChild(document.createTextNode(part));
+                continue;
+            }
+            // A <button> styled as a link (the Local HTTPS tab's mkcert
+            // callout does the same): it acts in the dialog, so it is in the
+            // tab order rather than navigating anywhere.
+            const link = document.createElement('button');
+            link.type = 'button';
+            link.className = 'settings-inline-link';
+            link.setAttribute('data-https-port-gate-link', part.tab);
+            link.textContent = part.text;
+            link.addEventListener('click', () => ctx.showTab?.(part.tab));
+            gateNote.appendChild(link);
+        }
         gateNote.hidden = true;
         httpsPortGateNote = gateNote;
 
@@ -831,9 +971,11 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         // Below both rows: either port's save restarts the server
         // (SettingsBatchApi schedules one restart for a moved http port, a moved
         // https port, or both). Shown whenever the rows are; in the https
-        // port's item, the last line of the card, since it speaks for both.
+        // port's item, the last line of the card, since it speaks for both. A
+        // warning (orange), which also sets it apart from the gate note above
+        // it, which is about the https port alone.
         const restartNote = document.createElement('p');
-        restartNote.className = 'settings-status';
+        restartNote.className = 'settings-status settings-status-warning';
         restartNote.style.gridColumn = '1 / -1';
         restartNote.id = nextPortDomId();
         restartNote.setAttribute('data-port-restart-note', '');
@@ -851,10 +993,33 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     }
 
     if (canSeeSection(ctx.role, 'serverControls')) {
-        // The Application card: the install lifecycle. "stop server & exit"
-        // always shows, so the card is never empty.
+        // The Application card: the install lifecycle. "restart server" and
+        // "stop server & exit" always show, so the card is never empty.
         const application = addCard(section, 'Application');
         applicationCard = application;
+
+        // 2c. restart the server — first in the card (user, 0.5.9). Exit 75
+        //     through ServerRestartApi: unlike stop & exit it is offered in
+        //     service mode and in a container, since the launcher's supervisor
+        //     and the container's start.sh both start the app again on it.
+        const restartBtn = document.createElement('button');
+        restartBtn.type = 'button';
+        restartBtn.className = 'settings-btn settings-btn-primary';
+        restartBtn.textContent = 'restart server';
+        restartBtn.setAttribute('data-action', 'restart-server');
+        restartBtn.addEventListener(
+            'click',
+            () =>
+                void onRestartServer(
+                    restartBtn,
+                    ctx.askChild,
+                    tabAlert,
+                    () => ctx.reload(),
+                    () => store.isDirty(),
+                ),
+        );
+        restartServerButton = restartBtn;
+        application.appendChild(buildItem(buildRow('restart the server', restartBtn)));
 
         // 3. install for all users (Linux-only) — hidden until
         //    applyServerServiceStatus reveals it on Linux. POSTs
@@ -1168,7 +1333,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
      * Settings card (reset, change password, log out: the user's own) stays as
      * it is. The controls in the hidden cards are disabled as well, as defense
      * in depth -- the http port, the https port (which stays shut anyway, since
-     * its read is never made) and stop & exit.
+     * its read is never made), restart server and stop & exit.
      *
      * Nothing re-shows the two cards afterwards, whatever order the dialog's
      * calls arrive in: `applyHostMode` leaves the Ports card hidden once this
@@ -1179,6 +1344,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         adminUnreachable = true;
         if (webPortInput) webPortInput.disabled = true;
         if (httpsPortInput) httpsPortInput.disabled = true;
+        if (restartServerButton) restartServerButton.disabled = true;
         if (stopServerButton) stopServerButton.disabled = true;
         if (portsCard) setCardShown(portsCard, false);
         if (applicationCard) setCardShown(applicationCard, false);

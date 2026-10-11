@@ -28,3 +28,24 @@ export function onAdminAccessLost(listener: () => void): () => void {
     window.addEventListener(ADMIN_ACCESS_LOST_EVENT, listener);
     return () => window.removeEventListener(ADMIN_ACCESS_LOST_EVENT, listener);
 }
+
+/**
+ * "Remote admin without sign-in was just saved, on or off" (0.5.9), for what
+ * on the page shows the admin posture: the home page's admin-scope banner. It
+ * re-reads /api/config at once instead of on its next 30 s poll, so it goes
+ * away the moment remote admin is turned on and comes back when it is turned
+ * off (unless it was dismissed). Settings raises it AFTER the batch is
+ * applied, since it asks for the policy now in force.
+ */
+export const REMOTE_ADMIN_CHANGED_EVENT = 'ws-remote-admin-changed';
+
+/** Tell the page that the remote-admin setting was just saved. */
+export function announceRemoteAdminChanged(): void {
+    window.dispatchEvent(new Event(REMOTE_ADMIN_CHANGED_EVENT));
+}
+
+/** Run `listener` each time the remote-admin setting is saved; returns the unsubscribe. */
+export function onRemoteAdminChanged(listener: () => void): () => void {
+    window.addEventListener(REMOTE_ADMIN_CHANGED_EVENT, listener);
+    return () => window.removeEventListener(REMOTE_ADMIN_CHANGED_EVENT, listener);
+}

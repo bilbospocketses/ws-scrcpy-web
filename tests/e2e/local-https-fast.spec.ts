@@ -430,6 +430,25 @@ test.describe('local https fast tier: the panel against stubbed state (smoke §2
         expect(writes.writes).toEqual([]);
     });
 
+    // 0.5.9: in the gate note, "mkcert" opens Dependencies and "generate" opens Local HTTPS.
+    test('21.6 the https port note links mkcert to Dependencies and generate to Local HTTPS', async ({ page }) => {
+        await stubTlsState(page, NONE_STATE);
+        await stubMkcert(page, () => null);
+        await page.goto('/');
+        const settings = await openSettings(page);
+        const tabSelected = (name: string) =>
+            expect(settings.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
+        for (const [word, tab] of [
+            ['mkcert', 'Dependencies'],
+            ['generate', 'Local HTTPS'],
+        ] as const) {
+            const { gateNote } = serverPortParts(await openSettingsTab(settings, 'Server'));
+            await expect(gateNote).toBeVisible();
+            await gateNote.getByRole('button', { name: word, exact: true }).click();
+            await tabSelected(tab);
+        }
+    });
+
     test('21.6 the Server tab refuses https port 0, 70000 and the http port inline; 9443 is staged and sent by Save (the sub-1024 advisory shows on Linux only)', async ({
         page,
     }) => {

@@ -119,16 +119,15 @@ test.describe('settings cards (0.5.5)', () => {
             has: page.locator('.settings-label', { hasText: 'stop the server and close the app' }),
         });
         // "install for all users" is Linux only, and built everywhere; where it is
-        // hidden its item is display:none, and the stop item is then the first showing.
-        const install = application.locator('.settings-item', {
-            has: page.locator('.settings-label', { hasText: 'install for all users' }),
-        });
+        // hidden its item is display:none. "restart the server" (0.5.9) is the
+        // first item either way, so it alone has no line above it, and the stop
+        // item has one whether or not install shows between them.
+        const item = (label: string) =>
+            application.locator('.settings-item', { has: page.locator('.settings-label', { hasText: label }) });
         const installShown = await settingsRow(server, 'install for all users').locator('.settings-label').isVisible();
-        await expect(install).toHaveCSS('display', installShown ? 'grid' : 'none');
-        const stop = application.locator('.settings-item', {
-            has: page.locator('.settings-label', { hasText: 'stop the server and close the app' }),
-        });
-        await expect(stop).toHaveCSS('border-top-width', installShown ? '1px' : '0px');
+        await expect(item('install for all users')).toHaveCSS('display', installShown ? 'grid' : 'none');
+        await expect(item('restart the server')).toHaveCSS('border-top-width', '0px');
+        await expect(item('stop the server and close the app')).toHaveCSS('border-top-width', '1px');
     });
 
     test('split tabs show each card under its own heading at the title size; the tab title is hidden from the eye', async ({
@@ -196,10 +195,12 @@ test.describe('settings cards (0.5.5)', () => {
         await expect(unavailable).toBeVisible();
         await expect(unavailable).toHaveCSS('font-weight', '600');
 
+        // The port restart note is a warning since 0.5.9: bold, beside the plain
+        // https gate note above it.
         const server = await openTab(settings, 'Server');
         const restart = server.locator('[data-port-restart-note]');
         await expect(restart).toBeVisible();
-        await expect(restart).toHaveCSS('font-weight', '400');
+        await expect(restart).toHaveCSS('font-weight', '600');
     });
 
     test('Embedding: the add row is one line at 1280px, even with "http & https" chosen, inside its card; the empty-list line spans both columns', async ({

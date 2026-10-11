@@ -317,6 +317,9 @@ export const EXPOSURE_NEEDS_RESTART = 'restart the server first.';
 /** The Dependencies tab's id in the Settings dialog (SettingsModal.ts), where mkcert is installed. */
 export const DEPENDENCIES_TAB_ID = 'dependencies';
 
+/** This tab's own id in the Settings dialog (SettingsModal.ts), where a certificate is generated. */
+export const LOCAL_HTTPS_TAB_ID = 'local-https';
+
 /** Local copy of the notice-row shape every other tab already uses for a status line. */
 function buildNoticeRow(): HTMLParagraphElement {
     const p = document.createElement('p');

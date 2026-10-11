@@ -4,7 +4,7 @@ import { REMOTE_ADMIN_ID } from '../../common/remoteAdmin';
 import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { authClient, type Role } from './AuthClient';
-import { announceAdminAccessLost } from './adminAccess';
+import { announceAdminAccessLost, announceRemoteAdminChanged } from './adminAccess';
 import { ADMIN_UNREACHABLE_NOTE, adminApiReachable, canSeeSection } from './adminGate';
 import { DEPENDENCY_INSTALLED_EVENT } from './DependencyPanel';
 import { closeIntent } from './settings/closeIntent';
@@ -651,6 +651,11 @@ export class SettingsModal extends Modal {
             }
             const res = await liveSaveDeps.save(changes);
             if (res.ok) this.lastSaved = changes;
+            // On or off, the home page's admin banner re-reads the policy now
+            // in force rather than waiting for its next poll. Read from what
+            // the server applied: a batch can fail on a later change after
+            // remote admin was already applied (SettingsBatchApi).
+            if (res.applied.includes(REMOTE_ADMIN_ID)) announceRemoteAdminChanged();
             return res;
         },
         promptDirtyClose: () => this.askChild(() => liveSaveDeps.promptDirtyClose(), 'cancel'),

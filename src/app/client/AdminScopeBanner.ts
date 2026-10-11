@@ -1,4 +1,5 @@
 import type { FirstRunStatus } from '../../common/ConfigEvents';
+import { onRemoteAdminChanged } from './adminAccess';
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -39,6 +40,10 @@ export function bannerStateFor(runtime: FirstRunStatus): BannerState {
 export class AdminScopeBanner {
     private container: HTMLElement;
     private pollHandle: ReturnType<typeof setInterval> | null = null;
+    /** Bumped by every /api/config read; a read that is no longer the latest does not render. */
+    private refreshSeq = 0;
+    /** Unsubscribes the remote-admin-saved listener; null until polling starts. */
+    private stopListening: (() => void) | null = null;
     /** Per-user "don't show again", seeded from /api/settings. */
     private dismissed = false;
 
@@ -96,20 +101,35 @@ export class AdminScopeBanner {
             clearInterval(this.pollHandle);
             this.pollHandle = null;
         }
+        this.stopListening?.();
+        this.stopListening = null;
     }
 
+    /**
+     * The 30 s poll catches a change made anywhere (another device, the env
+     * var); a save in THIS page's Settings is acted on at once, through
+     * REMOTE_ADMIN_CHANGED_EVENT, so turning remote admin on hides the banner
+     * and turning it off brings it back without a reload (0.5.9).
+     */
     private startPolling(): void {
         if (this.pollHandle !== null) return;
         this.pollHandle = setInterval(() => {
             void this.refresh();
         }, POLL_INTERVAL_MS);
+        this.stopListening = onRemoteAdminChanged(() => {
+            void this.refresh();
+        });
     }
 
     private async refresh(): Promise<void> {
+        // Only the latest read renders: a poll that set off before a save can
+        // answer after the save's own refresh, with the policy as it was.
+        const seq = ++this.refreshSeq;
         try {
             const res = await fetch('/api/config');
-            if (!res.ok) return;
+            if (!res.ok || seq !== this.refreshSeq) return;
             const envelope = (await res.json()) as { runtime: FirstRunStatus };
+            if (seq !== this.refreshSeq) return;
             this.render(envelope.runtime);
         } catch {
             // A transient fetch failure leaves the previous render in place.
