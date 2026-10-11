@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Static files are revalidated instead of re-downloaded.** Every file the server serves, and the app page it serves for an in-app route, now carries an `ETag` built from the file's modification time and size (the same scheme as Caddy's file server), with `Cache-Control: no-cache`. A browser that already has the file asks with `If-None-Match` and gets an empty `304 Not Modified` instead of the whole bundle again. An update or a rebuild changes the modification time, so the next load downloads the new file. A file with an unusable modification time (1 s or earlier, as some reproducible builds set it) gets no `ETag` and is always served in full. The per-instance token cookie still rides on a 304 for the page, so a reload after a restart picks up the new process's token as before. The existing tests for the SPA fallback and the `/api/*` 404 rule are kept alongside the new ones (`src/server/StaticFileServer.ts`). Contributed by yegle in #964.
+
 ## [0.5.9] - 2026-10-11
 
 ### Added
