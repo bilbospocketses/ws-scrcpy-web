@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs: the technical guide, SECURITY.md and the README cover 0.5.9's restart and 0.5.10's static-file caching.** The guide's operator section now lists nine `requireOperator` handlers (`ServerRestartApi` was missing), and its exit-75 paragraph, `.restart` marker row, container notes, admin-unreachable paragraph and Server-tab action list name **restart server**. The poller paragraph describes the banner's `ws-remote-admin-changed` re-read, and the key-files rows cover `ServerRestartApi.ts` / `restartRequest.ts`, `ServerTab.ts`'s restart and port-note links, `AdminScopeBanner.ts` and `LOCAL_HTTPS_TAB_ID`. A new paragraph under startup's services describes `StaticFileServer.ts`'s `ETag` / `304` handling. SECURITY.md's admin-route list gains `ServerRestartApi`. README's supervisor and Server-tab paragraphs mention the restart. Found by the 2026-10-11 wrap-up's doc sweep, which also found two older errors: SECURITY.md said one route is exempt from the per-instance token and the guide said four, while `requiresToken` exempts five (`/api/updates/status` was added in D15). Both now name all five.
+
 ## [0.5.10] - 2026-10-11
 
 ### Changed
