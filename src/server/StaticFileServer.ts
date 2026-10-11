@@ -43,6 +43,45 @@ export function isSpaNavigation(urlPath: string, accept: string | undefined): bo
     return (accept ?? '').includes('text/html') && path.extname(urlPath) === '';
 }
 
+/**
+ * Generates an HTTP ETag based on the file modification timestamp (nanoseconds) and size.
+ * This implements the exact algorithm used by Caddy's static file server (`calculateEtag`):
+ * https://github.com/caddyserver/caddy/blob/d65583e6d2d02af71490b727ef88785458661a03/modules/caddyhttp/fileserver/staticfiles.go#L822-L834
+ * (Commit d6f7f18b041de650b9a35ffc5d791fdcc7cb5049 introduced the '-' separator to prevent collisions:
+ *  https://github.com/caddyserver/caddy/blob/d6f7f18b041de650b9a35ffc5d791fdcc7cb5049/modules/caddyhttp/fileserver/staticfiles.go#L763-L775)
+ *
+ * It formats base-36 nanosecond mtime and base-36 size: `"<mtimeNano>-<size>"`.
+ * Returns an empty string if mtime is invalid/placeholder (<= 1s, e.g. Nix builds),
+ * matching Caddy's `usefulModTime()` check.
+ */
+export function getFileEtag(stats: fs.Stats): string;
+export function getFileEtag(filePath: string, stats: fs.Stats): string;
+export function getFileEtag(first: string | fs.Stats, second?: fs.Stats): string {
+    const stats = (typeof first === 'string' ? second : first) as fs.Stats;
+    const mtimeUnixSec = Math.floor(stats.mtimeMs / 1000);
+    if (mtimeUnixSec <= 1) {
+        return '';
+    }
+    const mtimeNano = BigInt(Math.round(stats.mtimeMs * 1_000_000));
+    const size = BigInt(stats.size);
+    return `"${mtimeNano.toString(36)}-${size.toString(36)}"`;
+}
+
+/**
+ * Checks whether an incoming If-None-Match header matches the resource's ETag.
+ * Supports weak/strong comparison (stripping W/ prefix) and comma-separated lists.
+ */
+export function isNoneMatch(ifNoneMatchHeader: string | undefined, etag: string): boolean {
+    if (!ifNoneMatchHeader) return false;
+    if (ifNoneMatchHeader.trim() === '*') return true;
+    const cleanEtag = etag.startsWith('W/') ? etag.slice(2) : etag;
+    const clientTags = ifNoneMatchHeader.split(',').map((t) => t.trim());
+    return clientTags.some((clientTag) => {
+        const cleanClient = clientTag.startsWith('W/') ? clientTag.slice(2) : clientTag;
+        return cleanClient === cleanEtag;
+    });
+}
+
 export function createStaticHandler(publicDir: string): (req: IncomingMessage, res: ServerResponse) => void {
     return (req, res) => {
         const urlPath = new URL(req.url || '/', `http://${req.headers.host}`).pathname;
@@ -61,8 +100,33 @@ export function createStaticHandler(publicDir: string): (req: IncomingMessage, r
                 if (isSpaNavigation(urlPath, req.headers.accept)) {
                     // Navigation to a client-side route → serve the SPA shell.
                     const indexPath = path.join(publicDir, 'index.html');
-                    res.writeHead(200, { 'Content-Type': 'text/html', ...securityHeaders() });
-                    fs.createReadStream(indexPath).pipe(res);
+                    fs.stat(indexPath, (indexErr, indexStats) => {
+                        if (indexErr || !indexStats.isFile()) {
+                            res.writeHead(404, { 'Content-Type': 'text/plain', ...securityHeaders() });
+                            res.end('Not Found');
+                            return;
+                        }
+                        const etag = getFileEtag(indexPath, indexStats);
+                        if (etag && isNoneMatch(req.headers['if-none-match'], etag)) {
+                            res.writeHead(304, {
+                                ETag: etag,
+                                'Cache-Control': 'no-cache',
+                                ...securityHeaders(),
+                            });
+                            res.end();
+                            return;
+                        }
+                        const spaHeaders: Record<string, string> = {
+                            'Content-Type': 'text/html',
+                            'Cache-Control': 'no-cache',
+                            ...securityHeaders(),
+                        };
+                        if (etag) {
+                            spaHeaders['ETag'] = etag;
+                        }
+                        res.writeHead(200, spaHeaders);
+                        fs.createReadStream(indexPath).pipe(res);
+                    });
                 } else {
                     // Missing asset (or a non-navigation request) → 404, not the shell.
                     res.writeHead(404, { 'Content-Type': 'text/plain', ...securityHeaders() });
@@ -70,9 +134,29 @@ export function createStaticHandler(publicDir: string): (req: IncomingMessage, r
                 }
                 return;
             }
+
+            const etag = getFileEtag(filePath, stats);
+            if (etag && isNoneMatch(req.headers['if-none-match'], etag)) {
+                res.writeHead(304, {
+                    ETag: etag,
+                    'Cache-Control': 'no-cache',
+                    ...securityHeaders(),
+                });
+                res.end();
+                return;
+            }
+
             const ext = path.extname(filePath).toLowerCase();
             const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-            res.writeHead(200, { 'Content-Type': contentType, ...securityHeaders() });
+            const headers: Record<string, string> = {
+                'Content-Type': contentType,
+                'Cache-Control': 'no-cache',
+                ...securityHeaders(),
+            };
+            if (etag) {
+                headers['ETag'] = etag;
+            }
+            res.writeHead(200, headers);
             fs.createReadStream(filePath).pipe(res);
         });
     };
