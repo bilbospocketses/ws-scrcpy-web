@@ -217,13 +217,16 @@ test.describe('settings prompts', () => {
         const reset = idx('reset all my settings');
         const port = idx('http port');
         const httpsPort = idx('https port');
+        const restart = idx('restart the server');
         const install = idx('install for all users');
         const stop = idx('stop the server and close the app');
         const uninstall = idx('uninstall ws-scrcpy-web');
         expect(reset).toBeGreaterThanOrEqual(0);
         expect(port).toBeGreaterThan(reset);
         expect(httpsPort).toBe(port + 1);
-        expect(install).toBeGreaterThan(httpsPort);
+        // Restart server (0.5.9) opens the Application box.
+        expect(restart).toBe(httpsPort + 1);
+        expect(install).toBe(restart + 1);
         expect(stop).toBeGreaterThan(install);
         expect(uninstall).toBeGreaterThan(stop);
         expect(labels).not.toContain('web port');

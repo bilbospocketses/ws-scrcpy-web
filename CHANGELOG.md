@@ -15,7 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-10-11
+
+### Added
+- **Settings → Server: restart server.** The first row of the **Application** box restarts the server. After a confirmation, the page shows `restarting the server… this page will reload once it is back.` and reloads once the server answers again. It reloads only when a NEW server process answers (the page's instance token is refused, which only a new process does), so it never reloads onto the old one in the second before it exits. If the server has not come back within a minute, the overlay says so. With unsaved changes staged in Settings, the confirmation says they will be lost. Unlike **stop server & exit**, it stays available under a system service and in a container: the launcher's supervisor and the container's `start.sh` both start the app again on its restart signal (exit 75), the one a port change already uses. It is an admin action like the rest of the box (`POST /api/server/restart`, `src/server/api/ServerRestartApi.ts`, `src/server/api/restartRequest.ts`, `src/app/client/settings/tabs/ServerTab.ts`).
+
+### Fixed
+- **The home page's "Admin actions are limited to this machine." banner follows the remote-admin setting without a reload.** Saving **remote admin without sign-in** in Settings → Users left the banner on the page until it was reloaded or its 30 s re-check ran. Now a save that turns it on hides the banner at once, and one that turns it off brings it back, unless it was dismissed (`src/app/client/AdminScopeBanner.ts`, `src/app/client/adminAccess.ts`, `src/app/client/SettingsModal.ts`).
+
 ### Changed
+- **Settings → Server → Ports: the https port's note links to where its steps happen, and the restart note is a warning.** In `applies to the certificate local https generates; install mkcert and generate one first.`, **mkcert** now opens the Dependencies tab and **generate** the Local HTTPS tab. `changing either port restarts the server; any active streams will drop.` is shown in the orange warning style, which also sets it apart from the https-only note above it (`src/app/client/settings/tabs/ServerTab.ts`).
 - **ci: CI runs on pull requests only, and a PR must be up to date with `main` to merge.** `ci.yml` no longer runs again on the push to `main`: that second ~17-minute run tested the same code and gated nothing (Auto Release and the tag's release build never wait on it). In its place, `main`'s ruleset now requires the branch to be up to date (`strict_required_status_checks_policy`), so the PR run tests exactly what lands. CodeQL still runs on `main`, which code scanning needs as its baseline. One cost: PR runs no longer get an npm cache refreshed by `main`, so a lockfile change installs cold once (`.github/workflows/ci.yml`, `docs/RELEASING.md`).
 - **test: the settings-cards e2e waits for the app's own theme write before setting its own.** Its dark-theme run set `data-theme` before the boot's `applyStoredTheme()` had landed, so that write could turn the page light again and the run measured the light colors (it failed twice on #961's CI). It now calls `waitForThemeSettled` first, the barrier the other theme specs already use (`tests/e2e/settings-cards.spec.ts`).
 
