@@ -900,7 +900,9 @@ describe('the running version in the dialog footer', () => {
 describe('an mkcert install in Dependencies enables generate on the Local HTTPS tab', () => {
     beforeEach(() => {
         document.body.replaceChildren();
-        HTMLDialogElement.prototype.showModal = vi.fn();
+        HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+            this.setAttribute('open', '');
+        });
         stubMeAsAdmin();
     });
 
