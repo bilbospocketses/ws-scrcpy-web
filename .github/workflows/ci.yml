@@ -142,7 +142,28 @@ jobs:
         # long way from its cause. Also refuses a qa-manifest.json whose
         # runner.playwrightVersion drifted from the lockfile.
         run: node scripts/build-suite-bundle.mjs --out "${{ runner.temp }}/wssw-suite" --verify
+      # The e2e suite runs with its temp root on the runner's disk, not /tmp.
+      # Every data root the suite creates lives under os.tmpdir()
+      # (tests/e2e/support/paths.ts), each spec-owned one installs its own
+      # Node.js and adb (about 213 MiB on Linux), and the roots are kept for the
+      # log upload below. ubuntu-latest became ubuntu-26.04 around 2026-10-20,
+      # and its /tmp refuses writes with EDQUOT (`Disk quota exceeded`, errno
+      # 122) once the kept roots reach about 4 GiB: on #976's runs 39530392491
+      # and 39536017423, every later Node.js install failed mid-extract, and
+      # with it rows 10.3 and 13.4. The last green e2e, on ubuntu-24.04, was run
+      # 39258634810. TMPDIR moves the shared server, every spec-owned server
+      # and their update temp dirs onto ${{ runner.temp }}. The docker suite
+      # below makes no data roots of its own (its servers run in compose
+      # volumes), so it keeps the default.
+      #
+      # The df line is a diagnostic: the next disk question is answered by
+      # the log instead of by inference.
+      - name: E2E temp root and free space
+        run: |
+          df -h /tmp "$RUNNER_TEMP"; findmnt -T /tmp || true
       - run: npm run test:e2e
+        env:
+          TMPDIR: ${{ runner.temp }}
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -154,13 +175,14 @@ jobs:
       # the server log says why -- e.g. a refused api.github.com lookup behind a
       # null latestVersion (item 149), which the report alone cannot distinguish
       # from a code defect. The shared server logs under os.tmpdir()'s
-      # ws-scrcpy-web-e2e root; spec-owned servers use siblings of it.
+      # ws-scrcpy-web-e2e root, which the e2e step's TMPDIR puts under
+      # runner.temp; spec-owned servers use siblings of it.
       - name: Upload e2e server logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-server-logs
-          path: /tmp/ws-scrcpy-web-e2e*/**/logs/*.log
+          path: ${{ runner.temp }}/ws-scrcpy-web-e2e*/**/logs/*.log
           if-no-files-found: warn
           retention-days: 7
 
