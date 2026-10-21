@@ -16,7 +16,7 @@
         "fast": "tests/e2e"
     },
     "runner": {
-        "playwrightVersion": "1.64.0",
+        "playwrightVersion": "1.64.1",
         "browsers": ["chromium"]
     }
 }
