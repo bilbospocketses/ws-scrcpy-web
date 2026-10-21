@@ -370,8 +370,13 @@ export function buildInstallAllUsersControl(opts: { reload: () => void; alert: P
  * Build the "uninstall ws-scrcpy-web" trigger button. When clicked, opens
  * UninstallConfirmModal (a top-layer <dialog>) instead of an inline panel.
  * On confirmation, POSTs /api/service/uninstall-app with { keep } and calls
- * opts.onUninstalled on success. Self-contained DOM + wiring; no network call
- * until the modal is confirmed.
+ * opts.onUninstalled once the server says the uninstall started. A refusal (a
+ * 500 for a missing helper, a 200 with `ok: false` on an unsupported platform,
+ * the container guard's 409) or a request that never reaches the server is
+ * reported on the tab's status line (`alert`) and frees the button, as
+ * buildInstallAllUsersControl does: the overlay claims the uninstall started,
+ * so it must not show when it did not.
+ * Self-contained DOM + wiring; no network call until the modal is confirmed.
  *
  * Lives here rather than in ServiceTab.ts for the same reason as
  * buildInstallAllUsersControl: this tab's uninstall row is its only caller.
@@ -382,6 +387,7 @@ export function buildInstallAllUsersControl(opts: { reload: () => void; alert: P
  */
 export function buildUninstallControl(opts: {
     onUninstalled: () => void;
+    alert: Pick<TabAlert, 'show'>;
     platform?: () => NodeJS.Platform | undefined;
     /** The Settings dialog's `askChild`; unbound when the row is built on its own. */
     askChild?: AskChild;
@@ -403,12 +409,35 @@ export function buildUninstallControl(opts: {
             if (!r.confirmed) return;
             button.disabled = true;
             button.textContent = 'uninstalling…';
-            await fetch('/api/service/uninstall-app', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keep: r.keep }),
-            });
-            opts.onUninstalled();
+            try {
+                const res = await fetch('/api/service/uninstall-app', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keep: r.keep }),
+                });
+                // A 200 alone is not a start: an unsupported platform answers
+                // 200 with `ok: false`. 'unsupported' (that platform, or the
+                // container guard's 409) carries its own copy in `error`.
+                const body = (await res.json().catch(() => null)) as {
+                    ok?: unknown;
+                    reason?: unknown;
+                    error?: unknown;
+                } | null;
+                if (res.ok && body?.ok !== false) {
+                    opts.onUninstalled();
+                    return;
+                }
+                opts.alert.show(
+                    'error',
+                    body?.reason === 'unsupported' && typeof body.error === 'string'
+                        ? body.error
+                        : 'uninstall failed — see the server logs and try again.',
+                );
+            } catch {
+                opts.alert.show('error', 'uninstall failed — could not reach the server.');
+            }
+            button.disabled = false;
+            button.textContent = 'uninstall…';
         })();
     });
 
@@ -1056,6 +1085,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         //    /api/service/uninstall-app { keep }.
         const uninstall = buildUninstallControl({
             onUninstalled: () => showUninstalledOverlay(),
+            alert: tabAlert,
             platform: () => servicePlatform,
             askChild: ctx.askChild,
         });

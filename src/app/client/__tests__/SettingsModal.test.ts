@@ -514,7 +514,7 @@ describe('buildInstallAllUsersControl', () => {
 
 describe('buildUninstallControl', () => {
     it('returns only { button } — no confirmPanel, keepCheckbox, confirmButton, cancelButton', () => {
-        const result = buildUninstallControl({ onUninstalled: vi.fn() });
+        const result = buildUninstallControl({ onUninstalled: vi.fn(), alert: { show: vi.fn() } });
         expect(result).toHaveProperty('button');
         expect(result).not.toHaveProperty('confirmPanel');
         expect(result).not.toHaveProperty('keepCheckbox');
@@ -526,7 +526,7 @@ describe('buildUninstallControl', () => {
         const confirmSpy = vi
             .spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
             .mockResolvedValue({ confirmed: false, keep: true });
-        const { button } = buildUninstallControl({ onUninstalled: vi.fn() });
+        const { button } = buildUninstallControl({ onUninstalled: vi.fn(), alert: { show: vi.fn() } });
         button.click();
         await flush();
         expect(confirmSpy).toHaveBeenCalledTimes(1);
@@ -537,7 +537,11 @@ describe('buildUninstallControl', () => {
             .spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
             .mockResolvedValue({ confirmed: false, keep: true });
         let platform: NodeJS.Platform | undefined;
-        const { button } = buildUninstallControl({ onUninstalled: vi.fn(), platform: () => platform });
+        const { button } = buildUninstallControl({
+            onUninstalled: vi.fn(),
+            alert: { show: vi.fn() },
+            platform: () => platform,
+        });
         platform = 'win32';
         button.click();
         await flush();
@@ -545,7 +549,7 @@ describe('buildUninstallControl', () => {
     });
 
     it('on confirmed=true,keep=true POSTs /api/service/uninstall-app with {keep:true} and calls onUninstalled', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+        const fetchMock = vi.fn().mockResolvedValue(uninstallReply(200, { ok: true, status: 'uninstalling' }));
         vi.stubGlobal('fetch', fetchMock);
         const onUninstalled = vi.fn();
         vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm').mockResolvedValue({
@@ -553,7 +557,7 @@ describe('buildUninstallControl', () => {
             keep: true,
         });
 
-        const { button } = buildUninstallControl({ onUninstalled });
+        const { button } = buildUninstallControl({ onUninstalled, alert: { show: vi.fn() } });
         button.click();
         await flush();
 
@@ -566,7 +570,7 @@ describe('buildUninstallControl', () => {
     });
 
     it('on confirmed=true,keep=false POSTs {keep:false} and calls onUninstalled', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+        const fetchMock = vi.fn().mockResolvedValue(uninstallReply(200, { ok: true, status: 'uninstalling' }));
         vi.stubGlobal('fetch', fetchMock);
         const onUninstalled = vi.fn();
         vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm').mockResolvedValue({
@@ -574,7 +578,7 @@ describe('buildUninstallControl', () => {
             keep: false,
         });
 
-        const { button } = buildUninstallControl({ onUninstalled });
+        const { button } = buildUninstallControl({ onUninstalled, alert: { show: vi.fn() } });
         button.click();
         await flush();
 
@@ -592,14 +596,83 @@ describe('buildUninstallControl', () => {
             keep: true,
         });
 
-        const { button } = buildUninstallControl({ onUninstalled });
+        const { button } = buildUninstallControl({ onUninstalled, alert: { show: vi.fn() } });
         button.click();
         await flush();
 
         expect(fetchMock).not.toHaveBeenCalled();
         expect(onUninstalled).not.toHaveBeenCalled();
     });
+
+    // The overlay says the uninstall STARTED (item 131), so it shows only when
+    // the server says so. Every other outcome is reported on the tab's status
+    // line and leaves the button usable, as buildInstallAllUsersControl does.
+    describe('when the uninstall did not start', () => {
+        beforeEach(() => {
+            vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm').mockResolvedValue({
+                confirmed: true,
+                keep: true,
+            });
+        });
+
+        async function clickWith(fetchImpl: ReturnType<typeof vi.fn>) {
+            vi.stubGlobal('fetch', fetchImpl);
+            const onUninstalled = vi.fn();
+            const alert = { show: vi.fn() };
+            const { button } = buildUninstallControl({ onUninstalled, alert });
+            button.click();
+            await flush();
+            return { button, onUninstalled, alert };
+        }
+
+        it('a 500 (helper not found) reports the failure and frees the button', async () => {
+            const { button, onUninstalled, alert } = await clickWith(
+                vi
+                    .fn()
+                    .mockResolvedValue(
+                        uninstallReply(500, { ok: false, error: 'uninstall helper not found at x', reason: 'unknown' }),
+                    ),
+            );
+
+            expect(onUninstalled).not.toHaveBeenCalled();
+            expect(alert.show).toHaveBeenCalledWith('error', 'uninstall failed — see the server logs and try again.');
+            expect(button.disabled).toBe(false);
+            expect(button.textContent).toBe('uninstall…');
+        });
+
+        it("a 200 with ok:false (an unsupported platform) is not a start, and says the server's reason", async () => {
+            const { button, onUninstalled, alert } = await clickWith(
+                vi.fn().mockResolvedValue(
+                    uninstallReply(200, {
+                        ok: false,
+                        reason: 'unsupported',
+                        error: 'app uninstall is not supported on this platform',
+                    }),
+                ),
+            );
+
+            expect(onUninstalled).not.toHaveBeenCalled();
+            expect(alert.show).toHaveBeenCalledWith('error', 'app uninstall is not supported on this platform');
+            expect(button.disabled).toBe(false);
+        });
+
+        it('a request that never reaches the server is reported, not left as an unhandled rejection', async () => {
+            const { button, onUninstalled, alert } = await clickWith(
+                vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+            );
+
+            expect(onUninstalled).not.toHaveBeenCalled();
+            expect(alert.show).toHaveBeenCalledWith('error', 'uninstall failed — could not reach the server.');
+            expect(button.disabled).toBe(false);
+            expect(button.textContent).toBe('uninstall…');
+        });
+    });
 });
+
+/** A fetch reply as buildUninstallControl reads it: the status and a JSON body. */
+function uninstallReply(status: number, body: unknown) {
+    return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) };
+}
 
 describe('buildResetControl', () => {
     it('returns only { button } — no inline confirmPanel/note', () => {
