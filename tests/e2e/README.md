@@ -189,7 +189,8 @@ The same pattern carries the server-surface, lifecycle and dependencies rows
 boot-time-only config key (`allowedHosts`), reads the server's own log file, or
 needs locked mode without touching the shared server's auth state runs on a
 spec-owned server from `support/privateServer.ts`, on ports 8126–8131,
-8133–8139 (12.6's port blockers) and 8142 (12.10's double signal, Linux only), each with its own data root that is wiped and
+8133–8139 (12.6's port blockers), 8142 (12.10's double signal, Linux only) and
+8243–8244 (12.13's restart, on-box and off-box), each with its own data root that is wiped and
 re-seeded per run. The log those rows read is `<dataRoot>/logs/ws-scrcpy-web.log`
 (`support/serverLog.ts`): the console echo is TTY-only, so a spawned child's
 captured stdout never carries it.
@@ -229,7 +230,11 @@ handler turns the probe's reset into an uncaught `read ECONNRESET` in the test
 process.
 
 The item-164 specs added these spec-owned servers. Each file keeps to its own range
-so a leftover server or data root names the file it came from:
+so a leftover server or data root names the file it came from, with two exceptions
+the table names: 8196 and 8197–8198 are each used by two files (every data root is
+still the file's own). One run is safe because it runs one test at a time, but two
+parallel `WSSW_E2E_PORT` runs must not split `mkcert-provenance.spec.ts` and
+`local-https.spec.ts` between them:
 
 | Spec | Ports | Data roots | Helpers |
 |---|---|---|---|
@@ -240,12 +245,14 @@ so a leftover server or data root names the file it came from:
 | `first-run-and-reminders.spec.ts` | 8176–8179 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `ports` |
 | `embed-trust.spec.ts` | 8181, 8184 (its adb daemon), 8188–8189 (embedding pages) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `rawHttp` (`serveHtml`) |
 | `devices-ui.spec.ts` | 8182, 8183 (its adb daemon), 8187 (never bound) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `fetchCounter` |
-| `local-https-fast.spec.ts` | 8191–8195, 8230 (https 9430) | `ws-scrcpy-web-e2e-164e-*`, `ws-scrcpy-web-e2e-item24-tls` | `tlsFixtures`, `tlsPanel`, `rawHttp` (`lanAddress`), `secureContext`, `ports` |
-| `mkcert-provenance.spec.ts` | 8197, 8198 (its fixture release server) | `ws-scrcpy-web-e2e-164b-21-12` | `ownedServer` |
+| `local-https-fast.spec.ts` | 8191–8195, 8196 (21.9's saved https port: navigated to, never bound; also `auth-admin.spec.ts`'s 12.8 off-box port, harmless because the tier runs one test at a time), 8230 (https 9430) | `ws-scrcpy-web-e2e-164e-*`, `ws-scrcpy-web-e2e-item24-tls` | `tlsFixtures`, `tlsPanel`, `rawHttp` (`lanAddress`), `secureContext`, `ports` |
+| `mkcert-provenance.spec.ts` | 8197, 8198 (its fixture release server); shared with `local-https.spec.ts`, see the next row | `ws-scrcpy-web-e2e-164b-21-12` | `ownedServer` |
+| `local-https.spec.ts` | 8197, 8198 (https): its real-mkcert row, which runs only with `QA_MKCERT_EXE` set. The same two ports as `mkcert-provenance.spec.ts`; both bind them, which is safe only because the tier runs one test at a time | `ws-scrcpy-web-e2e-real-mkcert` | `privateServer`, `tlsFixtures`, `secureContext` |
 | `dependencies-restart.spec.ts` | 8145, 8146 (its fixture nodejs.org), 8242 (6.8) | `ws-scrcpy-web-e2e-deps-restart*` | `privateServer`, `serverLog`, `ownedServer` |
 | `service-handoff.spec.ts` | 8200–8209 | `ws-scrcpy-web-e2e-i24-handoff-*` | `privateServer`, `ports`, `ownedServer` (`apiContext`, `lockDown`), `serviceStubs` |
+| `lifecycle.spec.ts` | 8128 (12.1), 8129 (12.4), 8133–8139 (12.6, with their port blockers), 8142 (12.10, Linux only), 8243–8244 (12.13, on-box and off-box) | `ws-scrcpy-web-e2e-stop-exit`, `-data-root`, `-no-listener-*`, `-double-signal`, `-restart-server`, `-restart-server-offbox` | `privateServer`, `serverLog`, `ports`, `selfSignedCert`, `rawHttp` (`lanAddress`) |
 
-8140 is `container-user.spec.ts`'s, 8142 is `lifecycle.spec.ts`'s (12.10) and so are 8243–8244 (12.13), 8199 is `auth-admin.spec.ts`'s 18.13 (0.5.5), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180 and
+8140 is `container-user.spec.ts`'s, 8199 is `auth-admin.spec.ts`'s 18.13 (0.5.5), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180 and
 8190 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
 item 164 batches used through `WSSW_E2E_PORT` while writing these specs in parallel;
 nothing binds them in a normal run). `lockedServer` can give a server an **adb daemon of its own**
