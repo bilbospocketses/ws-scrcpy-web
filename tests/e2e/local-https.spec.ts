@@ -12,6 +12,7 @@ import {
     stopServer,
     waitForServer,
 } from './support/privateServer';
+import { probeSecureContext } from './support/secureContext';
 import { tlsServerPaths } from './support/tlsFixtures';
 
 /**
@@ -92,21 +93,6 @@ function hostnameOf(origin: string): string | null {
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const isLoopbackOrigin = LAN_ORIGIN !== undefined && LOOPBACK_HOSTS.has(hostnameOf(LAN_ORIGIN) ?? '');
-
-/** Same probe run against both the https and the plain-http origin below —
- *  one function, so the two sides can only differ in what they measure, never
- *  in how. */
-function probeSecureContext() {
-    return (async () => ({
-        isSecureContext: window.isSecureContext,
-        hasVideoDecoder: typeof VideoDecoder !== 'undefined',
-        h264:
-            typeof VideoDecoder === 'undefined'
-                ? false
-                : (await VideoDecoder.isConfigSupported({ codec: 'avc1.42E01E', codedWidth: 1280, codedHeight: 720 }))
-                      .supported,
-    }))();
-}
 
 /**
  * The plain-http control (below) only means what it claims when the server

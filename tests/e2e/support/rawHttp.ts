@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, request as httpRequest, type Server } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { networkInterfaces } from 'node:os';
 
 /**
@@ -27,6 +28,10 @@ export interface RawResponse {
  * One HTTP request with every header under the caller's control. Playwright's
  * request context owns Host and its cookie jar, and a jar is exactly what must
  * not decide which `Secure` cookie gets sent over plain http; node's does not.
+ *
+ * `https` sends it to an HTTPS listener without verifying the certificate: a
+ * cold caller such as `curl -k`, for rows about what the listener answers. A
+ * row about trust itself makes its own handshake.
  */
 export function raw(opts: {
     port: number;
@@ -35,6 +40,7 @@ export function raw(opts: {
     host?: string;
     headers?: Record<string, string>;
     body?: unknown;
+    https?: boolean;
 }): Promise<RawResponse> {
     const payload = opts.body === undefined ? undefined : JSON.stringify(opts.body);
     const headers: Record<string, string> = { ...(opts.headers ?? {}) };
@@ -43,7 +49,7 @@ export function raw(opts: {
         headers['content-length'] = String(Buffer.byteLength(payload));
     }
     return new Promise((resolve, reject) => {
-        const req = httpRequest(
+        const req = (opts.https ? httpsRequest : httpRequest)(
             {
                 host: opts.host ?? '127.0.0.1',
                 port: opts.port,
@@ -51,6 +57,7 @@ export function raw(opts: {
                 method: opts.method ?? 'GET',
                 headers,
                 timeout: 60_000,
+                ...(opts.https ? { rejectUnauthorized: false } : {}),
             },
             (res) => {
                 const chunks: Buffer[] = [];

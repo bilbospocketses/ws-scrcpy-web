@@ -215,18 +215,19 @@ so a leftover server or data root names the file it came from:
 
 | Spec | Ports | Data roots | Helpers |
 |---|---|---|---|
-| `server-api.spec.ts` | 8151–8157 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports` |
+| `server-api.spec.ts` | 8151–8157, 8240–8241 (21.3, http and https) | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports`, `tlsFixtures` |
 | `config-overrides.spec.ts` | 8158–8159 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports`, `tlsFixtures` |
 | `auth-admin.spec.ts` | 8161–8169, 8196, 8199 | `ws-scrcpy-web-e2e-164b-*` | `ownedServer` (`OwnedServer`), `sessions`, `rawHttp` (`lanAddress`) |
 | `settings-dialog.spec.ts` | 8171–8175 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `pendingSettings` |
 | `first-run-and-reminders.spec.ts` | 8176–8179 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `ports` |
 | `embed-trust.spec.ts` | 8181, 8184 (its adb daemon), 8188–8189 (embedding pages) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `rawHttp` (`serveHtml`) |
 | `devices-ui.spec.ts` | 8182, 8183 (its adb daemon), 8187 (never bound) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `fetchCounter` |
-| `local-https-fast.spec.ts` | 8191–8195 | `ws-scrcpy-web-e2e-164e-*` | `tlsFixtures`, `tlsPanel` |
+| `local-https-fast.spec.ts` | 8191–8195, 8230 (https 9430) | `ws-scrcpy-web-e2e-164e-*`, `ws-scrcpy-web-e2e-item24-tls` | `tlsFixtures`, `tlsPanel`, `rawHttp` (`lanAddress`), `secureContext`, `ports` |
 | `mkcert-provenance.spec.ts` | 8197, 8198 (its fixture release server) | `ws-scrcpy-web-e2e-164b-21-12` | `ownedServer` |
-| `dependencies-restart.spec.ts` | 8145, 8146 (its fixture nodejs.org) | `ws-scrcpy-web-e2e-deps-restart` | `privateServer`, `serverLog` |
+| `dependencies-restart.spec.ts` | 8145, 8146 (its fixture nodejs.org), 8242 (6.8) | `ws-scrcpy-web-e2e-deps-restart*` | `privateServer`, `serverLog`, `ownedServer` |
+| `service-handoff.spec.ts` | 8200–8209 | `ws-scrcpy-web-e2e-i24-handoff-*` | `privateServer`, `ports`, `ownedServer` (`apiContext`, `lockDown`), `serviceStubs` |
 
-8140 is `container-user.spec.ts`'s, 8142 is `lifecycle.spec.ts`'s (12.10), 8199 is `auth-admin.spec.ts`'s 18.13 (0.5.5), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180 and
+8140 is `container-user.spec.ts`'s, 8142 is `lifecycle.spec.ts`'s (12.10) and so are 8243–8244 (12.13), 8199 is `auth-admin.spec.ts`'s 18.13 (0.5.5), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180 and
 8190 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
 item 164 batches used through `WSSW_E2E_PORT` while writing these specs in parallel;
 nothing binds them in a normal run). `lockedServer` can give a server an **adb daemon of its own**
@@ -235,6 +236,16 @@ every paired device advertising on the LAN, so "no device connected" is only tru
 on a daemon the spec owns. In locked mode `/api/dependencies` needs a signed-in
 admin, so those rows pass the admin's request context to `waitForDependencies`
 instead of a base URL.
+
+**Two processes on one data root (`service-handoff.spec.ts`).** The install hand-off
+rows run a local instance and a "service" instance (`WS_SCRCPY_SERVICE=1`) on the SAME
+root at once, as the real hand-off does for a few seconds. That is safe: `wsscrcpy.db` is
+WAL with a busy timeout, and config.json is written only by the boot port persist and by
+config changes, both atomic renames. Three rules keep it so. Wait for the first
+instance's dependencies before spawning the second, which shares its `DEPS_PATH`. Never
+PATCH the config of the first instance once the second has booted: its save writes its
+own in-memory `webPort` back over the second's. And read each process's own answers,
+never the log: both append to the same `logs/ws-scrcpy-web.log`.
 
 **Teardown stops what runs from the root first (item 170).** On Windows the harness
 stops a spec-owned server with `child.kill()`, which is TerminateProcess, so the
