@@ -1,10 +1,12 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import { openSettings, openSettingsTab } from './support/auth';
 import { askToEmbed, gotoHome, readServerConfig, revokeAllOrigins, waitForPrompt } from './support/consent';
+import { blockServiceActions } from './support/serviceStubs';
+import { recordApiWrites } from './support/settingsUi';
 
 /**
  * Smoke row 4.5 — confirm-dialog button style (item 35): the cancel/confirm
- * buttons of a confirm dialog use the shared outline style — the text colour
+ * buttons of a confirm dialog use the shared outline style — the text color
  * as a hairline border on a transparent ground, "white-outline + white-text"
  * in the dark theme — matching the welcome modal rather than each dialog
  * styling its own. (The bookmark / service-first-run reminders that shared the
@@ -23,6 +25,14 @@ import { askToEmbed, gotoHome, readServerConfig, revokeAllOrigins, waitForPrompt
  * computed values are identical across the dialogs opened here — the revoke
  * ConfirmModal, the reset-prompts ResetConfirmModal (item 111 brought it into
  * the shared style), and the service pre-flight where the host offers it.
+ *
+ * Smoke row 15.3 — the uninstall modal (`UninstallConfirmModal`, Settings →
+ * Server → "uninstall…"): keep is checked by default, and cancel, Esc and the
+ * backdrop each close it with no mutating request. The row is built on every
+ * host and shown wherever the server's status read names linux or win32
+ * (`appSectionButtonsState`), so the bare server shows it on both CI's Linux
+ * and a Windows box with nothing stubbed. Nothing it could send reaches the
+ * server (`blockServiceActions`).
  */
 
 const ORIGIN = 'http://localhost:5161';
@@ -56,7 +66,7 @@ async function expectSharedStyle(
     await expect(confirm).toHaveClass(/\bmodal-button\b/);
     const styles: [ButtonStyle, ButtonStyle] = [await styleOf(cancel), await styleOf(confirm)];
     for (const s of styles) {
-        // The outline IS the text colour, on nothing: that is the shared look.
+        // The outline IS the text color, on nothing: that is the shared look.
         expect(s.borderStyle).toBe('solid');
         expect(s.borderColor).toBe(s.color);
         expect(s.background).toBe('rgba(0, 0, 0, 0)');
@@ -93,7 +103,7 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         await revokeAllOrigins(page);
     });
 
-    test('4.5 the confirm dialogs share one button style: the shared class on both buttons, the outline in the text colour on a transparent ground, identical across dialogs', async ({
+    test('4.5 the confirm dialogs share one button style: the shared class on both buttons, the outline in the text color on a transparent ground, identical across dialogs', async ({
         page,
         request,
     }) => {
@@ -195,5 +205,47 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
             expect(adminStyles[0]).toEqual(revokeStyles[0]);
             expect(adminStyles[1]).toEqual(revokeStyles[1]);
         }
+    });
+});
+
+test.describe('the uninstall confirm modal (smoke §15.3)', () => {
+    test('15.3 the uninstall modal opens with keep checked; cancel, Esc and the backdrop each close it with no mutating request, and the uninstall stays on offer', async ({
+        page,
+    }) => {
+        const blocked = await blockServiceActions(page);
+        await gotoHome(page);
+        const settings = await openSettings(page);
+        const server = await openSettingsTab(settings, 'Server');
+        // 'uninstall…' with U+2026: the row's control (ServerTab.ts
+        // `buildUninstallControl`). Its row stays hidden until the status read
+        // names the platform, so the click waits for it.
+        const trigger = server.getByRole('button', { name: 'uninstall…', exact: true });
+        const modal = page.locator('dialog.uninstall-confirm-modal[open]');
+
+        // Recorded from the first open on: a write sent by opening the modal
+        // is as much the defect as one sent by closing it.
+        const writes = recordApiWrites(page);
+        for (const dismiss of ['cancel', 'Esc', 'the backdrop'] as const) {
+            await trigger.click();
+            await expect(modal, `opened before ${dismiss}`).toBeVisible();
+            await expect(modal.locator('.modal-title')).toHaveText('uninstall ws-scrcpy-web');
+            // The safe default, and the thing a regression would silently invert.
+            await expect(modal.getByRole('checkbox', { name: 'keep my settings & logs' })).toBeChecked();
+            await expect(modal.getByRole('button', { name: 'uninstall', exact: true })).toBeVisible();
+
+            if (dismiss === 'cancel') await modal.getByRole('button', { name: 'cancel', exact: true }).click();
+            else if (dismiss === 'Esc') await page.keyboard.press('Escape');
+            // Outside the centered frame: the ::backdrop, whose clicks target the dialog itself.
+            else await page.mouse.click(4, 4);
+
+            await expect(modal, `${dismiss} closes the modal`).toBeHidden();
+            // Only the modal: Settings is still up beneath it, uninstall still offered.
+            await expect(settings, `${dismiss} leaves Settings open`).toBeVisible();
+            await expect(trigger).toBeEnabled();
+        }
+        expect(writes, 'no dismissal sent a write').toEqual([]);
+        expect(blocked, 'no dismissal sent an uninstall').toEqual([]);
+        // Nothing is uninstalling: the row's own in-flight caption never appeared.
+        await expect(server.getByRole('button', { name: 'uninstalling…', exact: true })).toHaveCount(0);
     });
 });

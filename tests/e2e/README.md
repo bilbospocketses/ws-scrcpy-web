@@ -204,6 +204,24 @@ being auto-shifted cannot have it. Rows whose subject is an environment variable
 their `env` in `withoutInheritedOverrides()`, which clears the port, scan, service and
 feed variables a developer's shell might carry.
 
+**A spec-owned server shares the fast tier's dependencies unless it writes into them.**
+Left alone, `spawnServer` points DEPS_PATH at `<root>/WsScrcpyWeb/dependencies`, and the
+root downloads and unpacks Node.js, adb and scrcpy-server of its own. CI keeps every
+root for the `e2e-server-logs` upload, so each one stays on disk: PR #976 added about
+ten, and every later Node.js install failed `tar: ... Cannot write: Disk quota exceeded`
+while the boots' release lookups met api.github.com's rate limit. A new spec-owned
+server therefore passes `dependenciesPath: await sharedDependencies()`, the shared
+server's own folder (`<E2E_DATA_ROOT>/dependencies`), which the call first waits to be
+installed. A boot over installed dependencies with `WS_SCRCPY_SKIP_BOOT_LATEST` writes
+nothing there and looks nothing up, and its log, database and `.restart` marker still
+follow DATA_ROOT into the private root. A row keeps its own folder when it writes into
+it or reads it as its subject: planting an mkcert (`installFailingMkcert`, the
+`ws-scrcpy-web-e2e-item24-tls` root), installing or updating a dependency (9.12),
+or reading a genuine first run's install in its log (10.3). The roots that predate
+#976 keep their own folders, as they were when `main` was green. Removing a private
+root never reaches the shared folder: it is outside the root, and `stopProcessesUnder`
+stops only executables inside the root.
+
 A port "held by another program" is `holdPort` (`support/ports.ts`), a wildcard bind
 like the app's own. It accepts and drops every connection: a walking server probes the
 busy port to ask whether a sibling instance holds it, and a blocker with no connection
@@ -215,18 +233,19 @@ so a leftover server or data root names the file it came from:
 
 | Spec | Ports | Data roots | Helpers |
 |---|---|---|---|
-| `server-api.spec.ts` | 8151–8157 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports` |
+| `server-api.spec.ts` | 8151–8157, 8240–8241 (21.3, http and https) | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports`, `tlsFixtures` |
 | `config-overrides.spec.ts` | 8158–8159 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports`, `tlsFixtures` |
 | `auth-admin.spec.ts` | 8161–8169, 8196, 8199 | `ws-scrcpy-web-e2e-164b-*` | `ownedServer` (`OwnedServer`), `sessions`, `rawHttp` (`lanAddress`) |
 | `settings-dialog.spec.ts` | 8171–8175 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `pendingSettings` |
 | `first-run-and-reminders.spec.ts` | 8176–8179 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `ports` |
 | `embed-trust.spec.ts` | 8181, 8184 (its adb daemon), 8188–8189 (embedding pages) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `rawHttp` (`serveHtml`) |
 | `devices-ui.spec.ts` | 8182, 8183 (its adb daemon), 8187 (never bound) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `fetchCounter` |
-| `local-https-fast.spec.ts` | 8191–8195 | `ws-scrcpy-web-e2e-164e-*` | `tlsFixtures`, `tlsPanel` |
+| `local-https-fast.spec.ts` | 8191–8195, 8230 (https 9430) | `ws-scrcpy-web-e2e-164e-*`, `ws-scrcpy-web-e2e-item24-tls` | `tlsFixtures`, `tlsPanel`, `rawHttp` (`lanAddress`), `secureContext`, `ports` |
 | `mkcert-provenance.spec.ts` | 8197, 8198 (its fixture release server) | `ws-scrcpy-web-e2e-164b-21-12` | `ownedServer` |
-| `dependencies-restart.spec.ts` | 8145, 8146 (its fixture nodejs.org) | `ws-scrcpy-web-e2e-deps-restart` | `privateServer`, `serverLog` |
+| `dependencies-restart.spec.ts` | 8145, 8146 (its fixture nodejs.org), 8242 (6.8) | `ws-scrcpy-web-e2e-deps-restart*` | `privateServer`, `serverLog`, `ownedServer` |
+| `service-handoff.spec.ts` | 8200–8209 | `ws-scrcpy-web-e2e-i24-handoff-*` | `privateServer`, `ports`, `ownedServer` (`apiContext`, `lockDown`), `serviceStubs` |
 
-8140 is `container-user.spec.ts`'s, 8142 is `lifecycle.spec.ts`'s (12.10), 8199 is `auth-admin.spec.ts`'s 18.13 (0.5.5), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180 and
+8140 is `container-user.spec.ts`'s, 8142 is `lifecycle.spec.ts`'s (12.10) and so are 8243–8244 (12.13), 8199 is `auth-admin.spec.ts`'s 18.13 (0.5.5), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180 and
 8190 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
 item 164 batches used through `WSSW_E2E_PORT` while writing these specs in parallel;
 nothing binds them in a normal run). `lockedServer` can give a server an **adb daemon of its own**
@@ -236,10 +255,22 @@ on a daemon the spec owns. In locked mode `/api/dependencies` needs a signed-in
 admin, so those rows pass the admin's request context to `waitForDependencies`
 instead of a base URL.
 
+**Two processes on one data root (`service-handoff.spec.ts`).** The install hand-off
+rows run a local instance and a "service" instance (`WS_SCRCPY_SERVICE=1`) on the SAME
+root at once, as the real hand-off does for a few seconds. That is safe: `wsscrcpy.db` is
+WAL with a busy timeout, and config.json is written only by the boot port persist and by
+config changes, both atomic renames. Three rules keep it so. Run every instance from
+the fast tier's dependencies (`sharedDependencies`, installed before the first boots),
+so neither process ever installs into the folder the other runs from. Never
+PATCH the config of the first instance once the second has booted: its save writes its
+own in-memory `webPort` back over the second's. And read each process's own answers,
+never the log: both append to the same `logs/ws-scrcpy-web.log`.
+
 **Teardown stops what runs from the root first (item 170).** On Windows the harness
 stops a spec-owned server with `child.kill()`, which is TerminateProcess, so the
 server's own shutdown (`adb kill-server`) never runs. Every server pre-warms an adb
-daemon at boot, started detached from `<root>/WsScrcpyWeb/dependencies/adb`, and that
+daemon at boot, started detached from its DEPS_PATH's adb (`<root>/WsScrcpyWeb/dependencies/adb`
+for a root with dependencies of its own), and that
 daemon survives the kill and holds `adb.exe` open; removing the root then failed
 EPERM in teardown and again at the next run's seed. So `removePrivateRoot` and
 `seedPrivateDataRoot` first stop every process whose executable lives inside the root

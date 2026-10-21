@@ -1,37 +1,67 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 import { type BrowserContext, expect, request, test } from '@playwright/test';
 import {
     APP_TITLE,
     dismissPromptsFor,
+    fetchFromPage,
     mintToken,
     newVisitorContext,
     openSettings,
     openSettingsTab,
+    settingsRow,
+    tokenCookie,
 } from './support/auth';
 import { E2E_PORT } from './support/paths';
 import { holdPort, releasePort } from './support/ports';
 import {
     privateServerPaths,
+    type ServerHandle,
     seedPrivateDataRoot,
+    sharedDependencies,
     spawnServer,
+    stopQuietly,
     stopServer,
     waitForServer,
+    withoutInheritedOverrides,
     withTimeout,
 } from './support/privateServer';
+import { json, lanAddress, raw } from './support/rawHttp';
 import { selfSignedCert } from './support/selfSignedCert';
-import { LOG_REL, logOffset, logSince, NOTHING_SERVES } from './support/serverLog';
+import { countOccurrences, LOG_REL, logOffset, logSince, NOTHING_SERVES, readServerLog } from './support/serverLog';
+import { typeAndLeave } from './support/settingsUi';
 
 /**
- * Smoke module 12 — lifecycle (rows 12.1, 12.4, 12.6, and 12.10's double signal on Linux).
+ * Smoke module 12 — lifecycle (rows 12.1, 12.4, 12.6, 12.10's double signal on
+ * Linux, and 12.13's app half).
  *
  * Every row ends a server, so each runs one the spec owns: the shared 8123
  * server has no supervisor and "stop server & exit" would end the suite with
  * it. The log the rows read is the file the server writes under its data root
  * (`logs/ws-scrcpy-web.log`) — the console echo is TTY-only and a spawned
  * child has none.
+ *
+ * 12.13 (restart server, item 24) plays the supervisor: the launcher and Servy
+ * restart the app on exit 75, and here the test boots the same root again on
+ * the same port. The real supervisors, and "no second browser tab", stay on the
+ * Windows guest. Ports 8243 (the restart) and 8244 (off-box).
  */
+
+/** Copied app text, never imported from src/ (the suite's rule); each names its source. */
+// src/app/client/settings/tabs/ServerTab.ts RESTARTING_MESSAGE (U+2026).
+const RESTARTING_MESSAGE = 'restarting the server… this page will reload once it is back.';
+// ServerTab.ts restartConfirmMessage(false).
+const RESTART_CONFIRM =
+    'the server will restart and this page will reload once it is back. any active device connections will end. continue?';
+// ServerTab.ts restartConfirmMessage(true): an edit staged and not saved is named first.
+const RESTART_CONFIRM_UNSAVED = `your unsaved settings changes will be lost. ${RESTART_CONFIRM}`;
+// src/app/client/adminGate.ts ADMIN_UNREACHABLE_NOTE.
+const ADMIN_UNREACHABLE_NOTE = 'admin changes are limited to the machine running the server.';
+// src/common/remoteAdmin.ts OPERATOR_REFUSAL_ERROR, the body of requireOperator's 403.
+const OPERATOR_REFUSAL = { error: 'admin actions are limited to this machine' };
+// src/server/api/ServerRestartApi.ts.
+const RESTART_LOGGED = 'restart requested via /api/server/restart';
 
 /** GET / over HTTPS, trusting exactly the throwaway certificate: verification stays ON. */
 function httpsStatus(port: number, ca: string): Promise<number> {
@@ -359,6 +389,226 @@ test.describe('lifecycle (smoke §12)', () => {
             } catch (err) {
                 console.warn(`12.10 cleanup: ${String(err)}`);
             }
+        }
+    });
+
+    test('12.13 restart server: the first Application row; cancel sends nothing; confirm exits 75 with the .restart marker, shows the overlay, and the page reloads onto a new instance token on the same port', async () => {
+        test.setTimeout(300_000);
+        const paths = privateServerPaths('ws-scrcpy-web-e2e-restart-server', 8243);
+        seedPrivateDataRoot(paths);
+        // Nothing in this row installs a dependency: both boots run from the fast tier's.
+        const spawnOptions = { env: withoutInheritedOverrides(), dependenciesPath: await sharedDependencies() };
+        const handles: ServerHandle[] = [spawnServer(paths, spawnOptions)];
+        let ctx: BrowserContext | undefined;
+        try {
+            await waitForServer(handles[0]!, paths.baseURL);
+            const seed = await request.newContext({ baseURL: paths.baseURL });
+            try {
+                await mintToken(seed);
+                await dismissPromptsFor(seed);
+            } finally {
+                await seed.dispose();
+            }
+            // The context is built here, not with newVisitorContext, so the
+            // device list's socket can be held open before the first load. On '/'
+            // that socket (BaseDeviceTracker) closes when the old process exits,
+            // probes the token and reloads the page on its own; mocked, it never
+            // closes, so ServerTab's own wait for the new process is the only
+            // thing left that can reload the page, and that wait is what this
+            // row measures.
+            ctx = await sharedBrowser.newContext({ baseURL: paths.baseURL });
+            await ctx.routeWebSocket(/.*/, () => {});
+            const page = await ctx.newPage();
+            await page.goto('/');
+            await expect(page).toHaveTitle(APP_TITLE);
+            const tokenBefore = (await tokenCookie(ctx, paths.baseURL))?.value ?? '';
+            expect(tokenBefore).toMatch(/^[0-9a-f]{64}$/);
+
+            const settings = await openSettings(page);
+            const server = await openSettingsTab(settings, 'Server');
+            // The row: first in the Application card, one enabled button.
+            const heading = server.locator('h4.settings-card-heading').filter({ hasText: /^Application$/ });
+            await expect(heading).toBeVisible();
+            const card = heading.locator('xpath=following-sibling::*[1]');
+            await expect(card.locator('.settings-label').first()).toHaveText('restart the server');
+            const restartBtn = server.getByRole('button', { name: 'restart server', exact: true });
+            await expect(restartBtn).toHaveCount(1);
+            await expect(restartBtn).toBeEnabled();
+
+            // Every request that could change anything, from the first click on
+            // (GETs are the page's own pollers), and anything on the restart route.
+            const sent: string[] = [];
+            page.on('request', (r) => {
+                const method = r.method().toUpperCase();
+                const route = new URL(r.url()).pathname;
+                if (!['GET', 'HEAD', 'OPTIONS'].includes(method) || route === '/api/server/restart') {
+                    sent.push(`${method} ${route}`);
+                }
+            });
+
+            // Cancel first: the gate in its failing direction. The OPEN confirm
+            // only, as 12.1 says why.
+            const confirm = page.locator('dialog.confirm-modal[open]');
+            await restartBtn.click();
+            await expect(confirm).toBeVisible();
+            await expect(confirm).toContainText('restart server');
+            await expect(confirm).toContainText(RESTART_CONFIRM);
+            await expect(confirm).not.toContainText('unsaved');
+            await confirm.getByRole('button', { name: 'cancel', exact: true }).click();
+            await expect(confirm).toBeHidden();
+
+            // With an http port edit staged and not saved, the confirm first says
+            // the reload throws it away. Cancel again, then put the port back so
+            // nothing is staged when the restart goes ahead.
+            const portInput = settingsRow(server, 'http port').locator('input');
+            await expect(portInput).toHaveValue(String(paths.port));
+            await typeAndLeave(portInput, String(paths.port + 1));
+            await restartBtn.click();
+            await expect(confirm).toBeVisible();
+            await expect(confirm).toContainText(RESTART_CONFIRM_UNSAVED);
+            await confirm.getByRole('button', { name: 'cancel', exact: true }).click();
+            await expect(confirm).toBeHidden();
+            await typeAndLeave(portInput, String(paths.port));
+
+            expect((await ctx.request.get('/api/config')).status()).toBe(200);
+            expect(handles[0]!.child.exitCode, handles[0]!.output()).toBeNull();
+            await expect(restartBtn).toBeEnabled();
+            await expect(restartBtn).toHaveText('restart server');
+            expect(sent, 'a cancel sent a request').toEqual([]);
+
+            const posted = page.waitForResponse(
+                (r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/server/restart',
+            );
+            await restartBtn.click();
+            await expect(confirm).toBeVisible();
+            await expect(confirm).toContainText(RESTART_CONFIRM);
+            await expect(confirm, 'the port was put back: nothing is staged').not.toContainText('unsaved');
+            // Main-frame navigations from the ok click on: the reload, and only it.
+            let navigations = 0;
+            page.on('framenavigated', (frame) => {
+                if (frame === page.mainFrame()) navigations++;
+            });
+            await confirm.getByRole('button', { name: 'ok', exact: true }).click();
+            const res = await posted;
+            expect(res.status()).toBe(200);
+            expect(await res.json()).toEqual({ ok: true });
+            await expect(page.locator('[data-restarting-overlay] p[role="status"]')).toHaveText(RESTARTING_MESSAGE);
+
+            // Exit 75 and the marker: the restart signal every supervisor reads.
+            const first = handles[0]!;
+            const exit = await withTimeout(first.exited, 30_000, () => `waiting for exit 75:\n${first.output()}`);
+            expect(exit.code, first.output()).toBe(75);
+            expect(readFileSync(paths.restartMarkerPath, 'utf8')).toMatch(/^restart-requested-\d+$/);
+            // Neither cancel sent anything: the one request is the confirmed POST,
+            // and the server logged exactly one restart request.
+            expect(sent).toEqual(['POST /api/server/restart']);
+            expect(countOccurrences(readServerLog(paths), RESTART_LOGGED)).toBe(1);
+            // Nothing reloaded onto the old process in its exit window.
+            expect(navigations, 'no reload before the new process is up').toBe(0);
+
+            // The supervisor's part: it consumes the marker and boots the same root
+            // on the same port. With the device list's socket held open, the load
+            // below can only be ServerTab's reload, which waits for the NEW process
+            // to refuse the page's old token (waitForServerRestart).
+            unlinkSync(paths.restartMarkerPath);
+            const reloaded = page.waitForEvent('load', { timeout: 90_000 });
+            handles.push(spawnServer(paths, spawnOptions));
+            await waitForServer(handles[1]!, paths.baseURL);
+            await reloaded;
+            expect(new URL(page.url()).port).toBe(String(paths.port));
+            await expect(page.locator('[data-restarting-overlay]')).toHaveCount(0);
+            await expect(page).toHaveTitle(APP_TITLE);
+            const tokenAfter = (await tokenCookie(ctx, paths.baseURL))?.value ?? '';
+            expect(tokenAfter).toMatch(/^[0-9a-f]{64}$/);
+            expect(tokenAfter, 'a NEW instance token: a new server process').not.toBe(tokenBefore);
+            // The reloaded page's own token-gated request is answered, by the new process.
+            expect((await fetchFromPage(page, '/api/auth/me')).status).toBe(200);
+            const who = await raw({
+                port: paths.port,
+                path: '/api/whoami',
+                headers: { host: `localhost:${paths.port}` },
+            });
+            expect((json(who) as { pid: number }).pid).toBe(handles[1]!.child.pid);
+            expect(navigations, 'exactly one reload').toBe(1);
+            expect(sent.filter((s) => s === 'POST /api/server/restart')).toHaveLength(1);
+        } finally {
+            try {
+                if (ctx) await ctx.close();
+            } catch {
+                // already closed
+            }
+            for (const handle of handles) await stopQuietly(handle, '12.13');
+        }
+    });
+
+    test('12.13 off-box with remote admin off: the Application card is hidden with the note in its place, and POST /api/server/restart answers 403', async () => {
+        const lan = lanAddress() ?? '';
+        test.skip(!lan, 'no non-loopback IPv4 interface on this host to call from');
+        test.setTimeout(270_000);
+        const paths = privateServerPaths('ws-scrcpy-web-e2e-restart-server-offbox', 8244);
+        seedPrivateDataRoot(paths);
+        // withoutInheritedOverrides removes WS_SCRCPY_ALLOW_REMOTE_ADMIN: a runner
+        // exporting it would let the POST below restart the server.
+        const handle = spawnServer(paths, {
+            env: withoutInheritedOverrides(),
+            dependenciesPath: await sharedDependencies(),
+        });
+        let ctx: BrowserContext | undefined;
+        try {
+            await waitForServer(handle, paths.baseURL);
+            const seed = await request.newContext({ baseURL: paths.baseURL });
+            try {
+                await mintToken(seed);
+                // Open mode has one user, so the dismissal follows it off-box too.
+                await dismissPromptsFor(seed);
+            } finally {
+                await seed.dispose();
+            }
+            // Another machine, without a second one: a request to this host's own
+            // LAN address arrives FROM that address, so isLoopback is false.
+            const visitor = await newVisitorContext(sharedBrowser, { baseURL: `http://${lan}:${paths.port}` });
+            ctx = visitor.context;
+            const page = visitor.page;
+            await expect(page).toHaveTitle(APP_TITLE);
+            const cfg = await fetchFromPage(page, '/api/config');
+            expect(cfg.status).toBe(200);
+            expect((cfg.body as { runtime: { adminScope: string; callerIsLocal: boolean } }).runtime).toMatchObject({
+                adminScope: 'local',
+                callerIsLocal: false,
+            });
+
+            const settings = await openSettings(page);
+            const server = await openSettingsTab(settings, 'Server');
+            // Hidden, never absent (applyAdminUnreachable): the button disabled under it.
+            const heading = server.locator('h4.settings-card-heading').filter({ hasText: /^Application$/ });
+            await expect(heading).toHaveCount(1);
+            await expect(heading).toBeHidden();
+            const restartBtn = server.locator('button[data-action="restart-server"]');
+            await expect(restartBtn).toHaveCount(1);
+            await expect(restartBtn).toBeHidden();
+            await expect(restartBtn).toBeDisabled();
+            const note = server.locator('[data-admin-unreachable-note]').filter({ visible: true });
+            await expect(note).toHaveCount(1);
+            await expect(note).toHaveText(ADMIN_UNREACHABLE_NOTE);
+
+            // A direct POST from that page: the token and the page's own Origin
+            // pass the gate, so requireOperator is what answers.
+            const refused = await fetchFromPage(page, '/api/server/restart', { method: 'POST' });
+            expect(refused.status, JSON.stringify(refused.body)).toBe(403);
+            expect(refused.body).toEqual(OPERATOR_REFUSAL);
+            // Refused before the handler logs or schedules anything.
+            expect(readServerLog(paths)).not.toContain(RESTART_LOGGED);
+            expect(existsSync(paths.restartMarkerPath), 'no .restart marker: nothing was scheduled').toBe(false);
+            expect(handle.child.exitCode, handle.output()).toBeNull();
+            // Control: the same page still reads.
+            expect((await fetchFromPage(page, '/api/config')).status).toBe(200);
+        } finally {
+            try {
+                if (ctx) await ctx.close();
+            } catch {
+                // already closed
+            }
+            await stopQuietly(handle, '12.13 off-box');
         }
     });
 });

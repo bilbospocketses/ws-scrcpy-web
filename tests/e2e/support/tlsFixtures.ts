@@ -1,7 +1,7 @@
 import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { type PrivateServerPaths, privateServerPaths } from './privateServer';
-import { type SelfSignedPair, selfSignedCert } from './selfSignedCert';
+import { caCert, issuedCert, type SelfSignedPair, selfSignedCert } from './selfSignedCert';
 
 /**
  * Local HTTPS state on disk for a private server: where its TLS home is, and
@@ -25,6 +25,8 @@ export interface TlsServerPaths extends PrivateServerPaths {
     keyFile: string;
     caRoot: string;
     caPemFile: string;
+    /** Where mkcert keeps the CA's key; revoke deletes it with the CA (createCertService.ts removeCaRootFiles). */
+    caKeyFile: string;
     /** `<deps>/mkcert/<exe>`: createCertService.ts's resolveMkcertExe. */
     mkcertExe: string;
 }
@@ -42,6 +44,7 @@ function withTlsHome(base: PrivateServerPaths): TlsServerPaths {
         keyFile: path.join(tlsHome, 'key.pem'),
         caRoot,
         caPemFile: path.join(caRoot, 'rootCA.pem'),
+        caKeyFile: path.join(caRoot, 'rootCA-key.pem'),
         mkcertExe: path.join(
             base.dataRoot,
             'dependencies',
@@ -79,14 +82,28 @@ export interface PlantedCert {
  * in place of what mkcert would have written. The leaf is valid for one day
  * either side of now, so it is also, by construction, a certificate inside the
  * panel's 30-day expiry window.
+ *
+ * `issuedFor` makes it the chain mkcert would have left instead: a CA, the
+ * leaf that CA signed for those IPv4 addresses (the first is the subject the
+ * server reports), and the CA's key beside it as `rootCA-key.pem`. Without it
+ * the leaf and the CA are unrelated self-signed certificates.
  */
-export function plantCert(paths: TlsServerPaths, opts: { withCa?: boolean } = {}): PlantedCert {
-    const leaf = selfSignedCert();
-    const ca = selfSignedCert('ws-scrcpy-web e2e CA');
+export function plantCert(paths: TlsServerPaths, opts: { withCa?: boolean; issuedFor?: string[] } = {}): PlantedCert {
+    let leaf: SelfSignedPair;
+    let ca: SelfSignedPair;
+    if (opts.issuedFor) {
+        const root = caCert();
+        leaf = issuedCert(root, opts.issuedFor);
+        ca = root;
+    } else {
+        leaf = selfSignedCert();
+        ca = selfSignedCert('ws-scrcpy-web e2e CA');
+    }
     mkdirSync(paths.caRoot, { recursive: true });
     writeFileSync(paths.certFile, leaf.cert, 'utf8');
     writeFileSync(paths.keyFile, leaf.key, 'utf8');
     if (opts.withCa !== false) writeFileSync(paths.caPemFile, ca.cert, 'utf8');
+    if (opts.withCa !== false && opts.issuedFor) writeFileSync(paths.caKeyFile, ca.key, 'utf8');
     return { leaf, ca };
 }
 

@@ -1,26 +1,39 @@
 import { X509Certificate } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import tls from 'node:tls';
 import { type APIRequestContext, type Browser, expect, type Locator, type Page, request, test } from '@playwright/test';
 import { dismissPromptsFor, mintToken, openSettings, openSettingsTab, settingsRow } from './support/auth';
+import { isListening } from './support/ports';
 import {
     removePrivateRoot,
     type ServerHandle,
+    type SpawnOptions,
     seedPrivateDataRoot,
     spawnServer,
+    stopQuietly,
     stopServer,
     waitForServer,
+    withoutInheritedOverrides,
     withTimeout,
 } from './support/privateServer';
+import { json, lanAddress, raw, TOKEN_REFUSAL } from './support/rawHttp';
+import { probeSecureContext } from './support/secureContext';
 import { selfSignedCert } from './support/selfSignedCert';
 import { countOccurrences, readServerLog } from './support/serverLog';
 import { footerSave, reviewDialog, reviewLines, typeAndLeave } from './support/settingsUi';
-import { installFailingMkcert, plantCert, type TlsServerPaths, tlsServerPaths } from './support/tlsFixtures';
+import {
+    installFailingMkcert,
+    type PlantedCert,
+    plantCert,
+    type TlsServerPaths,
+    tlsServerPaths,
+} from './support/tlsFixtures';
 import { guardTlsWrites, openLocalHttpsPanel, stubTlsState } from './support/tlsPanel';
 
 /**
  * Smoke module 21 (Local HTTPS), the fast-tier halves of rows 21.6, 21.8, 21.9,
- * 21.10 and 21.11 (item 164). Row 21.12 is in mkcert-provenance.spec.ts.
+ * 21.10 and 21.11 (item 164), and of 21.1, 21.2 and 21.5 (item 24). Row 21.12
+ * is in mkcert-provenance.spec.ts.
  *
  * Nothing in this file runs mkcert, downloads it, or installs a CA anywhere. A
  * certificate STATE comes from one of two places:
@@ -1252,6 +1265,339 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
         }
         removePrivateRoot(B);
     }
+});
+
+// ===========================================================================
+// A certificate's whole life on a third spec-owned server: on disk, served
+// after a restart, reached from this host's LAN address, revoked, and gone
+// after the next restart (item 24: the agnostic halves of 21.1, 21.2 and 21.5,
+// which the Windows guest ran alone until now). The test plays supervisor for
+// both restarts: exit 75, then a fresh boot on the same root.
+//
+// The off-box caller is this host's own LAN address (rawHttp.ts lanAddress): a
+// request to it arrives FROM it, so the server's isLoopback is false, as for
+// another machine. The guest keeps what needs Windows: the real mkcert install,
+// the files under %LOCALAPPDATA%, and Windows' own trust decision (X509Chain,
+// LocalMachine\Root).
+// ===========================================================================
+
+const REVOKED_ALERT = 'certificate and ca revoked. restart the server to fully stop the https listener.'; // LocalHttpsTab.ts
+const OPERATOR_403 = { error: 'admin actions are limited to this machine' }; // src/common/remoteAdmin.ts
+// What a client trusting only the default roots says about a leaf a private CA signed.
+const UNTRUSTED_CHAIN_RE =
+    /^(UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT_LOCALLY|UNABLE_TO_GET_ISSUER_CERT|SELF_SIGNED_CERT_IN_CHAIN)$/;
+
+/**
+ * One handshake with verification ON: trusting only `ca` when it is given, the
+ * default roots when it is not. Resolves the served leaf's fingerprint and
+ * subjectAltName; rejects with OpenSSL's code when the chain or the name fails.
+ */
+function verifiedHandshake(host: string, port: number, ca?: string): Promise<{ fingerprint: string; san: string }> {
+    return new Promise((resolve, reject) => {
+        const socket = tls.connect(
+            { host, port, rejectUnauthorized: true, timeout: 5_000, ...(ca === undefined ? {} : { ca }) },
+            () => {
+                const peer = socket.getPeerCertificate();
+                socket.end();
+                resolve({ fingerprint: peer.fingerprint256, san: peer.subjectaltname ?? '' });
+            },
+        );
+        socket.on('timeout', () => socket.destroy(new Error('timeout')));
+        socket.on('error', reject);
+    });
+}
+
+/** The handshake's error code, or `verified`: for asserting that one fails, and why. */
+const handshakeCode = (host: string, port: number, ca?: string): Promise<string> =>
+    verifiedHandshake(host, port, ca).then(
+        () => 'verified',
+        (err: NodeJS.ErrnoException) => err.code ?? err.message,
+    );
+
+/**
+ * A restart as the launcher's supervisor performs it: POST /api/server/restart,
+ * the exit 75 that answers it, the `.restart` marker cleared
+ * (launcher/src/supervisor.rs), and a fresh boot on the same root, spawned
+ * with `spawnOptions`. `api` holds the new boot's token afterwards.
+ */
+async function restartAsSupervisor(
+    paths: TlsServerPaths,
+    handle: ServerHandle,
+    api: APIRequestContext,
+    spawnOptions: SpawnOptions = {},
+): Promise<ServerHandle> {
+    const res = await api.post('/api/server/restart');
+    expect(res.status(), 'POST /api/server/restart').toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    const exit = await withTimeout(handle.exited, 60_000, () => `HUNG waiting for exit 75:\n${handle.output()}`);
+    expect(exit.code, handle.output()).toBe(75);
+    expect(existsSync(paths.restartMarkerPath), 'the .restart marker').toBe(true);
+    rmSync(paths.restartMarkerPath, { force: true });
+    const next = spawnServer(paths, spawnOptions);
+    try {
+        await waitForServer(next, paths.baseURL);
+        await mintToken(api);
+    } catch (err) {
+        // A boot that never came up must not hold the exact port into a retry.
+        await stopQuietly(next, 'restart');
+        throw err;
+    }
+    return next;
+}
+
+test.describe('local https fast tier: a certificate through restart, off-box use and revoke (smoke §21.1, 21.2, 21.5)', () => {
+    test.describe.configure({ mode: 'serial' });
+    // http 8230, https 9430 (item 24's blocks).
+    const C = tlsServerPaths('ws-scrcpy-web-e2e-item24-tls', 8230);
+    const HTTPS_PORT = 9430;
+    const lan = lanAddress() ?? '';
+    const NO_LAN = 'no non-loopback IPv4 interface on this host to call from';
+    let handle: ServerHandle | undefined;
+    let api: APIRequestContext;
+    let planted: PlantedCert;
+    // Remote admin stays off whatever the runner's shell carries, so 21.2's
+    // off-box generate meets requireOperator.
+    const SPAWN: SpawnOptions = { env: withoutInheritedOverrides() };
+
+    test.beforeAll(async () => {
+        test.setTimeout(150_000);
+        seedPrivateDataRoot(C, { httpsPort: HTTPS_PORT });
+        // Should the operator gate ever be missing, 21.2's generate fails on
+        // this mkcert at once instead of downloading the real one. It sits in
+        // this root's own dependencies folder, so this root keeps one: on the
+        // fast tier's (`sharedDependencies`), a missing gate would fetch and run
+        // the real mkcert there.
+        installFailingMkcert(C);
+        handle = spawnServer(C, SPAWN);
+        await waitForServer(handle, C.baseURL);
+        await seedPrivateUser(C.baseURL);
+        api = await request.newContext({ baseURL: C.baseURL });
+        await mintToken(api);
+    });
+
+    test.afterAll(async () => {
+        await api?.dispose();
+        await stopQuietly(handle, 'item 24 tls');
+        removePrivateRoot(C);
+    });
+
+    test('21.1 a certificate that appears on disk is not served until the restart: the https port refuses and the state asks for a restart; after it the listener is bound and serves that leaf', async () => {
+        test.setTimeout(240_000);
+        expect(await tlsState(api)).toMatchObject({ status: 'none', httpsListener: { bound: false } });
+
+        // What a generate leaves behind, chained as mkcert's is: the subject is
+        // the LAN address (the address the off-box rows below dial), and
+        // 127.0.0.1 too, so the loopback handshakes verify on a host without one.
+        planted = plantCert(C, { issuedFor: lan ? [lan, '127.0.0.1'] : ['127.0.0.1'] });
+        const ready = await tlsState(api);
+        expect(ready).toMatchObject({ status: 'ready', kind: 'ip', subject: lan || '127.0.0.1', caPresent: true });
+        expect(ready['httpsListener'], 'the listener set is built at boot').toEqual({
+            bound: false,
+            reason: 'restart-required',
+        });
+        expect(await isListening(HTTPS_PORT), 'https on 127.0.0.1 before the restart').toBe(false);
+        if (lan) expect(await isListening(HTTPS_PORT, lan), `https on ${lan} before the restart`).toBe(false);
+
+        handle = await restartAsSupervisor(C, handle!, api, SPAWN);
+        // The listener binds during the boot, after the page already answers.
+        const leafFp = new X509Certificate(planted.leaf.cert).fingerprint256;
+        await expect
+            .poll(
+                () =>
+                    verifiedHandshake('127.0.0.1', HTTPS_PORT, planted.ca.cert).then(
+                        (h) => h.fingerprint,
+                        (e: Error) => e.message,
+                    ),
+                { timeout: 30_000 },
+            )
+            .toBe(leafFp);
+        const bound = await tlsState(api);
+        expect(bound).toMatchObject({ status: 'ready', caPresent: true });
+        expect(bound['httpsListener'], 'bound after the restart').toEqual({ bound: true, port: HTTPS_PORT });
+        if (lan) expect(await isListening(HTTPS_PORT, lan), `https on ${lan} after the restart`).toBe(true);
+    });
+
+    test("21.1 from this host's LAN address the https origin is a secure context with VideoDecoder and h264; plain http on the same address is neither", async ({
+        browser,
+    }) => {
+        test.skip(!lan, NO_LAN);
+        // Chromium is told to ignore the certificate (it does not trust the
+        // throwaway CA, and trusting it would mean the machine's store). That
+        // costs nothing here: an https page loaded past a certificate error is
+        // still a secure context (measured on Playwright's Chromium, Windows and
+        // Linux, 2026-10-20). The handshake in 21.2 is what proves the chain.
+        const httpsCtx = await browser.newContext({ ignoreHTTPSErrors: true });
+        const httpCtx = await browser.newContext();
+        try {
+            const httpsPage = await httpsCtx.newPage();
+            const httpsRes = await httpsPage.goto(`https://${lan}:${HTTPS_PORT}/`);
+            expect(httpsRes?.status(), 'the https origin answered').toBe(200);
+            const httpsProbe = await httpsPage.evaluate(probeSecureContext);
+
+            // The contrast: this browser, this address, plain http, which must
+            // NOT be a secure context, or a browser that reports one everywhere
+            // would pass.
+            const httpPage = await httpCtx.newPage();
+            const httpRes = await httpPage.goto(`http://${lan}:${C.port}/`);
+            expect(httpRes?.status(), 'the plain-http origin answered (exposure is open)').toBe(200);
+            const httpProbe = await httpPage.evaluate(probeSecureContext);
+
+            expect(httpsProbe.isSecureContext, 'https origin: isSecureContext').toBe(true);
+            expect(httpProbe.isSecureContext, 'plain-http origin: isSecureContext').toBe(false);
+            expect(httpsProbe.hasVideoDecoder, 'https origin: VideoDecoder present').toBe(true);
+            expect(httpProbe.hasVideoDecoder, 'plain-http origin: VideoDecoder present').toBe(false);
+            // isConfigSupported, not just presence: a decoder that cannot
+            // configure would pass a typeof check and still not stream.
+            expect(httpsProbe.h264, 'https origin: h264 isConfigSupported').toBe(true);
+        } finally {
+            await httpsCtx.close();
+            await httpCtx.close();
+        }
+    });
+
+    test("21.2 from this host's LAN address: a cold ca-root is the PEM the page downloads, a cold /api/tls/state is refused for the token, the handshake verifies with that CA and fails without it, and a generate from there is refused", async ({
+        browser,
+    }) => {
+        test.skip(!lan, NO_LAN);
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        try {
+            // The panel's download, from inside the page: the request carries
+            // the token the page was handed.
+            const page = await context.newPage();
+            await page.goto(`https://${lan}:${HTTPS_PORT}/`);
+            const fromPage = await page.evaluate(async () => {
+                const res = await fetch('/api/tls/ca-root');
+                return { status: res.status, type: res.headers.get('content-type') ?? '', text: await res.text() };
+            });
+            expect(fromPage.status, fromPage.text.slice(0, 200)).toBe(200);
+            expect(fromPage.type).toBe('application/x-pem-file');
+            expect(fromPage.text, 'the page downloads the CA on disk').toBe(planted.ca.cert);
+
+            // Cold: no page, no cookie, as curl or a phone following a link.
+            const cold = await raw({ httpsCa: planted.ca.cert, host: lan, port: HTTPS_PORT, path: '/api/tls/ca-root' });
+            expect(cold.status, cold.body.slice(0, 200)).toBe(200);
+            expect(cold.headers['content-disposition']).toBe(`attachment; filename="${CA_FILE_NAME}"`);
+            expect(cold.body, 'the cold download is the PEM the page downloads').toBe(fromPage.text);
+
+            // Only the CA is exempt: the rest of /api/tls still needs the token,
+            // refused by the token gate (the body says which gate), while the
+            // page that holds the token reads the same route.
+            const coldState = await raw({
+                httpsCa: planted.ca.cert,
+                host: lan,
+                port: HTTPS_PORT,
+                path: '/api/tls/state',
+            });
+            expect(coldState.status, coldState.body).toBe(403);
+            expect(json(coldState)).toEqual(TOKEN_REFUSAL);
+            const stateFromPage = await page.evaluate(async () => (await fetch('/api/tls/state')).status);
+            expect(stateFromPage, 'GET /api/tls/state with the page token').toBe(200);
+
+            // Control first: with the default roots only, the chain must fail,
+            // and on trust, not on reachability or dates.
+            expect(await handshakeCode(lan, HTTPS_PORT), 'without the CA').toMatch(UNTRUSTED_CHAIN_RE);
+            const trusted = await verifiedHandshake(lan, HTTPS_PORT, planted.ca.cert);
+            expect(trusted.fingerprint, 'with the CA: the leaf on disk').toBe(
+                new X509Certificate(planted.leaf.cert).fingerprint256,
+            );
+            // Node checked the dialed address against the leaf's IP SAN.
+            expect(trusted.san).toContain(`IP Address:${lan}`);
+
+            // Off this machine the CA may be read but not administered (item
+            // 153): with remote admin off, the page's generate meets
+            // requireOperator. Asserted by body, since the token gate's 403 has
+            // another; the page holds the token, so only requireOperator can
+            // answer this one. Last, because a missing gate would regenerate
+            // the CA every check above judged.
+            const refused = await page.evaluate(async (value) => {
+                const res = await fetch('/api/tls/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ kind: 'ip', value }),
+                });
+                return { status: res.status, text: await res.text() };
+            }, lan);
+            expect(refused.status, `off-box POST /api/tls/generate: ${refused.text.slice(0, 200)}`).toBe(403);
+            expect(JSON.parse(refused.text)).toEqual(OPERATOR_403);
+            expect(readFileSync(C.caPemFile, 'utf8'), 'the CA after the refusal').toBe(planted.ca.cert);
+            expect(readFileSync(C.certFile, 'utf8'), 'the leaf after the refusal').toBe(planted.leaf.cert);
+        } finally {
+            await context.close();
+        }
+    });
+
+    test('21.5 revoke deletes the certificate and the CA; the old listener serves until the restart, the panel is empty with download and revoke disabled, ca-root is 404; after the restart nothing listens on https', async ({
+        browser,
+    }) => {
+        test.setTimeout(240_000);
+        const leafFp = new X509Certificate(planted.leaf.cert).fingerprint256;
+        const context = await browser.newContext({ baseURL: C.baseURL });
+        try {
+            const page = await context.newPage();
+            const writes: string[] = [];
+            page.on('request', (r) => {
+                const { pathname } = new URL(r.url());
+                if (pathname.startsWith('/api/tls/') && r.method() !== 'GET') writes.push(`${r.method()} ${pathname}`);
+            });
+            await page.goto('/');
+            let panel = await openLocalHttpsPanel(page);
+            // The controls for every negative below: a certificate, its download and its revoke.
+            await expect(panel.locator('[data-tls-current-subject]')).toHaveText(lan || '127.0.0.1');
+            await expect(panel.locator('[data-tls-download]')).toBeEnabled();
+            await expect(panel.locator('[data-tls-revoke]')).toBeEnabled();
+
+            // And the files the absence checks below are about.
+            for (const file of [C.certFile, C.keyFile, C.caPemFile, C.caKeyFile]) {
+                expect(existsSync(file), `${file} before the revoke`).toBe(true);
+            }
+
+            await panel.locator('[data-tls-revoke]').click();
+            const confirm = page.locator('dialog.confirm-modal[open]');
+            await confirm.getByRole('button', { name: 'ok', exact: true }).click();
+            await expect(panel.locator('[data-tls-alert]')).toHaveText(REVOKED_ALERT);
+            expect(writes, 'the panel sent the revoke, and nothing else').toEqual(['POST /api/tls/revoke']);
+
+            // The leaf, its key, the CA and the CA's key (createCertService.ts).
+            for (const file of [C.certFile, C.keyFile, C.caPemFile, C.caKeyFile]) {
+                expect(existsSync(file), `${file} after the revoke`).toBe(false);
+            }
+            const state = await tlsState(api);
+            expect(state).toMatchObject({ status: 'none' });
+            expect(state['httpsListener'], 'still bound: no restart yet').toEqual({ bound: true, port: HTTPS_PORT });
+
+            // The old listener keeps serving, from memory, the leaf it served before.
+            expect((await verifiedHandshake('127.0.0.1', HTTPS_PORT, planted.ca.cert)).fingerprint).toBe(leafFp);
+            const overHttps = await raw({
+                httpsCa: planted.ca.cert,
+                port: HTTPS_PORT,
+                path: '/',
+                headers: { host: `localhost:${HTTPS_PORT}` },
+            });
+            expect(overHttps.status, 'a page still answers over https').toBe(200);
+            const caRoot = await raw({ httpsCa: planted.ca.cert, port: HTTPS_PORT, path: '/api/tls/ca-root' });
+            expect(caRoot.status, caRoot.body).toBe(404);
+            expect(json(caRoot)).toEqual(NO_CERT_404);
+
+            // The panel the server now builds: no certificate line, both buttons off.
+            await page.reload();
+            panel = await openLocalHttpsPanel(page);
+            await expect(panel.locator('[data-tls-current-subject]')).toHaveCount(0);
+            await expect(panel.locator('[data-tls-download]')).toBeDisabled();
+            await expect(panel.locator('[data-tls-revoke]')).toBeDisabled();
+            expect(writes).toEqual(['POST /api/tls/revoke']);
+        } finally {
+            await context.close();
+        }
+
+        handle = await restartAsSupervisor(C, handle!, api, SPAWN);
+        // No certificate at boot means no secure entry at all, so nothing will
+        // bind later: `{ bound: false }` with no reason is that state.
+        const after = await tlsState(api);
+        expect(after).toMatchObject({ status: 'none', httpsPort: HTTPS_PORT });
+        expect(after['httpsListener']).toEqual({ bound: false });
+        expect(await isListening(HTTPS_PORT), 'https on 127.0.0.1 after the restart').toBe(false);
+        if (lan) expect(await isListening(HTTPS_PORT, lan), `https on ${lan} after the restart`).toBe(false);
+    });
 });
 
 /*

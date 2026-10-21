@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { fetchFromPage, openSettings, openSettingsTab } from './support/auth';
-import { dismissPrivatePrompts, freshPage } from './support/ownedServer';
+import { fetchFromPage, openSettings, openSettingsTab, tokenCookie } from './support/auth';
+import { apiContext, dismissPrivatePrompts, freshPage } from './support/ownedServer';
 import {
     privateServerPaths,
     removePrivateRoot,
     type ServerHandle,
     seedPrivateDataRoot,
+    sharedDependencies,
     spawnServer,
     stopQuietly,
     waitForDependencies,
@@ -59,6 +60,10 @@ const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\
  * the fake; what restarts is the server, which is the row's subject.
  *
  * Ports: 8145 the spec-owned server, 8146 the fixture.
+ *
+ * Row 6.8's app half (item 24) is the last test: a tab left open across a
+ * restart, on its own server on 8242. The Velopack swap, the tray and the
+ * helper refresh are the rest of that row, and stay on the Windows guest.
  */
 
 const SERVER_PORT = 8145;
@@ -309,6 +314,116 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
             removePrivateRoot(paths);
         } catch (err) {
             console.warn(`9.12 cleanup: ${String(err)}`);
+        }
+    }
+});
+
+test('6.8 a tab left open across a restart reloads itself onto the new instance token, and the server logs at most one rejected WS connection for it', async ({
+    browser,
+}) => {
+    test.setTimeout(300_000);
+    const paths = privateServerPaths('ws-scrcpy-web-e2e-deps-restart-stale-tab', 8242);
+    seedPrivateDataRoot(paths);
+    // Nothing in this row installs a dependency: both boots run from the fast tier's.
+    const dependenciesPath = await sharedDependencies();
+    const handles: ServerHandle[] = [spawnServer(paths, { dependenciesPath })];
+    try {
+        await waitForServer(handles[0]!, paths.baseURL);
+        await dismissPrivatePrompts(paths.baseURL);
+        const { context, page } = await freshPage(browser, paths.baseURL);
+        try {
+            // Frames arriving on any of the page's sockets once the restarted
+            // process is up. The old process is gone by then and a refused
+            // handshake carries none, so a frame here can only come from a
+            // socket the NEW process accepted, with the token the reload got.
+            //
+            // And every socket the tab opens once the new process answers, with
+            // whether it got a frame before it closed: one that closed with none
+            // was refused. A browser reports a refused handshake and a server
+            // that is not there yet the same way (a 1006 close), so sockets from
+            // the gap between the two processes are not counted.
+            let restarted = false;
+            let serving = false;
+            let framesAfterRestart = 0;
+            let framesBefore = 0;
+            const socketsWhileServing: { frames: number; closed: boolean }[] = [];
+            page.on('websocket', (ws) => {
+                const socket = serving ? { frames: 0, closed: false } : undefined;
+                if (socket) socketsWhileServing.push(socket);
+                ws.on('framereceived', () => {
+                    if (restarted) framesAfterRestart++;
+                    else framesBefore++;
+                    if (socket) socket.frames++;
+                });
+                const closed = () => {
+                    if (socket) socket.closed = true;
+                };
+                ws.on('close', closed);
+                ws.on('socketerror', closed);
+            });
+            await page.goto('/');
+            await expect.poll(() => framesBefore, { message: 'the device list socket is served' }).toBeGreaterThan(0);
+            const tokenBefore = (await tokenCookie(context, paths.baseURL))?.value ?? '';
+            expect(tokenBefore).toMatch(/^[0-9a-f]{64}$/);
+
+            // Restart the product's way, from outside the tab: the tab is left
+            // alone, as one is that a user simply never closed.
+            const api = await apiContext(paths.baseURL);
+            try {
+                const restart = await api.post('/api/dependencies/restart');
+                expect(restart.status()).toBe(200);
+                expect(await restart.json()).toEqual({ message: 'Restarting...' });
+            } finally {
+                await api.dispose();
+            }
+            const first = handles[0]!;
+            const exit = await withTimeout(first.exited, 30_000, () => `waiting for exit 75:\n${first.output()}`);
+            expect(exit.code, first.output()).toBe(75);
+            expect(fs.readFileSync(paths.restartMarkerPath, 'utf8')).toMatch(/^restart-requested-\d+$/);
+
+            // The launcher's part: consume the marker, boot the same root on the
+            // same port. Nothing navigates the tab; the load below is its own
+            // reload, once its token probe reads stale (staleTokenReload.ts).
+            fs.unlinkSync(paths.restartMarkerPath);
+            const offset = logOffset(paths);
+            const reloaded = page.waitForEvent('load', { timeout: 90_000 });
+            restarted = true;
+            handles.push(spawnServer(paths, { dependenciesPath }));
+            await waitForServer(handles[1]!, paths.baseURL);
+            serving = true;
+            await reloaded;
+            const tokenAfter = (await tokenCookie(context, paths.baseURL))?.value ?? '';
+            expect(tokenAfter).toMatch(/^[0-9a-f]{64}$/);
+            expect(tokenAfter, 'the reload handed the tab the new process token').not.toBe(tokenBefore);
+            await expect
+                .poll(() => framesAfterRestart, { message: 'the reloaded page is served by the new process' })
+                .toBeGreaterThan(0);
+            expect((await fetchFromPage(page, '/api/auth/me')).status).toBe(200);
+
+            // At most one refused handshake, measured in the browser: the tab
+            // stops retrying with its stale token and reloads instead.
+            const refused = socketsWhileServing.filter((s) => s.closed && s.frames === 0);
+            expect(refused.length, JSON.stringify(socketsWhileServing)).toBeLessThanOrEqual(1);
+
+            // And the server's side of it, as a secondary check: at most one
+            // `rejected WS connection` line, for the stale token. The log's own
+            // thinning of repeats (RejectionLogLimiter) is covered by the unit test
+            // only (wsRejectionLog.test.ts): inside its 60 s window this line could
+            // not tell one refusal from thirty.
+            const rejected = logSince(paths, offset)
+                .split(/\r?\n/)
+                .filter((line) => line.includes('rejected WS connection'));
+            expect(rejected.length, rejected.join('\n')).toBeLessThanOrEqual(1);
+            for (const line of rejected) expect(line).toContain('missing or invalid token');
+        } finally {
+            await context.close();
+        }
+    } finally {
+        for (const handle of handles) await stopQuietly(handle, '6.8');
+        try {
+            removePrivateRoot(paths);
+        } catch (err) {
+            console.warn(`6.8 cleanup: ${String(err)}`);
         }
     }
 });

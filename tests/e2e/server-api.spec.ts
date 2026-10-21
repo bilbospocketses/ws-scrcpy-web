@@ -7,6 +7,7 @@ import {
     privateServerPaths,
     type ServerHandle,
     seedPrivateDataRoot,
+    sharedDependencies,
     spawnServer,
     stopQuietly,
     waitForDependencies,
@@ -26,6 +27,7 @@ import {
     wsHandshake,
 } from './support/rawHttp';
 import { countOccurrences, LOG_REL, logOffset, logSince, readServerLog } from './support/serverLog';
+import { plantCert, tlsServerPaths } from './support/tlsFixtures';
 
 /**
  * Item 164, batch A: the server and API surface rows the coverage register
@@ -36,6 +38,9 @@ import { countOccurrences, LOG_REL, logOffset, logSince, readServerLog } from '.
  * shared server. Everything that reads the server log, restarts or stops a
  * server, corrupts its store or locks it runs on a server of its own, on ports
  * 8151–8157, under a data root named `ws-scrcpy-web-e2e-164a-*`.
+ *
+ * Item 24 added 21.3 (the plain-http exposure modes as another machine sees
+ * them), moved here from the Windows guest: its own server on 8240, https 8241.
  */
 
 /** The shared server's port, from the same URL every other spec uses. */
@@ -866,6 +871,85 @@ test.describe('server and API surface (item 164, batch A)', () => {
             expect(readdirSync(logsDir).sort()).toEqual(['ws-scrcpy-web.log', 'ws-scrcpy-web.log.1']);
         } finally {
             await stopQuietly(handle, '10.18');
+        }
+    });
+
+    test('21.3 each plain-http exposure mode answers a visitor on the LAN address of this machine 200 / 421 / 302 and http://localhost 200, with no restart', async () => {
+        const lan = lanAddress() ?? '';
+        test.skip(!lan, 'no non-loopback IPv4 interface on this host to call from');
+        test.setTimeout(240_000);
+        const securePort = 8241;
+        const paths = tlsServerPaths('ws-scrcpy-web-e2e-164a-exposure', 8240);
+        seedPrivateDataRoot(paths, { httpsPort: securePort });
+        // A certificate in the TLS home before boot, so the boot binds an https
+        // listener: with none, HttpServer.ts serves every mode as open (there is
+        // nothing to refuse toward or redirect to), and this row would pass
+        // with the feature deleted.
+        plantCert(paths);
+        const port = paths.port;
+        // A planted certificate and no mkcert: the fast tier's dependencies serve.
+        const handle = spawnServer(paths, {
+            env: withoutInheritedOverrides(),
+            dependenciesPath: await sharedDependencies(),
+        });
+        const api = await request.newContext({ baseURL: paths.baseURL });
+        try {
+            await waitForServer(handle, paths.baseURL);
+            await mintToken(api);
+            const listener = async () =>
+                ((await (await api.get('/api/tls/state')).json()) as { httpsListener?: unknown }).httpsListener;
+            await expect
+                .poll(listener, { message: `the https listener on ${securePort} binds`, timeout: 30_000 })
+                .toEqual({ bound: true, port: securePort });
+
+            /** The serving process, as this machine sees it (whoami answers loopback only). */
+            const servingPid = async () => {
+                const who = await raw({ port, path: '/api/whoami', headers: { host: `localhost:${port}` } });
+                expect(who.status, who.body).toBe(200);
+                return (json(who) as { pid: number }).pid;
+            };
+            const pidBefore = await servingPid();
+            expect(pidBefore).toBe(handle.child.pid);
+
+            // The guest's order, and back to open: the switch takes effect for
+            // the very next request in both directions (TlsApi.ts writes the
+            // key, HttpServer.ts reads it fresh per request).
+            for (const mode of ['open', 'httpsOnly', 'redirect', 'open'] as const) {
+                const set = await api.post('/api/tls/exposure', { data: { mode } });
+                expect(set.status(), `POST /api/tls/exposure ${mode}: ${await set.text()}`).toBe(200);
+                expect(await set.json()).toEqual({ ok: true, mode });
+
+                // Another machine: a request to this host's own LAN address
+                // arrives FROM that address, so isLoopback is false.
+                const remote = await raw({ host: lan, port, path: '/', headers: { host: `${lan}:${port}` } });
+                if (mode === 'open') {
+                    expect(remote.status, `${mode}, LAN: ${remote.body.slice(0, 200)}`).toBe(200);
+                } else if (mode === 'httpsOnly') {
+                    expect(remote.status, `${mode}, LAN: ${remote.body.slice(0, 200)}`).toBe(421);
+                    expect(remote.body).toContain('this server is configured for https only.');
+                    expect(remote.headers['cache-control']).toBe('no-store');
+                } else {
+                    expect(remote.status, `${mode}, LAN: ${remote.body.slice(0, 200)}`).toBe(302);
+                    expect(remote.headers['location'], 'to the https listener, same host').toBe(
+                        `https://${lan}:${securePort}/`,
+                    );
+                    expect(remote.headers['cache-control']).toBe('no-store');
+                }
+
+                // "You can never lock yourself out of your own machine."
+                const local = await raw({ host: 'localhost', port, path: '/', headers: { host: `localhost:${port}` } });
+                expect(local.status, `${mode}, http://localhost: ${local.body.slice(0, 200)}`).toBe(200);
+            }
+
+            // No restart: the same process served every mode.
+            expect(handle.child.exitCode, handle.output()).toBeNull();
+            expect(await servingPid()).toBe(pidBefore);
+            expect(existsSync(paths.restartMarkerPath), 'no .restart marker: a mode switch needs no restart').toBe(
+                false,
+            );
+        } finally {
+            await api.dispose();
+            await stopQuietly(handle, '21.3');
         }
     });
 });
