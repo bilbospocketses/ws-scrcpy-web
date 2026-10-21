@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type APIRequestContext, expect, request, test } from '@playwright/test';
-import { E2E_TEMP_ENV, E2E_TEMP_ROOT, SEED_CONFIG } from './paths';
+import { E2E_BASE_URL, E2E_DATA_ROOT, E2E_TEMP_ENV, E2E_TEMP_ROOT, SEED_CONFIG } from './paths';
 import { removeTree, stopProcessesUnder } from './rootProcesses';
 
 /**
@@ -110,6 +110,12 @@ export interface SpawnOptions {
      * a busy port being auto-shifted (1.11, 1.12) has to start without it.
      */
     portOverride?: boolean;
+    /**
+     * The child's DEPS_PATH, `<dataRoot>/dependencies` by default. A row that
+     * does not write into its dependencies passes `await sharedDependencies()`,
+     * so the root hydrates nothing of its own.
+     */
+    dependenciesPath?: string;
 }
 
 /**
@@ -132,11 +138,11 @@ export function spawnServer(paths: PrivateServerPaths, options: SpawnOptions = {
     Object.assign(env, {
         PROGRAMDATA: paths.programData,
         DATA_ROOT: paths.dataRoot,
-        // The log file and the dependencies folder are keyed on DEPS_PATH,
-        // not on DATA_ROOT (Logger.ts, Config.ts): without it a bare server
-        // logs to the repo root and, on Linux, hydrates into
-        // <repo>/dependencies. The launcher sets both; so does this.
-        DEPS_PATH: path.join(paths.dataRoot, 'dependencies'),
+        // DEPS_PATH names the dependencies folder ahead of everything else
+        // (Config.ts resolveDependenciesPath). The launcher sets both it and
+        // DATA_ROOT; so does this. The log follows DATA_ROOT ahead of DEPS_PATH
+        // (Logger.ts), so a shared DEPS_PATH still logs into the private root.
+        DEPS_PATH: options.dependenciesPath ?? path.join(paths.dataRoot, 'dependencies'),
         WS_SCRCPY_CONFIG: paths.configPath,
         WS_SCRCPY_WEB_PORT: String(paths.port),
         // On Windows the TLS home is `%LOCALAPPDATA%\WsScrcpyWeb-tls`, outside
@@ -351,6 +357,48 @@ export async function waitForDependencies(
     } finally {
         await owned?.dispose();
     }
+}
+
+let sharedDependenciesReady: Promise<void> | undefined;
+
+/**
+ * The fast tier's shared server's dependencies folder (playwright.config.ts's
+ * DEPS_PATH), once every boot-installed dependency in it reports installed:
+ * the `dependenciesPath` for a spec-owned server that needs Node.js, adb and
+ * scrcpy-server but is not about them.
+ *
+ * Without it every private root downloads and unpacks all three into its own
+ * folder, and the roots are kept after the run for ci.yml's e2e-server-logs
+ * upload. On PR #976 (item 24) about ten new roots pushed CI's /tmp over its
+ * quota: every later Node.js install failed `tar: ... Cannot write: Disk quota
+ * exceeded`, and the boots' release lookups met api.github.com's rate limit.
+ *
+ * Sharing is safe because a boot over installed dependencies writes nothing
+ * into the folder: `WS_SCRCPY_SKIP_BOOT_LATEST` (set by `spawnServer`) skips
+ * every lookup, `autoInstallMissing` installs nothing, the scrcpy-server seed
+ * promote and marker repair find the jar and its `.version`, and node-pty is
+ * already staged (DependencyManager.ts, NodePtyResolver.ts). The log, the
+ * database and the `.restart` marker follow DATA_ROOT, the private root's own.
+ *
+ * Not for a row that writes into the folder or reads it as its subject: one
+ * that plants an mkcert (`installFailingMkcert`), installs or updates a
+ * dependency, or reads a genuine first run's install in its log. Those keep
+ * their own.
+ *
+ * It waits because the shared server answers `/` before its first-run install
+ * is done (index.ts runs it in the background), and a private server booted
+ * over a half-installed folder would install into it too, racing the shared
+ * server's own install. Once per worker, at most `waitForDependencies`'s
+ * default 120 s: budget that into the caller's `test.setTimeout`.
+ */
+export async function sharedDependencies(): Promise<string> {
+    sharedDependenciesReady ??= waitForDependencies(E2E_BASE_URL).catch((err: unknown) => {
+        // A failed wait is not remembered: the next row waits again.
+        sharedDependenciesReady = undefined;
+        throw err;
+    });
+    await sharedDependenciesReady;
+    return path.join(E2E_DATA_ROOT, 'dependencies');
 }
 
 /** No-op once exited; otherwise kill (TerminateProcess on Windows, SIGTERM elsewhere) and await the exit. */

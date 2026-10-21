@@ -11,6 +11,7 @@ import {
     removePrivateRoot,
     type ServerHandle,
     seedPrivateDataRoot,
+    sharedDependencies,
     spawnServer,
     stopQuietly,
     stopServer,
@@ -267,6 +268,8 @@ test.describe('service install hand-off: two instances on one data root (item 24
      */
     interface Run {
         paths?: PrivateServerPaths;
+        /** Every instance's DEPS_PATH: the fast tier's folder (`sharedDependencies`). */
+        dependenciesPath?: string;
         handles: ServerHandle[];
         blocker?: net.Server;
         context?: BrowserContext;
@@ -296,16 +299,32 @@ test.describe('service install hand-off: two instances on one data root (item 24
         }
     });
 
-    function seed(name: string, port: number, extraConfig: Record<string, unknown> = {}): PrivateServerPaths {
+    async function seed(
+        name: string,
+        port: number,
+        extraConfig: Record<string, unknown> = {},
+    ): Promise<PrivateServerPaths> {
         const paths = privateServerPaths(`${ROOT_PREFIX}${name}`, port);
         seedPrivateDataRoot(paths, extraConfig);
         run.paths = paths;
+        // No row here installs or reads a dependency, so no root hydrates its own.
+        run.dependenciesPath = await sharedDependencies();
         return paths;
+    }
+
+    /** The DEPS_PATH `seed` chose; an instance spawned before it would hydrate a folder of its own. */
+    function dependenciesPath(): string {
+        if (!run.dependenciesPath) throw new Error('seed the root before spawning an instance on it');
+        return run.dependenciesPath;
     }
 
     /** A spawned as the local app, C as the local app relaunched after an uninstall. */
     function spawnLocal(paths: PrivateServerPaths): ServerHandle {
-        const handle = spawnServer(paths, { env: withoutInheritedOverrides(), portOverride: false });
+        const handle = spawnServer(paths, {
+            env: withoutInheritedOverrides(),
+            portOverride: false,
+            dependenciesPath: dependenciesPath(),
+        });
         run.handles.push(handle);
         return handle;
     }
@@ -315,6 +334,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         const handle = spawnServer(paths, {
             env: withoutInheritedOverrides({ WS_SCRCPY_SERVICE: '1' }),
             portOverride: false,
+            dependenciesPath: dependenciesPath(),
         });
         run.handles.push(handle);
         return handle;
@@ -327,7 +347,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         const configured = 8200;
         const local = 8201;
         const service = 8202;
-        const paths = seed('settings', configured);
+        const paths = await seed('settings', configured);
 
         // 4.7's precondition: another program holds the configured port, so
         // the local app walks to +1 and persists it (row 1.12's rule).
@@ -335,8 +355,8 @@ test.describe('service install hand-off: two instances on one data root (item 24
         const a = spawnLocal(paths);
         await waitForServer(a, at(local));
         expect(readConfigFile(paths)['webPort']).toBe(local);
-        // B shares A's dependencies folder: it must never hydrate into it while
-        // A is still downloading.
+        // A and B run from the fast tier's dependencies, installed before A
+        // booted (`seed`): A itself reports them installed before B joins it.
         await waitForDependencies(at(local));
 
         run.context = await browser.newContext({ baseURL: at(local) });
@@ -468,7 +488,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     }) => {
         test.setTimeout(300_000);
         const port = 8203;
-        const paths = seed('same-port', port);
+        const paths = await seed('same-port', port);
         const a = spawnLocal(paths);
         await waitForServer(a, at(port));
         await waitForDependencies(at(port));
@@ -542,7 +562,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         const configured = 8204;
         const local = 8205;
         const service = 8206;
-        const paths = seed('welcome', configured, { firstRunComplete: false });
+        const paths = await seed('welcome', configured, { firstRunComplete: false });
         run.blocker = await holdPort(configured);
         const a = spawnLocal(paths);
         await waitForServer(a, at(local));
@@ -586,7 +606,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         test.setTimeout(300_000);
         const configured = 8207;
         const next = 8208;
-        const paths = seed('sibling', configured);
+        const paths = await seed('sibling', configured);
         const a = spawnLocal(paths);
         await waitForServer(a, at(configured));
         await waitForDependencies(at(configured));
@@ -612,7 +632,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         test.setTimeout(300_000);
         const configured = 8208;
         const next = 8209;
-        const paths = seed('sibling-locked', configured);
+        const paths = await seed('sibling-locked', configured);
         const a = spawnLocal(paths);
         await waitForServer(a, at(configured));
         await waitForDependencies(at(configured));

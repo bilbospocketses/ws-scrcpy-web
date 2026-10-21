@@ -1363,7 +1363,10 @@ test.describe('local https fast tier: a certificate through restart, off-box use
         test.setTimeout(150_000);
         seedPrivateDataRoot(C, { httpsPort: HTTPS_PORT });
         // Should the operator gate ever be missing, 21.2's generate fails on
-        // this mkcert at once instead of downloading the real one.
+        // this mkcert at once instead of downloading the real one. It sits in
+        // this root's own dependencies folder, so this root keeps one: on the
+        // fast tier's (`sharedDependencies`), a missing gate would fetch and run
+        // the real mkcert there.
         installFailingMkcert(C);
         handle = spawnServer(C, SPAWN);
         await waitForServer(handle, C.baseURL);

@@ -7,6 +7,7 @@ import {
     privateServerPaths,
     type ServerHandle,
     seedPrivateDataRoot,
+    sharedDependencies,
     spawnServer,
     stopQuietly,
     waitForDependencies,
@@ -876,7 +877,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
     test('21.3 each plain-http exposure mode answers a visitor on the LAN address of this machine 200 / 421 / 302 and http://localhost 200, with no restart', async () => {
         const lan = lanAddress() ?? '';
         test.skip(!lan, 'no non-loopback IPv4 interface on this host to call from');
-        test.setTimeout(120_000);
+        test.setTimeout(240_000);
         const securePort = 8241;
         const paths = tlsServerPaths('ws-scrcpy-web-e2e-164a-exposure', 8240);
         seedPrivateDataRoot(paths, { httpsPort: securePort });
@@ -886,7 +887,11 @@ test.describe('server and API surface (item 164, batch A)', () => {
         // with the feature deleted.
         plantCert(paths);
         const port = paths.port;
-        const handle = spawnServer(paths, { env: withoutInheritedOverrides() });
+        // A planted certificate and no mkcert: the fast tier's dependencies serve.
+        const handle = spawnServer(paths, {
+            env: withoutInheritedOverrides(),
+            dependenciesPath: await sharedDependencies(),
+        });
         const api = await request.newContext({ baseURL: paths.baseURL });
         try {
             await waitForServer(handle, paths.baseURL);

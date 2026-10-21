@@ -10,6 +10,7 @@ import {
     removePrivateRoot,
     type ServerHandle,
     seedPrivateDataRoot,
+    sharedDependencies,
     spawnServer,
     stopQuietly,
     waitForDependencies,
@@ -320,10 +321,12 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
 test('6.8 a tab left open across a restart reloads itself onto the new instance token, and the server logs at most one rejected WS connection for it', async ({
     browser,
 }) => {
-    test.setTimeout(180_000);
+    test.setTimeout(300_000);
     const paths = privateServerPaths('ws-scrcpy-web-e2e-deps-restart-stale-tab', 8242);
     seedPrivateDataRoot(paths);
-    const handles: ServerHandle[] = [spawnServer(paths)];
+    // Nothing in this row installs a dependency: both boots run from the fast tier's.
+    const dependenciesPath = await sharedDependencies();
+    const handles: ServerHandle[] = [spawnServer(paths, { dependenciesPath })];
     try {
         await waitForServer(handles[0]!, paths.baseURL);
         await dismissPrivatePrompts(paths.baseURL);
@@ -385,7 +388,7 @@ test('6.8 a tab left open across a restart reloads itself onto the new instance 
             const offset = logOffset(paths);
             const reloaded = page.waitForEvent('load', { timeout: 90_000 });
             restarted = true;
-            handles.push(spawnServer(paths));
+            handles.push(spawnServer(paths, { dependenciesPath }));
             await waitForServer(handles[1]!, paths.baseURL);
             serving = true;
             await reloaded;

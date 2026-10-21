@@ -19,6 +19,7 @@ import {
     privateServerPaths,
     type ServerHandle,
     seedPrivateDataRoot,
+    sharedDependencies,
     spawnServer,
     stopQuietly,
     stopServer,
@@ -392,10 +393,12 @@ test.describe('lifecycle (smoke §12)', () => {
     });
 
     test('12.13 restart server: the first Application row; cancel sends nothing; confirm exits 75 with the .restart marker, shows the overlay, and the page reloads onto a new instance token on the same port', async () => {
-        test.setTimeout(180_000);
+        test.setTimeout(300_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-restart-server', 8243);
         seedPrivateDataRoot(paths);
-        const handles: ServerHandle[] = [spawnServer(paths, { env: withoutInheritedOverrides() })];
+        // Nothing in this row installs a dependency: both boots run from the fast tier's.
+        const spawnOptions = { env: withoutInheritedOverrides(), dependenciesPath: await sharedDependencies() };
+        const handles: ServerHandle[] = [spawnServer(paths, spawnOptions)];
         let ctx: BrowserContext | undefined;
         try {
             await waitForServer(handles[0]!, paths.baseURL);
@@ -509,7 +512,7 @@ test.describe('lifecycle (smoke §12)', () => {
             // to refuse the page's old token (waitForServerRestart).
             unlinkSync(paths.restartMarkerPath);
             const reloaded = page.waitForEvent('load', { timeout: 90_000 });
-            handles.push(spawnServer(paths, { env: withoutInheritedOverrides() }));
+            handles.push(spawnServer(paths, spawnOptions));
             await waitForServer(handles[1]!, paths.baseURL);
             await reloaded;
             expect(new URL(page.url()).port).toBe(String(paths.port));
@@ -541,12 +544,15 @@ test.describe('lifecycle (smoke §12)', () => {
     test('12.13 off-box with remote admin off: the Application card is hidden with the note in its place, and POST /api/server/restart answers 403', async () => {
         const lan = lanAddress() ?? '';
         test.skip(!lan, 'no non-loopback IPv4 interface on this host to call from');
-        test.setTimeout(150_000);
+        test.setTimeout(270_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-restart-server-offbox', 8244);
         seedPrivateDataRoot(paths);
         // withoutInheritedOverrides removes WS_SCRCPY_ALLOW_REMOTE_ADMIN: a runner
         // exporting it would let the POST below restart the server.
-        const handle = spawnServer(paths, { env: withoutInheritedOverrides() });
+        const handle = spawnServer(paths, {
+            env: withoutInheritedOverrides(),
+            dependenciesPath: await sharedDependencies(),
+        });
         let ctx: BrowserContext | undefined;
         try {
             await waitForServer(handle, paths.baseURL);
