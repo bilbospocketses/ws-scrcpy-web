@@ -1471,7 +1471,7 @@ test.describe('local https fast tier: a certificate through restart, off-box use
             expect(fromPage.text, 'the page downloads the CA on disk').toBe(planted.ca.cert);
 
             // Cold: no page, no cookie, as curl or a phone following a link.
-            const cold = await raw({ https: true, host: lan, port: HTTPS_PORT, path: '/api/tls/ca-root' });
+            const cold = await raw({ httpsCa: planted.ca.cert, host: lan, port: HTTPS_PORT, path: '/api/tls/ca-root' });
             expect(cold.status, cold.body.slice(0, 200)).toBe(200);
             expect(cold.headers['content-disposition']).toBe(`attachment; filename="${CA_FILE_NAME}"`);
             expect(cold.body, 'the cold download is the PEM the page downloads').toBe(fromPage.text);
@@ -1479,7 +1479,12 @@ test.describe('local https fast tier: a certificate through restart, off-box use
             // Only the CA is exempt: the rest of /api/tls still needs the token,
             // refused by the token gate (the body says which gate), while the
             // page that holds the token reads the same route.
-            const coldState = await raw({ https: true, host: lan, port: HTTPS_PORT, path: '/api/tls/state' });
+            const coldState = await raw({
+                httpsCa: planted.ca.cert,
+                host: lan,
+                port: HTTPS_PORT,
+                path: '/api/tls/state',
+            });
             expect(coldState.status, coldState.body).toBe(403);
             expect(json(coldState)).toEqual(TOKEN_REFUSAL);
             const stateFromPage = await page.evaluate(async () => (await fetch('/api/tls/state')).status);
@@ -1560,13 +1565,13 @@ test.describe('local https fast tier: a certificate through restart, off-box use
             // The old listener keeps serving, from memory, the leaf it served before.
             expect((await verifiedHandshake('127.0.0.1', HTTPS_PORT, planted.ca.cert)).fingerprint).toBe(leafFp);
             const overHttps = await raw({
-                https: true,
+                httpsCa: planted.ca.cert,
                 port: HTTPS_PORT,
                 path: '/',
                 headers: { host: `localhost:${HTTPS_PORT}` },
             });
             expect(overHttps.status, 'a page still answers over https').toBe(200);
-            const caRoot = await raw({ https: true, port: HTTPS_PORT, path: '/api/tls/ca-root' });
+            const caRoot = await raw({ httpsCa: planted.ca.cert, port: HTTPS_PORT, path: '/api/tls/ca-root' });
             expect(caRoot.status, caRoot.body).toBe(404);
             expect(json(caRoot)).toEqual(NO_CERT_404);
 
