@@ -104,6 +104,15 @@ describe('isInstallHandoffInProgress (row 1.11: the device list yields its stale
         expect(isInstallHandoffInProgress()).toBe(true);
     });
 
+    it('one poll ending does not clear the mark another poll holds', () => {
+        const first = harness([localAnswering]);
+        const second = harness([localAnswering]);
+        first.poll.stop();
+        expect(isInstallHandoffInProgress()).toBe(true);
+        second.poll.stop();
+        expect(isInstallHandoffInProgress()).toBe(false);
+    });
+
     it('is false once the poll times out, so the stale-token reload works again', async () => {
         const h = harness([localAnswering], { maxIterations: 1 });
         await h.tick();

@@ -364,7 +364,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         if (probe === 'stale' && this.installHandoffInProgress()) {
             // The service just took this origin with a new token, and the
             // install hand-off reloads (or navigates) for it once it has told
-            // the user "switching you over…". Keep retrying until then; if the
+            // the user it is switching over. Keep retrying until then; if the
             // hand-off times out, the next stale probe reloads as usual
             // (qa-harness Wave 4, row 1.11).
             this.openNewConnection();

@@ -162,10 +162,10 @@ export interface InstallHandoffPoll {
  * saw "waiting for it to start" and then a reload, never "service mode active.
  * switching you over…" (qa-harness Wave 4, Ubuntu row 1.11).
  */
-let handoffInProgress = false;
+let handoffOwner: object | null = null;
 
 export function isInstallHandoffInProgress(): boolean {
-    return handoffInProgress;
+    return handoffOwner !== null;
 }
 
 /**
@@ -199,13 +199,16 @@ export function startInstallHandoffPoll(opts: InstallHandoffPollOptions): Instal
     const browserPort = Number(loc.port) || null;
 
     let handle: unknown;
+    // This poll's claim on the in-progress mark: one poll ending never clears
+    // another's.
+    const owner = {};
     /** `leaving`: the page is about to navigate or reload for the hand-off. */
     const finish = (leaving: boolean): void => {
         finished = true;
         stopTimer(handle);
-        if (!leaving) handoffInProgress = false;
+        if (!leaving && handoffOwner === owner) handoffOwner = null;
     };
-    handoffInProgress = true;
+    handoffOwner = owner;
 
     const tick = async (): Promise<void> => {
         if (finished) return;

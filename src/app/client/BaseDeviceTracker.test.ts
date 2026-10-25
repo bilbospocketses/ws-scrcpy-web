@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BaseDeviceDescriptor } from '../../types/BaseDeviceDescriptor';
 import type { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { BaseDeviceTracker } from './BaseDeviceTracker';
+import { startInstallHandoffPoll } from './installHandoffPoll';
 import { STALE_TOKEN_NOTICE_TEXT, type TokenProbe } from './staleTokenReload';
 
 // Minimal concrete subclass. BaseDeviceTracker is abstract — it requires
@@ -61,11 +62,11 @@ class TestTracker extends BaseDeviceTracker<BaseDeviceDescriptor, never> {
         return Promise.resolve(this.tokenProbe);
     }
 
-    /** Whether a service-install hand-off is in progress (row 1.11). */
-    public handoff = false;
+    /** Whether a service-install hand-off is in progress (row 1.11); null asks the real poll. */
+    public handoff: boolean | null = false;
 
     protected override installHandoffInProgress(): boolean {
-        return this.handoff;
+        return this.handoff ?? super.installHandoffInProgress();
     }
 
     /** A message on the socket: the connection reached the server. */
@@ -249,6 +250,30 @@ describe('BaseDeviceTracker stops retrying on a stale token (item 174)', () => {
         await vi.advanceTimersByTimeAsync(2000);
         expect(reload).not.toHaveBeenCalled();
         expect(tracker.openCount).toBe(2);
+        tracker.destroy();
+    });
+
+    it('the real hand-off poll holds the reload off while it runs, and lets it go once stopped', async () => {
+        const poll = startInstallHandoffPoll({
+            baselineMtime: 0,
+            onNavigate: vi.fn(),
+            onReconnect: vi.fn(),
+            onTimeout: vi.fn(),
+            // A timer that never ticks: the poll is simply in progress.
+            deps: { setInterval: () => 'never', clearInterval: vi.fn(), fetch: vi.fn() },
+        });
+        const tracker = new TestTracker();
+        tracker.handoff = null;
+        tracker.tokenProbe = 'stale';
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).not.toHaveBeenCalled();
+        expect(tracker.openCount).toBe(1);
+
+        poll.stop();
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).toHaveBeenCalledTimes(1);
         tracker.destroy();
     });
 
