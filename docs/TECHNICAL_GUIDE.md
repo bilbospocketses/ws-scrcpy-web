@@ -578,9 +578,9 @@ export interface StartStreamOptions {
 | `bitrate` | Target video bitrate in bits per second. |
 | `maxFps` | Frame rate cap. |
 | `maxSize` | Pixel bound on the longest dimension (scrcpy will scale to fit). Applies only with `fitToScreen: false`. |
-| `fitToScreen` | Size the stream to the browser viewport. Default `true`; while on, the viewport replaces `maxSize`. |
+| `fitToScreen` | Size the stream to the browser viewport. Default `true`; while on, the viewport replaces `maxSize`. `false` without a `maxSize` still fits the viewport, so a stream never goes to native size by omission. |
 | `iFrameInterval` | Seconds between keyframes. Default `2`. |
-| `codecOptions` | Raw scrcpy `video_codec_options` (e.g. `profile:int=1`). An `i-frame-interval` entry here wins over `iFrameInterval`. |
+| `codecOptions` | Raw scrcpy `video_codec_options` (e.g. `profile:int=1`). An `i-frame-interval:int=…` entry here wins over `iFrameInterval`. |
 | `displayId` | Device display to capture. Default `0`, the main display. |
 
 **Features**
@@ -633,7 +633,7 @@ Calling it with a missing or non-string `deviceId` throws `Error('startStream: d
 | `encoder`   | string | auto                             | Forced encoder name.                                      |
 | `bitrate`   | int    | auto                             | Video bitrate in bps.                                     |
 | `maxFps`    | int    | auto                             | Frame rate cap.                                           |
-| `maxSize`   | int    | auto                             | Longest-dimension pixel bound.                            |
+| `maxSize`   | int    | auto                             | Longest-dimension pixel bound. Currently ignored: embed always fits to screen, and the viewport replaces it. |
 | `audio`     | bool   | `true`                           | `"true"` / `"false"`. Server force-disables on Android 10 or older. |
 | `audioSource` | string | `output`                         | `"playback"` / `"output"` / `"mic"`. `output` (default) silences device audio during the session, matching scrcpy's own default. `playback` requires Android 13+ and uses `--audio-dup` to keep device audio playing during capture. |
 | `audioCodec`  | string | `opus`                            | `"opus"` / `"aac"` / `"flac"` / `"raw"`. `aac` is the documented fallback when a device's Opus encoder fails. |

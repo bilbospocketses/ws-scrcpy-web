@@ -19,6 +19,7 @@ export interface StartStreamOptions {
     /**
      * Size the stream to the browser viewport (default true). While it is on,
      * the viewport replaces `maxSize`; turn it off for `maxSize` to apply.
+     * Off without a `maxSize` still fits the viewport, never native size.
      */
     fitToScreen?: boolean | undefined;
     /** Seconds between keyframes (default 2). */

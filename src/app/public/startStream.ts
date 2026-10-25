@@ -44,7 +44,12 @@ export function startStream(container: HTMLElement, deviceId: string, options: S
     };
     const videoCodec = options.codec ? codecMap[options.codec] : undefined;
 
-    const fitToScreen = options.fitToScreen ?? true;
+    // Fit to screen off needs a max size to mean anything. Without one, scrcpy
+    // would stream at native size (3840x2160 on a 4K TV), which no caller asks
+    // for on purpose: the config dialog saves fit off with blank max width and
+    // height, and the card's connect link reads fit off for any device with no
+    // saved settings. Both were sized to the viewport before #981, so keep that.
+    const fitToScreen = (options.fitToScreen ?? true) || !options.maxSize;
 
     // Build the params object. The video knobs (bitrate, maxFps, maxSize,
     // iFrameInterval, codecOptions, displayId) do NOT belong on

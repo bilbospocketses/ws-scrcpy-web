@@ -128,6 +128,16 @@ describe('startStream', () => {
         expect(url.searchParams.get('videoCodecOptions')).toBe('i-frame-interval:int=10,profile:int=1');
     });
 
+    // A fresh device's card connect, or a dialog saved with fit off and blank
+    // max width/height, must not stream at native size.
+    it('fits to screen when fitToScreen=false comes without a maxSize', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123', { fitToScreen: false, bitrate: 8000000 });
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0]!;
+        expect(args[0].fitToScreen).toBe(true);
+        expect(args[2]).toBe(true);
+    });
+
     it('builds VideoSettings when only iFrameInterval is given', async () => {
         const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
         startStream(container, 'abc123', { iFrameInterval: 5 });
