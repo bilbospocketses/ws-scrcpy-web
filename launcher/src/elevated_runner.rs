@@ -226,6 +226,10 @@ fn build_servy_install_args(
         "RestartProcess".to_string(),
         "--maxRestartAttempts".to_string(),
         args.max_restart_attempts.to_string(),
+    ];
+    // Servy 8.2 recovers nothing without health monitoring on; see servy_recovery.rs.
+    servy_args.extend(crate::servy_recovery::health_install_args());
+    servy_args.extend([
         "--envVars".to_string(),
         args.env_vars.clone(),
         "--stdout".to_string(),
@@ -237,7 +241,7 @@ fn build_servy_install_args(
         "10".to_string(),
         "--maxRotations".to_string(),
         "1".to_string(),
-    ];
+    ]);
     if let Some(bat_path) = post_stop_bat {
         let bat_path_str = bat_path.to_string_lossy().into_owned();
         servy_args.push("--postStopPath".to_string());
@@ -992,6 +996,24 @@ mod rotation_tests {
             .position(|a| a == "--maxRotations")
             .expect("--maxRotations present");
         assert_eq!(argv[mpos + 1], "1");
+    }
+
+    /// Row 4.8: Servy 8.2 recovers a crashed child only with health on.
+    #[test]
+    fn servy_install_args_enable_health_with_restart_process() {
+        let argv = build_servy_install_args(&sample_args(), None);
+        let value_of = |flag: &str| {
+            let pos = argv
+                .iter()
+                .position(|a| a == flag)
+                .unwrap_or_else(|| panic!("{flag} present"));
+            argv[pos + 1].clone()
+        };
+        assert!(argv.iter().any(|a| a == "--enableHealth"));
+        assert_eq!(value_of("--recoveryAction"), "RestartProcess");
+        assert_eq!(value_of("--heartbeatInterval"), "30");
+        assert_eq!(value_of("--maxFailedChecks"), "1");
+        assert_eq!(value_of("--maxRestartAttempts"), "3");
     }
 }
 

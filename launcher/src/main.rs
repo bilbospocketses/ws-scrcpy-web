@@ -8,6 +8,7 @@ mod install_acl;
 mod job_object;
 mod log;
 mod paths;
+mod servy_recovery;
 mod single_instance;
 mod spawn;
 mod supervisor;

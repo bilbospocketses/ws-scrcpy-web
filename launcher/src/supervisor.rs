@@ -488,6 +488,12 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
     // Item 163: the installed service (systemd unit or servy, both of which set
     // WS_SCRCPY_SERVICE=1) leaves crash restarts to its service manager.
     let running_as_service = matches!(std::env::var("WS_SCRCPY_SERVICE").as_deref(), Ok("1"));
+    // Row 4.8: that leaves it to servy's recovery, which a service installed
+    // before 0.5.11 has off; the repair turns it on (servy_recovery.rs).
+    #[cfg(windows)]
+    if running_as_service {
+        crate::servy_recovery::spawn_startup_repair(&paths.install_root, &paths.data_root);
+    }
     let mut crash_restarts: u32 = 0;
     loop {
         cleanup_old_node(&paths.old_node);
