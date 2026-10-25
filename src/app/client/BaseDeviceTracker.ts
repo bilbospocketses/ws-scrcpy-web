@@ -8,6 +8,7 @@ import type { Message } from '../../types/Message';
 import type { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import Util from '../Util';
 import { html } from '../ui/HtmlTag';
+import { isInstallHandoffInProgress } from './installHandoffPoll';
 import { ManagerClient } from './ManagerClient';
 import {
     clearStaleTokenReloadMark,
@@ -360,6 +361,15 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         if (this.destroyed) {
             return;
         }
+        if (probe === 'stale' && this.installHandoffInProgress()) {
+            // The service just took this origin with a new token, and the
+            // install hand-off reloads (or navigates) for it once it has told
+            // the user "switching you over…". Keep retrying until then; if the
+            // hand-off times out, the next stale probe reloads as usual
+            // (qa-harness Wave 4, row 1.11).
+            this.openNewConnection();
+            return;
+        }
         if (probe === 'stale') {
             if (!reloadForStaleToken()) {
                 console.warn(
@@ -379,6 +389,11 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     /** Seam for tests; the real probe is `probeStaleToken`. */
     protected probeToken(): Promise<TokenProbe> {
         return probeStaleToken();
+    }
+
+    /** Seam for tests; the real answer is `isInstallHandoffInProgress`. */
+    protected installHandoffInProgress(): boolean {
+        return isInstallHandoffInProgress();
     }
 
     protected onSocketMessage(event: MessageEvent): void {

@@ -61,6 +61,13 @@ class TestTracker extends BaseDeviceTracker<BaseDeviceDescriptor, never> {
         return Promise.resolve(this.tokenProbe);
     }
 
+    /** Whether a service-install hand-off is in progress (row 1.11). */
+    public handoff = false;
+
+    protected override installHandoffInProgress(): boolean {
+        return this.handoff;
+    }
+
     /** A message on the socket: the connection reached the server. */
     public deliver(): void {
         this.onSocketMessage({ data: JSON.stringify({ type: 'noop' }) } as MessageEvent);
@@ -223,6 +230,41 @@ describe('BaseDeviceTracker stops retrying on a stale token (item 174)', () => {
         await vi.advanceTimersByTimeAsync(2000);
         expect(reload).toHaveBeenCalledTimes(2);
         reloaded.destroy();
+    });
+
+    it('during a service-install hand-off a stale token keeps retrying and leaves the reload to the hand-off', async () => {
+        // qa-harness Wave 4, row 1.11: the service holds the port with a new
+        // token, and this reload used to beat the hand-off's "switching you over…".
+        const tracker = new TestTracker();
+        tracker.handoff = true;
+        tracker.tokenProbe = 'stale';
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).not.toHaveBeenCalled();
+        expect(tracker.openCount).toBe(1);
+        expect(document.querySelector('[data-stale-token-notice]')).toBeNull();
+
+        // The retry is refused too: still no reload while the hand-off runs.
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).not.toHaveBeenCalled();
+        expect(tracker.openCount).toBe(2);
+        tracker.destroy();
+    });
+
+    it('once the hand-off has given up, a stale token reloads as before', async () => {
+        const tracker = new TestTracker();
+        tracker.handoff = true;
+        tracker.tokenProbe = 'stale';
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).not.toHaveBeenCalled();
+
+        tracker.handoff = false;
+        tracker.callOnSocketClose();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).toHaveBeenCalledTimes(1);
+        tracker.destroy();
     });
 
     it('a tracker destroyed while the probe is out neither reloads nor reconnects', async () => {

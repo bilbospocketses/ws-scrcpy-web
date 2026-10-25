@@ -3,6 +3,7 @@ import {
     INSTALL_HANDOFF_MAX_ITERATIONS,
     INSTALL_HANDOFF_POLL_INTERVAL_MS,
     type InstallHandoffPollOptions,
+    isInstallHandoffInProgress,
     startInstallHandoffPoll,
 } from '../installHandoffPoll';
 
@@ -75,6 +76,42 @@ function harness(steps: Step[], overrides: Partial<InstallHandoffPollOptions> = 
         },
     };
 }
+
+describe('isInstallHandoffInProgress (row 1.11: the device list yields its stale-token reload to it)', () => {
+    it('is true from the start of a poll and false once it is stopped', () => {
+        const h = harness([localAnswering]);
+        expect(isInstallHandoffInProgress()).toBe(true);
+        h.poll.stop();
+        expect(isInstallHandoffInProgress()).toBe(false);
+    });
+
+    it("stays true after a reconnect, because the reload that follows is the hand-off's own", async () => {
+        const h = harness([staleTokenRefusal]);
+        await h.tick();
+        expect(h.onReconnect).toHaveBeenCalledTimes(1);
+        expect(isInstallHandoffInProgress()).toBe(true);
+        h.poll.stop();
+        // stop() after the outcome is a no-op and leaves the page's hand-off in place.
+        expect(isInstallHandoffInProgress()).toBe(true);
+    });
+
+    it('stays true after a navigate', async () => {
+        const h = harness([
+            () => jsonResponse({ servedByService: true, status: 'running', configMtime: 200, diskWebPort: 8001 }),
+        ]);
+        await h.tick();
+        expect(h.onNavigate).toHaveBeenCalledTimes(1);
+        expect(isInstallHandoffInProgress()).toBe(true);
+    });
+
+    it('is false once the poll times out, so the stale-token reload works again', async () => {
+        const h = harness([localAnswering], { maxIterations: 1 });
+        await h.tick();
+        await h.tick();
+        expect(h.onTimeout).toHaveBeenCalledTimes(1);
+        expect(isInstallHandoffInProgress()).toBe(false);
+    });
+});
 
 describe('startInstallHandoffPoll', () => {
     it('polls GET /api/service/status every 2 s with a per-request timeout signal', async () => {

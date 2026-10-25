@@ -152,6 +152,23 @@ export interface InstallHandoffPoll {
 }
 
 /**
+ * True from the start of a hand-off poll until it times out or is stopped.
+ * It stays true after a navigate or reconnect outcome, because the page is
+ * about to leave and that reload belongs to the hand-off.
+ *
+ * The device list's stale-token check yields to it (BaseDeviceTracker): the
+ * service takes the port with a new token, so the list's next probe is refused
+ * as stale, and its immediate reload used to beat this poll to it. The user
+ * saw "waiting for it to start" and then a reload, never "service mode active.
+ * switching you over…" (qa-harness Wave 4, Ubuntu row 1.11).
+ */
+let handoffInProgress = false;
+
+export function isInstallHandoffInProgress(): boolean {
+    return handoffInProgress;
+}
+
+/**
  * Start polling GET /api/service/status until the service has taken over, then
  * report exactly one of navigate / reconnect / timeout. A thrown or aborted
  * fetch is never fatal on its own: it is the dead window, and only the cap ends
@@ -182,10 +199,13 @@ export function startInstallHandoffPoll(opts: InstallHandoffPollOptions): Instal
     const browserPort = Number(loc.port) || null;
 
     let handle: unknown;
-    const finish = (): void => {
+    /** `leaving`: the page is about to navigate or reload for the hand-off. */
+    const finish = (leaving: boolean): void => {
         finished = true;
         stopTimer(handle);
+        if (!leaving) handoffInProgress = false;
     };
+    handoffInProgress = true;
 
     const tick = async (): Promise<void> => {
         if (finished) return;
@@ -248,18 +268,18 @@ export function startInstallHandoffPoll(opts: InstallHandoffPollOptions): Instal
         opts.onTick?.({ iterations, reachable, tokenRejected, servedByService, outcome });
         switch (outcome.kind) {
             case 'navigate':
-                finish();
+                finish(true);
                 // Same host the browser is on, new port. A literal localhost
                 // here sent every off-box client to its own machine
                 // (qa-harness Arc 1b, rows 4.3 / 12.2).
                 opts.onNavigate(sameOriginUrl(outcome.port, loc.href), outcome.port);
                 return;
             case 'reconnect':
-                finish();
+                finish(true);
                 opts.onReconnect();
                 return;
             case 'timeout':
-                finish();
+                finish(false);
                 opts.onTimeout();
                 return;
             case 'keep-polling':
@@ -273,7 +293,7 @@ export function startInstallHandoffPoll(opts: InstallHandoffPollOptions): Instal
 
     return {
         stop(): void {
-            if (!finished) finish();
+            if (!finished) finish(false);
         },
     };
 }
