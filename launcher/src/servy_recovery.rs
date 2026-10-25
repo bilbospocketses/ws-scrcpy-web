@@ -1,5 +1,5 @@
-// Servy crash recovery: the install flags that turn it on, and the repair an
-// update applies to a service installed before they existed.
+// Servy crash recovery: the install flags that turn it on, and the repair a
+// service installed before they existed gets when this build starts it.
 //
 // Servy 8.2 restarts a crashed child only when health monitoring is on.
 // `Servy.Service/Service.cs` (v8.2) sets
@@ -14,15 +14,37 @@
 //
 // Servy stores these settings once, in its own database, when the service is
 // registered; an update replaces the app's files and never re-registers it.
-// So `--veloapp-updated` repairs an existing service: `servy-cli export` its
-// stored config, set the four recovery fields, `servy-cli import` it back.
-// Import without `--install` only writes Servy's database, which is what the
-// service host reads when it starts; it touches no SCM setting. That matters
-// because export leaves out the account and password: an `--install` from the
-// file would re-register the service as LocalSystem. Ours already is
-// LocalSystem, and the SCM's logon account is not touched here either way.
+// So the service-mode launcher repairs its own service at startup, on a
+// background thread: `servy-cli export` the stored config, set the four
+// recovery fields, `servy-cli import` it back. Import without `--install` only
+// writes Servy's database, which is what the service host reads when it
+// starts; it touches no SCM setting. (It does reset the row's run-time columns,
+// `Pid` and the active stdout/stderr paths, which export never carries, so
+// Servy Manager loses them for the running host until the restart below.)
+// That matters because export leaves out
+// the account and password: an `--install` from the file would re-register the
+// service as LocalSystem. Ours already is LocalSystem, and the SCM's logon
+// account is not touched here either way.
+//
+// The running host read its options before the repair, so a repair is followed
+// by ONE restart of the service (decided together, 2026-10-25), run from a
+// detached SYSTEM scheduled task because stopping the service kills this
+// process and everything it starts. The restart waits until the server answers
+// on its port: Servy's stop is a hard kill, and a first start after an update
+// may still be provisioning dependencies.
+//
+// Not in the `--veloapp-updated` hook: Velopack kills that hook after 15 s and
+// then kills every process under the install root (`run_hook` ->
+// `force_stop_package`, velopack 1.2.161), while the post-stop bat starts the
+// service 12 s after the stop. A cold first `servy-cli` run as SYSTEM can take
+// longer than both, and would take the freshly started launcher down with it.
 
-use std::path::Path;
+// Only the install flags are used off Windows; the repair runs in the Windows
+// service only.
+#![cfg_attr(not(windows), allow(dead_code))]
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -112,7 +134,7 @@ pub(crate) fn repair_existing_service(
     if let Err(e) = std::fs::create_dir_all(scratch_dir) {
         return RepairOutcome::Failed(format!("could not create {scratch_dir:?}: {e}"));
     }
-    let file = scratch_dir.join("servy-recovery-export.json");
+    let file = scratch_dir.join("WsScrcpyWeb-recovery-export.json");
     let _ = std::fs::remove_file(&file);
     let path = file.to_string_lossy().into_owned();
     let outcome = (|| {
@@ -145,23 +167,233 @@ pub(crate) fn repair_existing_service(
     outcome
 }
 
+const SERVICE_NAME: &str = "WsScrcpyWeb";
+const RESTART_TASK_NAME: &str = "WsScrcpyWebServyRecovery";
+
+/// How long the restart waits for the server to answer before leaving the
+/// repair to the service's next start.
+const SERVER_READY_WAIT: Duration = Duration::from_secs(600);
+
+/// Present once a restart was scheduled to apply a repair, until a start finds
+/// recovery on. A repair that does not stick must not restart the service on
+/// every start.
+fn restart_marker(data_root: &Path) -> PathBuf {
+    data_root.join("control").join("servy-recovery-restarted")
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum StartupAction {
+    /// Recovery is on, or the repair failed: no restart.
+    Nothing,
+    /// The repair changed Servy's database: restart once so the host reads it.
+    Restart,
+    /// It had to change it again after a restart already ran for it: the
+    /// import does not stick, and restarting again would loop.
+    GiveUp,
+}
+
+/// Pure: what the service-mode launcher does with a startup repair's outcome.
+pub(crate) fn startup_action(outcome: &RepairOutcome, restarted_before: bool) -> StartupAction {
+    match outcome {
+        RepairOutcome::Repaired if restarted_before => StartupAction::GiveUp,
+        RepairOutcome::Repaired => StartupAction::Restart,
+        RepairOutcome::AlreadyEnabled | RepairOutcome::Failed(_) => StartupAction::Nothing,
+    }
+}
+
+/// Pure: the bat the scheduled task runs. It restarts the service through
+/// servy-cli (stop, then start, so the new host reads the repaired config),
+/// then deletes its task and itself.
+pub(crate) fn restart_bat(servy: &str, log_dir: &str) -> String {
+    format!(
+        "@echo off\r\n\
+         echo %date% %time% [servy-recovery] restarting {service} to turn crash recovery on >> \"{log}\\servy-recovery.log\"\r\n\
+         \"{servy}\" restart --name {service} -q\r\n\
+         echo %date% %time% [servy-recovery] restart exit=%errorlevel% >> \"{log}\\servy-recovery.log\"\r\n\
+         schtasks /delete /tn \"{task}\" /f >nul 2>&1\r\n\
+         del \"%~f0\"\r\n",
+        service = SERVICE_NAME,
+        servy = servy,
+        log = log_dir,
+        task = RESTART_TASK_NAME,
+    )
+}
+
+/// Service mode only: repair this service's Servy recovery on a background
+/// thread, and restart the service once if the repair changed anything.
+#[cfg(windows)]
+pub(crate) fn spawn_startup_repair(install_root: &Path, data_root: &Path) {
+    let install_root = install_root.to_path_buf();
+    let data_root = data_root.to_path_buf();
+    let spawned = std::thread::Builder::new()
+        .name("servy-recovery".to_string())
+        .spawn(move || startup_repair(&install_root, &data_root));
+    if let Err(e) = spawned {
+        crate::log::error(&format!("servy-recovery: could not start its thread: {e}"));
+    }
+}
+
+#[cfg(windows)]
+fn startup_repair(install_root: &Path, data_root: &Path) {
+    use crate::log;
+
+    let servy = install_root.join("current").join("servy-cli.exe");
+    if !servy.exists() {
+        log::info(&format!(
+            "servy-recovery: servy-cli.exe absent at {servy:?}; not checked"
+        ));
+        return;
+    }
+    // The exported file is imported back as SYSTEM on every start, so it lives
+    // in Servy's own admin-only directory, not the user-writable data root
+    // (and not under %windir%, which Servy's export refuses).
+    let scratch = match std::env::var_os("ProgramData") {
+        Some(pd) => PathBuf::from(pd).join("Servy"),
+        None => {
+            log::error("servy-recovery: %ProgramData% is not set; not checked");
+            return;
+        }
+    };
+    let outcome = repair_existing_service(SERVICE_NAME, &scratch, |args| {
+        crate::elevated_runner::silent_command(&servy)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .map_err(|e| format!("failed to spawn servy-cli: {e}"))
+    });
+    let marker = restart_marker(data_root);
+    match &outcome {
+        RepairOutcome::AlreadyEnabled => {
+            log::info("servy-recovery: crash recovery is on");
+            let _ = std::fs::remove_file(&marker);
+        }
+        RepairOutcome::Repaired => log::info(
+            "servy-recovery: crash recovery was off; turned it on in servy's config (health on, RestartProcess)",
+        ),
+        RepairOutcome::Failed(e) => log::error(&format!(
+            "servy-recovery: could not check or repair crash recovery: {e}; it is tried again at the service's next start"
+        )),
+    }
+    match startup_action(&outcome, marker.exists()) {
+        StartupAction::Nothing => {}
+        StartupAction::GiveUp => log::error(
+            "servy-recovery: crash recovery was off again after the restart that should have applied it; not restarting again",
+        ),
+        StartupAction::Restart => {
+            if !wait_for_server(data_root, SERVER_READY_WAIT) {
+                log::warn(
+                    "servy-recovery: the server did not answer on its port; the repair applies from the service's next start",
+                );
+                return;
+            }
+            if let Err(e) = std::fs::write(&marker, b"") {
+                log::error(&format!(
+                    "servy-recovery: could not write {marker:?}: {e}; not restarting (it would be unguarded)"
+                ));
+                return;
+            }
+            match schedule_restart(&servy, data_root) {
+                Ok(()) => log::info(
+                    "servy-recovery: restarting the service once so servy reads the repaired config",
+                ),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&marker);
+                    log::error(&format!(
+                        "servy-recovery: could not schedule the restart: {e}; the repair applies from the service's next start"
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Poll the server's port (re-read from config.json each time: the service
+/// may have walked off the configured one) until it accepts a connection.
+#[cfg(windows)]
+fn wait_for_server(data_root: &Path, give_up_after: Duration) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < give_up_after {
+        let port = common::config::AppConfig::load(data_root)
+            .web_port
+            .unwrap_or(8000);
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        if std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    false
+}
+
+#[cfg(windows)]
+fn schedule_restart(servy: &Path, data_root: &Path) -> Result<(), String> {
+    use crate::elevated_runner::{assert_safe_bat_token, silent_os_tool};
+
+    let control = data_root.join("control");
+    let log_dir = data_root.join("logs");
+    let servy_str = servy.to_string_lossy();
+    let log_str = log_dir.to_string_lossy();
+    let bat = control.join("servy-recovery-restart.bat");
+    let bat_str = bat.to_string_lossy().into_owned();
+    assert_safe_bat_token(&servy_str, "servy_path")?;
+    assert_safe_bat_token(&log_str, "log_dir")?;
+    assert_safe_bat_token(&bat_str, "bat_path")?;
+    std::fs::write(&bat, restart_bat(&servy_str, &log_str))
+        .map_err(|e| format!("write {bat:?} failed: {e}"))?;
+
+    let run = |args: &[&str]| -> Result<(), String> {
+        let status = silent_os_tool("schtasks")
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| format!("schtasks {} spawn failed: {e}", args[0]))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("schtasks {} exited {:?}", args[0], status.code()))
+        }
+    };
+    let task_cmd = format!("C:\\Windows\\System32\\cmd.exe /c \"{bat_str}\"");
+    run(&[
+        "/create",
+        "/tn",
+        RESTART_TASK_NAME,
+        "/tr",
+        &task_cmd,
+        "/sc",
+        "once",
+        "/st",
+        "00:00",
+        "/rl",
+        "highest",
+        "/ru",
+        "SYSTEM",
+        "/f",
+    ])?;
+    run(&["/run", "/tn", RESTART_TASK_NAME])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    /// The recovery block of a real 0.5.10 install's export: what Servy
-    /// stored for `servy-cli install` without `--enableHealth`.
+    /// The shape of a 0.5.10 install's export (`Id` and `Pid` are
+    /// `[JsonIgnore]` in Servy's `ServiceDto`, so an export never has them).
+    /// The install stored the `--recoveryAction` it was given, RestartProcess
+    /// (2), with health off; the host's "recoveryAction: None" comes from
+    /// `StartOptionsParser`, which forces None while health is off.
     const EXPORT_0_5_10: &str = r#"{
-  "Id": 1,
-  "Pid": null,
   "Name": "WsScrcpyWeb",
   "DisplayName": "ws-scrcpy-web",
   "ExecutablePath": "C:\\Program Files\\WsScrcpyWeb\\current\\ws-scrcpy-web-launcher.exe",
   "EnableHealthMonitoring": false,
   "HeartbeatInterval": 30,
   "MaxFailedChecks": 3,
-  "RecoveryAction": 0,
+  "RecoveryAction": 2,
   "MaxRestartAttempts": 3,
   "EnvironmentVariables": "WS_SCRCPY_SERVICE=1",
   "PostStopExecutablePath": "C:\\Windows\\System32\\cmd.exe"
@@ -225,21 +457,21 @@ mod tests {
 
     #[test]
     fn patch_keeps_an_enabled_config_with_other_counts() {
-        let json = EXPORT_0_5_10
-            .replace(
-                r#""EnableHealthMonitoring": false"#,
-                r#""EnableHealthMonitoring": true"#,
-            )
-            .replace(r#""RecoveryAction": 0"#, r#""RecoveryAction": 2"#);
+        let json = EXPORT_0_5_10.replace(
+            r#""EnableHealthMonitoring": false"#,
+            r#""EnableHealthMonitoring": true"#,
+        );
         assert_eq!(patch_exported_config(&json), Ok(None));
     }
 
     #[test]
     fn patch_repairs_health_on_with_recovery_none() {
-        let json = EXPORT_0_5_10.replace(
-            r#""EnableHealthMonitoring": false"#,
-            r#""EnableHealthMonitoring": true"#,
-        );
+        let json = EXPORT_0_5_10
+            .replace(
+                r#""EnableHealthMonitoring": false"#,
+                r#""EnableHealthMonitoring": true"#,
+            )
+            .replace(r#""RecoveryAction": 2"#, r#""RecoveryAction": 0"#);
         let patched = patch_exported_config(&json).unwrap().expect("patched");
         assert_eq!(field(&patched, "RecoveryAction"), Value::from(2));
     }
@@ -346,13 +578,60 @@ mod tests {
     }
 
     #[test]
+    fn startup_restarts_once_for_a_repair_and_never_loops() {
+        assert_eq!(
+            startup_action(&RepairOutcome::Repaired, false),
+            StartupAction::Restart
+        );
+        assert_eq!(
+            startup_action(&RepairOutcome::Repaired, true),
+            StartupAction::GiveUp
+        );
+        for restarted_before in [false, true] {
+            assert_eq!(
+                startup_action(&RepairOutcome::AlreadyEnabled, restarted_before),
+                StartupAction::Nothing
+            );
+            assert_eq!(
+                startup_action(&RepairOutcome::Failed("x".to_string()), restarted_before),
+                StartupAction::Nothing
+            );
+        }
+    }
+
+    #[test]
+    fn restart_bat_restarts_the_service_then_removes_its_task_and_itself() {
+        let bat = restart_bat(
+            r"C:\Program Files\WsScrcpyWeb\current\servy-cli.exe",
+            r"C:\ProgramData\WsScrcpyWeb\logs",
+        );
+        let lines: Vec<&str> = bat.split("\r\n").collect();
+        let restart = lines
+            .iter()
+            .position(|l| {
+                *l == r#""C:\Program Files\WsScrcpyWeb\current\servy-cli.exe" restart --name WsScrcpyWeb -q"#
+            })
+            .expect("servy-cli restart line");
+        let delete_task = lines
+            .iter()
+            .position(|l| l.starts_with(r#"schtasks /delete /tn "WsScrcpyWebServyRecovery" /f"#))
+            .expect("task delete line");
+        let delete_self = lines
+            .iter()
+            .position(|l| *l == r#"del "%~f0""#)
+            .expect("self delete line");
+        assert!(restart < delete_task && delete_task < delete_self);
+        assert!(bat.contains(r"C:\ProgramData\WsScrcpyWeb\logs\servy-recovery.log"));
+    }
+
+    #[test]
     fn repair_removes_the_exported_file_on_every_path() {
         for body in [Some(EXPORT_0_5_10), None, Some("not json")] {
             let dir = tempdir().unwrap();
             let mut fake = FakeServy::new(body);
             let _ = repair_existing_service("WsScrcpyWeb", dir.path(), |a| fake.run(a));
             assert!(
-                !dir.path().join("servy-recovery-export.json").exists(),
+                !dir.path().join("WsScrcpyWeb-recovery-export.json").exists(),
                 "export file left behind for {body:?}"
             );
         }

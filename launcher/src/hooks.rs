@@ -7,9 +7,7 @@
 //
 // Contract:
 //   --veloapp-install   <ver>  -> write skeleton config.json if absent
-//   --veloapp-updated   <ver>  -> if service mode: turn servy crash recovery on
-//                                 (servy_recovery.rs), then let the post-stop
-//                                 bat restart it (legacy: servy-cli restart); else noop
+//   --veloapp-updated   <ver>  -> if service mode: servy-cli restart; else noop
 //   --veloapp-uninstall <ver>  -> if service mode: servy stop + uninstall;
 //                                 always preserve user data (config / deps / logs)
 //
@@ -363,11 +361,6 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
         return 0;
     }
 
-    // Row 4.8: a service registered before 0.5.11 has Servy's crash recovery
-    // off (servy_recovery.rs), and an update never re-registers it. Repair it
-    // here, while the service is stopped for the swap.
-    repair_servy_recovery(install_root, data_root);
-
     // §32 Part 4 — the post-stop bat file at <dataRoot>/post-stop/post-stop.bat
     // (written at install_service time, invoked by Servy via --postStopPath
     // through cmd.exe) IS the recovery mechanism. If the bat is present,
@@ -505,42 +498,6 @@ fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
 
     // Always exit 0 — uninstall must not be blocked by a flaky service teardown.
     0
-}
-
-/// Turn Servy's crash recovery on for an installed service that predates the
-/// `--enableHealth` install flag. Best effort: logs the outcome and never fails
-/// the update. Servy's service host reads the repaired config when it next
-/// starts -- the post-stop bat's start after this update, unless that start
-/// already ran, and then the start after it.
-fn repair_servy_recovery(install_root: &Path, data_root: &Path) {
-    use crate::servy_recovery::{RepairOutcome, repair_existing_service};
-
-    let servy = install_root.join("current").join("servy-cli.exe");
-    if !servy.exists() {
-        log::info(&format!(
-            "hook(updated): servy-cli.exe absent at {servy:?}; recovery repair skipped"
-        ));
-        return;
-    }
-    let outcome = repair_existing_service("WsScrcpyWeb", &data_root.join("control"), |args| {
-        log::info(&format!("hook(updated): invoking {servy:?} {args:?}"));
-        crate::elevated_runner::silent_command(&servy)
-            .args(args)
-            .status()
-            .map(|s| s.success())
-            .map_err(|e| format!("failed to spawn servy-cli: {e}"))
-    });
-    match outcome {
-        RepairOutcome::AlreadyEnabled => {
-            log::info("hook(updated): servy crash recovery already on");
-        }
-        RepairOutcome::Repaired => log::info(
-            "hook(updated): servy crash recovery turned on (health on, RestartProcess); applies from the service's next start",
-        ),
-        RepairOutcome::Failed(e) => log::error(&format!(
-            "hook(updated): could not turn servy crash recovery on: {e}; a crashed server stays down until the service is reinstalled"
-        )),
-    }
 }
 
 /// Locate `current/servy-cli.exe`, run it with the given args, return its
