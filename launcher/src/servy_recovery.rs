@@ -174,11 +174,24 @@ const RESTART_TASK_NAME: &str = "WsScrcpyWebServyRecovery";
 /// repair to the service's next start.
 const SERVER_READY_WAIT: Duration = Duration::from_secs(600);
 
+/// How long the restart waits after the port first answers. The listener is
+/// up before the startup dependency check (index.ts runs it in the background
+/// after listen), and the restart's stop is a hard kill.
+const SERVER_SETTLE: Duration = Duration::from_secs(30);
+
 /// Present once a restart was scheduled to apply a repair, until a start finds
 /// recovery on. A repair that does not stick must not restart the service on
 /// every start.
 fn restart_marker(data_root: &Path) -> PathBuf {
     data_root.join("control").join("servy-recovery-restarted")
+}
+
+/// Written the first time a start finds recovery on; later starts skip the
+/// export entirely. So only a service that predates the install flags pays
+/// for a check after its first start, and a deliberate change in Servy
+/// Manager afterwards is left alone.
+fn checked_stamp(data_root: &Path) -> PathBuf {
+    data_root.join("control").join("servy-recovery-checked")
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -203,18 +216,30 @@ pub(crate) fn startup_action(outcome: &RepairOutcome, restarted_before: bool) ->
 
 /// Pure: the bat the scheduled task runs. It restarts the service through
 /// servy-cli (stop, then start, so the new host reads the repaired config),
-/// then deletes its task and itself.
-pub(crate) fn restart_bat(servy: &str, log_dir: &str) -> String {
+/// then deletes its task and itself. It skips the restart when an update or an
+/// uninstall is under way (its marker in `control_dir`), since the restart's
+/// stop would run the post-stop bat's branch for it; and it follows the
+/// restart with `sc start`, a no-op when the service is running, because
+/// servy-cli leaves it stopped when its start half fails.
+pub(crate) fn restart_bat(servy: &str, log_dir: &str, control_dir: &str) -> String {
     format!(
         "@echo off\r\n\
+         if exist \"{control}\\apply-update-pending\" goto skip\r\n\
+         if exist \"{control}\\uninstall-pending\" goto skip\r\n\
          echo %date% %time% [servy-recovery] restarting {service} to turn crash recovery on >> \"{log}\\servy-recovery.log\"\r\n\
          \"{servy}\" restart --name {service} -q\r\n\
          echo %date% %time% [servy-recovery] restart exit=%errorlevel% >> \"{log}\\servy-recovery.log\"\r\n\
+         sc start {service} >nul 2>&1\r\n\
+         goto done\r\n\
+         :skip\r\n\
+         echo %date% %time% [servy-recovery] an update or uninstall is pending; restart skipped >> \"{log}\\servy-recovery.log\"\r\n\
+         :done\r\n\
          schtasks /delete /tn \"{task}\" /f >nul 2>&1\r\n\
          del \"%~f0\"\r\n",
         service = SERVICE_NAME,
         servy = servy,
         log = log_dir,
+        control = control_dir,
         task = RESTART_TASK_NAME,
     )
 }
@@ -244,7 +269,12 @@ fn startup_repair(install_root: &Path, data_root: &Path) {
         ));
         return;
     }
-    // The exported file is imported back as SYSTEM on every start, so it lives
+    let stamp = checked_stamp(data_root);
+    if stamp.exists() {
+        log::info("servy-recovery: crash recovery was found on at an earlier start; not checked");
+        return;
+    }
+    // The exported file is imported back as SYSTEM, so it lives
     // in Servy's own admin-only directory, not the user-writable data root
     // (and not under %windir%, which Servy's export refuses).
     let scratch = match std::env::var_os("ProgramData") {
@@ -268,6 +298,11 @@ fn startup_repair(install_root: &Path, data_root: &Path) {
         RepairOutcome::AlreadyEnabled => {
             log::info("servy-recovery: crash recovery is on");
             let _ = std::fs::remove_file(&marker);
+            if let Err(e) = std::fs::write(&stamp, b"") {
+                log::warn(&format!(
+                    "servy-recovery: could not write {stamp:?}: {e}; the next start checks again"
+                ));
+            }
         }
         RepairOutcome::Repaired => log::info(
             "servy-recovery: crash recovery was off; turned it on in servy's config (health on, RestartProcess)",
@@ -309,22 +344,30 @@ fn startup_repair(install_root: &Path, data_root: &Path) {
     }
 }
 
-/// Poll the server's port (re-read from config.json each time: the service
-/// may have walked off the configured one) until it accepts a connection.
+/// Poll the server's port until it accepts a connection, then let it settle
+/// for `SERVER_SETTLE` and require it to answer again.
 #[cfg(windows)]
 fn wait_for_server(data_root: &Path, give_up_after: Duration) -> bool {
     let started = std::time::Instant::now();
     while started.elapsed() < give_up_after {
-        let port = common::config::AppConfig::load(data_root)
-            .web_port
-            .unwrap_or(8000);
-        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-        if std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok() {
-            return true;
+        if server_answers(data_root) {
+            std::thread::sleep(SERVER_SETTLE);
+            return server_answers(data_root);
         }
         std::thread::sleep(Duration::from_secs(2));
     }
     false
+}
+
+/// The port is re-read from config.json each time: the service may have walked
+/// off the configured one.
+#[cfg(windows)]
+fn server_answers(data_root: &Path) -> bool {
+    let port = common::config::AppConfig::load(data_root)
+        .web_port
+        .unwrap_or(8000);
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok()
 }
 
 #[cfg(windows)]
@@ -335,12 +378,14 @@ fn schedule_restart(servy: &Path, data_root: &Path) -> Result<(), String> {
     let log_dir = data_root.join("logs");
     let servy_str = servy.to_string_lossy();
     let log_str = log_dir.to_string_lossy();
+    let control_str = control.to_string_lossy();
     let bat = control.join("servy-recovery-restart.bat");
     let bat_str = bat.to_string_lossy().into_owned();
     assert_safe_bat_token(&servy_str, "servy_path")?;
     assert_safe_bat_token(&log_str, "log_dir")?;
+    assert_safe_bat_token(&control_str, "control_dir")?;
     assert_safe_bat_token(&bat_str, "bat_path")?;
-    std::fs::write(&bat, restart_bat(&servy_str, &log_str))
+    std::fs::write(&bat, restart_bat(&servy_str, &log_str, &control_str))
         .map_err(|e| format!("write {bat:?} failed: {e}"))?;
 
     let run = |args: &[&str]| -> Result<(), String> {
@@ -604,14 +649,27 @@ mod tests {
         let bat = restart_bat(
             r"C:\Program Files\WsScrcpyWeb\current\servy-cli.exe",
             r"C:\ProgramData\WsScrcpyWeb\logs",
+            r"C:\ProgramData\WsScrcpyWeb\control",
         );
         let lines: Vec<&str> = bat.split("\r\n").collect();
-        let restart = lines
-            .iter()
-            .position(|l| {
-                *l == r#""C:\Program Files\WsScrcpyWeb\current\servy-cli.exe" restart --name WsScrcpyWeb -q"#
-            })
-            .expect("servy-cli restart line");
+        let at = |line: &str| {
+            lines
+                .iter()
+                .position(|l| *l == line)
+                .unwrap_or_else(|| panic!("line {line:?} in {bat}"))
+        };
+        let skip_update =
+            at(r#"if exist "C:\ProgramData\WsScrcpyWeb\control\apply-update-pending" goto skip"#);
+        let skip_uninstall =
+            at(r#"if exist "C:\ProgramData\WsScrcpyWeb\control\uninstall-pending" goto skip"#);
+        let restart = at(
+            r#""C:\Program Files\WsScrcpyWeb\current\servy-cli.exe" restart --name WsScrcpyWeb -q"#,
+        );
+        let sc_start = at("sc start WsScrcpyWeb >nul 2>&1");
+        let skip_label = at(":skip");
+        let done_label = at(":done");
+        assert!(skip_update < restart && skip_uninstall < restart);
+        assert!(restart < sc_start && sc_start < skip_label && skip_label < done_label);
         let delete_task = lines
             .iter()
             .position(|l| l.starts_with(r#"schtasks /delete /tn "WsScrcpyWebServyRecovery" /f"#))
@@ -620,7 +678,7 @@ mod tests {
             .iter()
             .position(|l| *l == r#"del "%~f0""#)
             .expect("self delete line");
-        assert!(restart < delete_task && delete_task < delete_self);
+        assert!(done_label < delete_task && delete_task < delete_self);
         assert!(bat.contains(r"C:\ProgramData\WsScrcpyWeb\logs\servy-recovery.log"));
     }
 
