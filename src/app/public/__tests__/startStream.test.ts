@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyStreamParams } from '../../../common/StreamUrlParams';
 import { startStream } from '../startStream';
 
 // Mock StreamClientScrcpy — startStream is a facade over it
@@ -90,6 +91,48 @@ describe('startStream', () => {
         startStream(container, 'abc123');
         const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0]!;
         expect(args[3]).toBeUndefined();
+    });
+
+    it('fits to screen by default', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123');
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0]!;
+        expect(args[0].fitToScreen).toBe(true);
+        expect(args[2]).toBe(true);
+    });
+
+    // Issue #981: the config stream dialog's connect button lost fit to screen,
+    // i-frame interval and codec options here, so the viewport replaced the
+    // dialog's max size and the interval stayed at 2.
+    it('passes fitToScreen=false, iFrameInterval, codecOptions and displayId through', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123', {
+            maxSize: 640,
+            fitToScreen: false,
+            iFrameInterval: 10,
+            codecOptions: 'profile:int=1',
+            displayId: 2,
+        });
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0]!;
+        expect(args[0].fitToScreen).toBe(false);
+        expect(args[2]).toBe(false);
+        expect(args[3].iFrameInterval).toBe(10);
+        expect(args[3].codecOptions).toBe('profile:int=1');
+        expect(args[3].displayId).toBe(2);
+
+        // What scrcpy-server is asked for, as StreamClientScrcpy.buildStreamUrl builds it.
+        const url = new URL('ws://localhost:8000/');
+        applyStreamParams(url, { udid: 'abc123' }, args[3]);
+        expect(url.searchParams.get('maxSize')).toBe('640');
+        expect(url.searchParams.get('displayId')).toBe('2');
+        expect(url.searchParams.get('videoCodecOptions')).toBe('i-frame-interval:int=10,profile:int=1');
+    });
+
+    it('builds VideoSettings when only iFrameInterval is given', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123', { iFrameInterval: 5 });
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0]!;
+        expect(args[3]?.iFrameInterval).toBe(5);
     });
 
     it('propagates audio=false through to params.audioEnabled', async () => {

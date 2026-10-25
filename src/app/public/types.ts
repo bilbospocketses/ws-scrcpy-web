@@ -16,6 +16,17 @@ export interface StartStreamOptions {
     bitrate?: number | undefined;
     maxFps?: number | undefined;
     maxSize?: number | undefined;
+    /**
+     * Size the stream to the browser viewport (default true). While it is on,
+     * the viewport replaces `maxSize`; turn it off for `maxSize` to apply.
+     */
+    fitToScreen?: boolean | undefined;
+    /** Seconds between keyframes (default 2). */
+    iFrameInterval?: number | undefined;
+    /** Raw scrcpy `video_codec_options`, e.g. `profile:int=1,level:int=4096`. */
+    codecOptions?: string | undefined;
+    /** Device display to capture (default 0, the main display). */
+    displayId?: number | undefined;
 
     // Features
     audio?: boolean | undefined; // default true

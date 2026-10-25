@@ -542,6 +542,10 @@ export interface StartStreamOptions {
     bitrate?: number;
     maxFps?: number;
     maxSize?: number;
+    fitToScreen?: boolean;    // default true
+    iFrameInterval?: number;  // default 2
+    codecOptions?: string;
+    displayId?: number;       // default 0
 
     // Features
     audio?: boolean;      // default true
@@ -573,7 +577,11 @@ export interface StartStreamOptions {
 | `encoder` | Force a specific encoder name (e.g. `'c2.mtk.hevc.encoder'`). Must be paired with a valid `codec`. |
 | `bitrate` | Target video bitrate in bits per second. |
 | `maxFps` | Frame rate cap. |
-| `maxSize` | Pixel bound on the longest dimension (scrcpy will scale to fit). |
+| `maxSize` | Pixel bound on the longest dimension (scrcpy will scale to fit). Applies only with `fitToScreen: false`. |
+| `fitToScreen` | Size the stream to the browser viewport. Default `true`; while on, the viewport replaces `maxSize`. |
+| `iFrameInterval` | Seconds between keyframes. Default `2`. |
+| `codecOptions` | Raw scrcpy `video_codec_options` (e.g. `profile:int=1`). An `i-frame-interval` entry here wins over `iFrameInterval`. |
+| `displayId` | Device display to capture. Default `0`, the main display. |
 
 **Features**
 

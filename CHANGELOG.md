@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A stream started with "config stream" → connect uses the dialog's fit to screen, max width/height, i-frame interval, codec options and display.** That button opens the stream through `ConnectModal` → `startStream`, which passed only codec, encoder, bitrate, max fps and max size. `startStream` set fit to screen on regardless, so the browser viewport replaced the dialog's max width/height, and it sent an i-frame interval of 2, no codec options and display 0. #551 fixed the stream-URL path; this path was missed. `ConnectModal` now passes all five on, and `startStream`'s options gain `fitToScreen` (default `true`, as before), `iFrameInterval`, `codecOptions` and `displayId` (`src/app/public/startStream.ts`, `src/app/public/types.ts`, `src/app/googDevice/client/ConnectModal.ts`). Reported in #981 (a Fire TV Stick 4K with a software encoder, where stream size is the main lever on latency).
+
 ## [0.5.11] - 2026-10-25
 
 ### Changed

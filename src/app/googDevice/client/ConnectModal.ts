@@ -11,7 +11,7 @@ export class ConnectModal extends Modal {
     constructor(
         params: ParamsStreamScrcpy,
         _player: BasePlayer,
-        _fitToScreen: boolean,
+        fitToScreen: boolean,
         videoSettings: VideoSettings,
         deviceLabel: string,
         deviceKind?: 'phone' | 'tablet' | 'tv',
@@ -35,6 +35,12 @@ export class ConnectModal extends Modal {
             bitrate: videoSettings.bitrate || undefined,
             maxFps: videoSettings.maxFps || undefined,
             maxSize,
+            // The dialog's advanced settings: dropping these let the viewport
+            // override the dialog's max size and pinned the i-frame interval at 2.
+            fitToScreen,
+            iFrameInterval: videoSettings.iFrameInterval || undefined,
+            codecOptions: videoSettings.codecOptions || undefined,
+            displayId: videoSettings.displayId || undefined,
             audio: params.audioEnabled,
             audioSource: params.audioSource,
             audioCodec: params.audioCodec as 'opus' | 'aac' | 'flac' | 'raw' | undefined,
