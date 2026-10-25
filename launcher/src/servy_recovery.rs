@@ -18,13 +18,13 @@
 // background thread: `servy-cli export` the stored config, set the four
 // recovery fields, `servy-cli import` it back. Import without `--install` only
 // writes Servy's database, which is what the service host reads when it
-// starts; it touches no SCM setting. (It does reset the row's run-time columns,
-// `Pid` and the active stdout/stderr paths, which export never carries, so
-// Servy Manager loses them for the running host until the restart below.)
-// That matters because export leaves out
+// starts; it touches no SCM setting. That matters because export leaves out
 // the account and password: an `--install` from the file would re-register the
-// service as LocalSystem. Ours already is LocalSystem, and the SCM's logon
-// account is not touched here either way.
+// service as LocalSystem. The import does reset columns export never carries:
+// the logon columns to LocalSystem's defaults (ours already is LocalSystem, and
+// the SCM's logon account is not touched), and the row's run-time `Pid` and
+// active stdout/stderr paths, which Servy Manager then lacks for the running
+// host until the restart below.
 //
 // The running host read its options before the repair, so a repair is followed
 // by ONE restart of the service (decided together, 2026-10-25), run from a
