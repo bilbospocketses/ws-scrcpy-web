@@ -508,6 +508,10 @@ if (__ssArgs) {
                 serverLog.warn(
                     `exit watchdog (${EXIT_WATCHDOG_MS}ms) fired — ${handles.length} active handles, ${requests.length} active requests`,
                 );
+                // _getActiveHandles() leaves timers out, so a ref'd setInterval
+                // read as "0 active handles" (row 12.10). This lists every kind,
+                // a Timeout included.
+                serverLog.warn(`  resources: ${JSON.stringify(process.getActiveResourcesInfo())}`);
                 handles.forEach((h, i) => {
                     const ctor = (h as { constructor?: { name?: string } }).constructor?.name ?? 'unknown';
                     let detail = '';

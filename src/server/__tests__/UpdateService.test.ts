@@ -3793,6 +3793,24 @@ describe('UpdateService', () => {
         expect(checkFn).toHaveBeenCalledTimes(1);
     });
 
+    it('restartTimer: the default timer does not hold the process open (row 12.10)', async () => {
+        // A ref'd hourly interval kept every installed build's event loop alive
+        // after Ctrl+C or a service stop, so each one waited out index.ts's 10 s
+        // exit watchdog and raced the launcher's SIGKILL. Real setInterval here.
+        const svc = new UpdateService({
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr(),
+        });
+        svc.init();
+        await settled(svc);
+        const timer = (svc as unknown as { timer: NodeJS.Timeout | null }).timer;
+        expect(timer, 'init scheduled the periodic check').not.toBeNull();
+        expect(timer!.hasRef()).toBe(false);
+        svc.restartTimer(0, true); // clears it
+        expect((svc as unknown as { timer: NodeJS.Timeout | null }).timer).toBeNull();
+    });
+
     it('restartTimer with intervalMinutes=0 → no timer scheduled', () => {
         const setFn = vi.fn(() => 'h' as unknown as NodeJS.Timeout);
         const clearFn = vi.fn();
