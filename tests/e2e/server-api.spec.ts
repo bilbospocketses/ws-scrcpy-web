@@ -124,6 +124,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
                 const link = card.locator('a');
                 await expect(link).toHaveText(shiftedURL);
                 await expect(link).toHaveAttribute('href', shiftedURL);
+                // biome-ignore lint/performance/useDomNodeTextContent: the row asserts what the user SEES; textContent would also read hidden nodes.
                 const text = await page.locator('body').innerText();
                 expect(text).not.toContain(String(configured));
                 expect(text).not.toMatch(/shift|busy|in use|port changed/i);
