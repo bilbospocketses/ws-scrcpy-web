@@ -121,6 +121,7 @@ function deviceFileText(remotePath: string): string {
 
 /** The visible terminal buffer. xterm's DOM renderer paints one <div> per row under `.xterm-rows`. */
 async function terminalText(rows: Locator): Promise<string> {
+    // biome-ignore lint/performance/useDomNodeTextContent: innerText breaks a line between the row <div>s; textContent would run the rows together.
     return rows.evaluate((el) => (el as HTMLElement).innerText ?? '');
 }
 
