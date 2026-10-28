@@ -12,14 +12,14 @@
 # spec-owned stacks and the private servers (tests/e2e/README.md).
 name: wssw-lifecycle
 services:
-  ws-scrcpy-web:
-    extends:
-      file: ../../docker-compose.yml
-      service: ws-scrcpy-web
-    container_name: wssw-lifecycle
-    ports: !override
-      - "127.0.0.1:8132:8000"
-    volumes: !override
-      - wsdata-lifecycle:/data
+    ws-scrcpy-web:
+        extends:
+            file: ../../docker-compose.yml
+            service: ws-scrcpy-web
+        container_name: wssw-lifecycle
+        ports: !override
+            - "127.0.0.1:8132:8000"
+        volumes: !override
+            - wsdata-lifecycle:/data
 volumes:
-  wsdata-lifecycle:
+    wsdata-lifecycle:

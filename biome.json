@@ -59,12 +59,6 @@
             "semicolons": "always"
         }
     },
-    "markdown": {
-        "formatter": { "enabled": false }
-    },
-    "yaml": {
-        "formatter": { "enabled": false }
-    },
     "files": {
         "includes": ["src/**", "webpack/**", "tests/**", "playwright.config.ts", "playwright.docker.config.ts"]
     },
