@@ -137,7 +137,7 @@ export class ConfigureScrcpy extends Modal {
             videoCodecs.forEach((codec) => {
                 const opt = document.createElement('option');
                 opt.value = codec;
-                opt.innerText = codec;
+                opt.textContent = codec;
                 this.videoCodecSelect!.appendChild(opt);
             });
         }
@@ -151,7 +151,7 @@ export class ConfigureScrcpy extends Modal {
             audioCodecs.forEach((codec) => {
                 const opt = document.createElement('option');
                 opt.value = codec;
-                opt.innerText = codec;
+                opt.textContent = codec;
                 this.audioCodecSelect!.appendChild(opt);
             });
             // Apply saved codec if it's one of the available options for this device,
@@ -170,7 +170,7 @@ export class ConfigureScrcpy extends Modal {
             const displayId = DisplayInfo.DEFAULT_DISPLAY;
             const optionElement = document.createElement('option');
             optionElement.setAttribute('value', displayId.toString());
-            optionElement.innerText = `ID: ${displayId}; ${result.width}x${result.height}`;
+            optionElement.textContent = `ID: ${displayId}; ${result.width}x${result.height}`;
             this.displayIdSelectElement.appendChild(optionElement);
             this.displayInfo = new DisplayInfo(displayId, new Size(result.width, result.height), 0, 0, 0);
         }
@@ -239,7 +239,7 @@ export class ConfigureScrcpy extends Modal {
         options.forEach((value) => {
             const opt = document.createElement('option');
             opt.value = value;
-            opt.innerText = value;
+            opt.textContent = value;
             this.encoderSelectElement!.appendChild(opt);
         });
         if (previousValue && options.includes(previousValue)) {
@@ -451,7 +451,7 @@ export class ConfigureScrcpy extends Modal {
     ): HTMLInputElement {
         const label = document.createElement('label');
         label.classList.add('label');
-        label.innerText = `${opts.label}:`;
+        label.textContent = `${opts.label}:`;
         label.id = `label_${opts.id}_${this.escapedUdid}`;
         parent.appendChild(label);
         const input = document.createElement('input');
@@ -462,7 +462,7 @@ export class ConfigureScrcpy extends Modal {
             label.setAttribute('title', opts.label);
             input.oninput = () => {
                 const value = range.formatter ? range.formatter(Number.parseInt(input.value, 10)) : input.value;
-                label.innerText = `${opts.label} (${value}):`;
+                label.textContent = `${opts.label} (${value}):`;
             };
             input.setAttribute('type', 'range');
             input.setAttribute('max', range.max.toString());
@@ -561,7 +561,7 @@ export class ConfigureScrcpy extends Modal {
         // Display dropdown
         const displayIdLabel = document.createElement('label');
         displayIdLabel.classList.add('label');
-        displayIdLabel.innerText = 'display:';
+        displayIdLabel.textContent = 'display:';
         controls.appendChild(displayIdLabel);
         if (!this.displayIdSelectElement) {
             this.displayIdSelectElement = document.createElement('select');
@@ -575,7 +575,7 @@ export class ConfigureScrcpy extends Modal {
         // Video codec dropdown
         const videoCodecLabel = document.createElement('label');
         videoCodecLabel.classList.add('label');
-        videoCodecLabel.innerText = 'video codec:';
+        videoCodecLabel.textContent = 'video codec:';
         controls.appendChild(videoCodecLabel);
         const videoCodecSelect = (this.videoCodecSelect = document.createElement('select'));
         videoCodecSelect.classList.add('input');
@@ -586,7 +586,7 @@ export class ConfigureScrcpy extends Modal {
         // Encoder dropdown
         const encoderLabel = document.createElement('label');
         encoderLabel.classList.add('label');
-        encoderLabel.innerText = 'encoder:';
+        encoderLabel.textContent = 'encoder:';
         controls.appendChild(encoderLabel);
         if (!this.encoderSelectElement) {
             this.encoderSelectElement = document.createElement('select');
@@ -606,7 +606,7 @@ export class ConfigureScrcpy extends Modal {
         // Audio codec dropdown
         const audioCodecLabel = document.createElement('label');
         audioCodecLabel.classList.add('label');
-        audioCodecLabel.innerText = 'audio codec:';
+        audioCodecLabel.textContent = 'audio codec:';
         controls.appendChild(audioCodecLabel);
         const audioCodecSelect = (this.audioCodecSelect = document.createElement('select'));
         audioCodecSelect.classList.add('input');
@@ -619,7 +619,7 @@ export class ConfigureScrcpy extends Modal {
         //   mic      — capture the device microphone
         const audioSourceLabel = document.createElement('label');
         audioSourceLabel.classList.add('label');
-        audioSourceLabel.innerText = 'audio source:';
+        audioSourceLabel.textContent = 'audio source:';
         controls.appendChild(audioSourceLabel);
         const audioSourceSelect = (this.audioSourceSelect = document.createElement('select'));
         audioSourceSelect.classList.add('input');
@@ -643,7 +643,7 @@ export class ConfigureScrcpy extends Modal {
         for (const { value, label } of audioSourceOptions) {
             const opt = document.createElement('option');
             opt.value = value;
-            opt.innerText = label;
+            opt.textContent = label;
             audioSourceSelect.appendChild(opt);
         }
         // Apply saved source if present and still valid for this device's SDK,
@@ -659,7 +659,7 @@ export class ConfigureScrcpy extends Modal {
         const captureOk = audioCaptureSupported(this.sdkInt);
         const audioEnabledLabel = document.createElement('label');
         audioEnabledLabel.classList.add('label');
-        audioEnabledLabel.innerText = 'enable audio:';
+        audioEnabledLabel.textContent = 'enable audio:';
         controls.appendChild(audioEnabledLabel);
         const audioEnabledCheckbox = (this.audioEnabledCheckbox = document.createElement('input'));
         audioEnabledCheckbox.type = 'checkbox';
@@ -710,7 +710,7 @@ export class ConfigureScrcpy extends Modal {
 
         // Fit to screen toggle
         const fitLabel = document.createElement('label');
-        fitLabel.innerText = 'fit to screen';
+        fitLabel.textContent = 'fit to screen';
         fitLabel.classList.add('label');
         advancedSection.appendChild(fitLabel);
         const fitCheckbox = (this.fitToScreenCheckbox = document.createElement('input'));
@@ -734,19 +734,19 @@ export class ConfigureScrcpy extends Modal {
 
         const resetSettingsButton = document.createElement('button');
         resetSettingsButton.classList.add('button');
-        resetSettingsButton.innerText = 'reset';
+        resetSettingsButton.textContent = 'reset';
         resetSettingsButton.addEventListener('click', this.resetSettings);
         settingsRow.appendChild(resetSettingsButton);
 
         const loadSettingsButton = document.createElement('button');
         loadSettingsButton.classList.add('button');
-        loadSettingsButton.innerText = 'load';
+        loadSettingsButton.textContent = 'load';
         loadSettingsButton.addEventListener('click', this.loadSettings);
         settingsRow.appendChild(loadSettingsButton);
 
         const saveSettingsButton = (this.saveSettingsButton = document.createElement('button'));
         saveSettingsButton.classList.add('button');
-        saveSettingsButton.innerText = 'save';
+        saveSettingsButton.textContent = 'save';
         saveSettingsButton.addEventListener('click', this.saveSettings);
         settingsRow.appendChild(saveSettingsButton);
 
@@ -762,7 +762,7 @@ export class ConfigureScrcpy extends Modal {
 
             const connectButton = (this.connectButton = document.createElement('button'));
             connectButton.classList.add('connect-btn');
-            connectButton.innerText = 'connect';
+            connectButton.textContent = 'connect';
             connectButton.disabled = true;
             connectButton.addEventListener('click', this.openStream);
             footer.appendChild(connectButton);

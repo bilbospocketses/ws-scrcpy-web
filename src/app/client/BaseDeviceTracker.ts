@@ -71,7 +71,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         a.setAttribute('rel', 'noopener noreferrer');
         a.setAttribute('target', '_blank');
         a.classList.add(`link-${q.action}`);
-        a.innerText = text;
+        a.textContent = text;
         return a;
     }
 
@@ -299,7 +299,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
             nameEl.id = nameBlockId;
             nameEl.className = 'tracker-name';
         }
-        nameEl.innerText = name;
+        nameEl.textContent = name;
         parent.insertBefore(nameEl, parent.firstChild);
     }
 
