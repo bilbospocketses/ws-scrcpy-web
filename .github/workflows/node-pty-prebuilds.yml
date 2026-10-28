@@ -210,13 +210,15 @@ jobs:
       - name: Check the glibc floor (Linux glibc)
         # A pty.node that needs a newer glibc than GLIBC_FLOOR fails the leg here,
         # so publish never replaces the release with a binary older distros
-        # cannot load. The floor is ubuntu-24.04's glibc, the oldest the legs
-        # are built on; a runner move that raises it lands here, not in a
+        # cannot load. The floor is what the binaries needed when it was set
+        # (2.34: RHEL 9, with Ubuntu 22.04 and Debian 12 above it), not the
+        # runner's own glibc, so a node-pty upgrade that needs a newer symbol
+        # fails here as well as a runner move. Either lands here, not in a
         # user's shell as load-failed-after-download.
         if: matrix.libc == 'glibc'
         shell: bash
         env:
-          GLIBC_FLOOR: '2.39'
+          GLIBC_FLOOR: '2.34'
         run: |
           set -euo pipefail
           for f in artifacts/*/pty.node; do

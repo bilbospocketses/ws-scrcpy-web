@@ -1868,8 +1868,13 @@ replaced every asset on `node-pty-prebuilds-v1.1.0`. The Docker image's Debian
 trixie has 2.41, so its shell reported `load-failed-after-download` (smoke 9.5),
 as would any host on an older glibc that downloaded the prebuilt. The step reads
 the newest `GLIBC_` symbol version with `objdump -T` and fails the leg when it is
-above `GLIBC_FLOOR` (2.39, ubuntu-24.04's), so a later runner move stops before
-`publish` replaces anything. Move the floor and the pin together.
+above `GLIBC_FLOOR`, so a later runner move stops before `publish` replaces
+anything. The floor is 2.34, what all four glibc legs needed when it was set, and
+not ubuntu-24.04's own 2.39: a floor at the runner's glibc would also pass a
+node-pty upgrade that starts using a 2.35-2.39 symbol, which RHEL 9 (2.34),
+Ubuntu 22.04 (2.35) and Debian 12 (2.36) cannot load. A leg that goes red on it
+is a decision to make, not a number to bump: raise the floor only when dropping
+those distros is intended.
 
 Note that the darwin rows publish artifacts the resolver cannot yet find:
 `getHostInfo()` still collapses `darwin` to `linux`, so it looks for a
