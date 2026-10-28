@@ -95,8 +95,13 @@ jobs:
           - { os: windows-latest,    arch: x64,   libc: '',    abi_label: prior,   container: '' }
           - { os: windows-11-arm,    arch: arm64, libc: '',    abi_label: current, container: '' }
           - { os: windows-11-arm,    arch: arm64, libc: '',    abi_label: prior,   container: '' }
-          - { os: ubuntu-latest,     arch: x64,   libc: glibc, abi_label: current, container: '' }
-          - { os: ubuntu-latest,     arch: x64,   libc: glibc, abi_label: prior,   container: '' }
+          # glibc legs are pinned to ubuntu-24.04, never ubuntu-latest: a binary
+          # needs the glibc of the runner that built it. ubuntu-latest moved to
+          # 26.04 about 2026-10-20, and the 2026-10-26 build needed GLIBC_2.42,
+          # which the Docker image's Debian trixie (2.41) could not load. The
+          # glibc-floor step below fails a leg that drifts again.
+          - { os: ubuntu-24.04,      arch: x64,   libc: glibc, abi_label: current, container: '' }
+          - { os: ubuntu-24.04,      arch: x64,   libc: glibc, abi_label: prior,   container: '' }
           - { os: ubuntu-24.04-arm,  arch: arm64, libc: glibc, abi_label: current, container: '' }
           - { os: ubuntu-24.04-arm,  arch: arm64, libc: glibc, abi_label: prior,   container: '' }
           - { os: ubuntu-latest,     arch: x64,   libc: musl,  abi_label: current, container: 'alpine' }
@@ -201,6 +206,31 @@ jobs:
           else
             shasum -a 256 "${KEY}.tar.gz" > "${KEY}.tar.gz.sha256"
           fi
+
+      - name: Check the glibc floor (Linux glibc)
+        # A pty.node that needs a newer glibc than GLIBC_FLOOR fails the leg here,
+        # so publish never replaces the release with a binary older distros
+        # cannot load. The floor is ubuntu-24.04's glibc, the oldest the legs
+        # are built on; a runner move that raises it lands here, not in a
+        # user's shell as load-failed-after-download.
+        if: matrix.libc == 'glibc'
+        shell: bash
+        env:
+          GLIBC_FLOOR: '2.39'
+        run: |
+          set -euo pipefail
+          for f in artifacts/*/pty.node; do
+            need=$(objdump -T "$f" | grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)
+            if [ -z "$need" ]; then
+              echo "::error::could not read the glibc versions $f needs"
+              exit 1
+            fi
+            echo "$f needs glibc $need (floor $GLIBC_FLOOR)"
+            if [ "$(printf '%s\n%s\n' "$need" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
+              echo "::error::$f needs glibc $need, newer than the floor $GLIBC_FLOOR"
+              exit 1
+            fi
+          done
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

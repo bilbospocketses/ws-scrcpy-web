@@ -1860,6 +1860,17 @@ regardless: artifact names encode the ABI (`node-abi137`), not the patch, and
 every 24.x is ABI 137. It also self-follows when the LTS pair moves on, so the
 next major needs no edit here.
 
+**The glibc legs run on a pinned `ubuntu-24.04`, never `ubuntu-latest`, and a
+glibc-floor step checks what they built.** A `pty.node` needs the glibc of the
+runner that compiled it. `ubuntu-latest` moved to ubuntu-26.04 about
+2026-10-20; the 2026-10-26 run was the first on it, linked `GLIBC_2.42`, and
+replaced every asset on `node-pty-prebuilds-v1.1.0`. The Docker image's Debian
+trixie has 2.41, so its shell reported `load-failed-after-download` (smoke 9.5),
+as would any host on an older glibc that downloaded the prebuilt. The step reads
+the newest `GLIBC_` symbol version with `objdump -T` and fails the leg when it is
+above `GLIBC_FLOOR` (2.39, ubuntu-24.04's), so a later runner move stops before
+`publish` replaces anything. Move the floor and the pin together.
+
 Note that the darwin rows publish artifacts the resolver cannot yet find:
 `getHostInfo()` still collapses `darwin` to `linux`, so it looks for a
 `-linux-arm64-glibc` key. Widening that is the macOS-support work tracked
