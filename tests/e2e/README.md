@@ -18,7 +18,6 @@ npx playwright test --ui    # pick through it interactively
 the pure functions. These specs exist for the layer underneath that: a real server
 process, real sockets, and the config file it actually writes. Two failures that a
 unit test cannot see, and that this suite would:
-
 - `securityHeaders()` once applied only to the static handler, so the login page and
   its 401 shipped with no framing headers at all. The function was fine; the wiring
   was not.
@@ -28,11 +27,11 @@ unit test cannot see, and that this suite would:
 
 ## Three tiers, one suite
 
-| Tag | Subject | Runs in | Command |
-|---|---|---|---|
-| *(untagged)* | `node dist/index.js`, throwaway data root | `build-and-test` | `npm run test:e2e` |
-| `@docker` | the built image, via docker-compose.yml | `build-and-test` | `npm run test:e2e:docker` |
-| `@device` | the image + an Android emulator | qa-harness only | `npm run test:e2e:device` |
+| Tag          | Subject                                   | Runs in          | Command                   |
+| ------------ | ----------------------------------------- | ---------------- | ------------------------- |
+| _(untagged)_ | `node dist/index.js`, throwaway data root | `build-and-test` | `npm run test:e2e`        |
+| `@docker`    | the built image, via docker-compose.yml   | `build-and-test` | `npm run test:e2e:docker` |
+| `@device`    | the image + an Android emulator           | qa-harness only  | `npm run test:e2e:device` |
 
 Tag by putting the marker in the test **TITLE** — `test('@device streams h264', …)`
 — which is what Playwright's `--grep` matches. A tag in a comment or in a
@@ -65,13 +64,13 @@ it.
 The suite never touches a real install. It runs its own server on **port 8123**
 against a **throwaway data root** under the OS temp directory:
 
-| Variable | Effect |
-|---|---|
-| `PROGRAMDATA` / `DATA_ROOT` | Redirects the whole data root, including `wsscrcpy.db` |
-| `WS_SCRCPY_CONFIG` | Points `config.json` at the throwaway root |
-| `WS_SCRCPY_WEB_PORT` | Binds 8123 instead of the configured port |
-| `LOCALAPPDATA` | Windows only: moves the TLS home into the throwaway root |
-| `WS_SCRCPY_NO_BROWSER=1` | Stops a first-run boot opening the host's browser |
+| Variable                    | Effect                                                   |
+| --------------------------- | -------------------------------------------------------- |
+| `PROGRAMDATA` / `DATA_ROOT` | Redirects the whole data root, including `wsscrcpy.db`   |
+| `WS_SCRCPY_CONFIG`          | Points `config.json` at the throwaway root               |
+| `WS_SCRCPY_WEB_PORT`        | Binds 8123 instead of the configured port                |
+| `LOCALAPPDATA`              | Windows only: moves the TLS home into the throwaway root |
+| `WS_SCRCPY_NO_BROWSER=1`    | Stops a first-run boot opening the host's browser        |
 
 **`WS_SCRCPY_NO_BROWSER` keeps tabs off the developer's desktop.** A server started
 without the launcher that boots with `firstRunComplete: false` opens the host's
@@ -102,7 +101,7 @@ Because of that isolation you can run the suite while your normal instance is up
 8000.
 
 **`WSSW_E2E_PORT` moves the shared server, for two runs on one machine.** Set, it
-replaces 8123 *and* gives the shared server a data root of its own
+replaces 8123 _and_ gives the shared server a data root of its own
 (`ws-scrcpy-web-e2e-<port>` under the OS temp directory, `support/paths.ts`), so two
 runs neither bind the same port nor wipe each other's database. Unset, nothing
 changes. Two runs from one checkout also need an `--output` folder each, because
@@ -120,11 +119,11 @@ below, so two parallel runs must never run the same spec file.
 
 1. **Playwright starts `webServer` before `globalSetup`.** The server throws when
    `WS_SCRCPY_CONFIG` names a missing file, so the seed config is written at
-   *config-load* time in `playwright.config.ts`, guarded to the runner process
+   _config-load_ time in `playwright.config.ts`, guarded to the runner process
    (workers re-import that module and would otherwise re-seed mid-run).
 2. **Three first-run prompts must be suppressed, by three different mechanisms.**
    `WelcomeModal` (gated by `firstRunComplete`) is handled by the seed config.
-   `SystemWideInstallModal` is **Linux-only** and gated by a marker *file*,
+   `SystemWideInstallModal` is **Linux-only** and gated by a marker _file_,
    `<dataRoot>/control/system-install-declined`, so it passes locally on Windows and
    fails only in CI — it is written at seed time. The bookmark reminder card
    (`BookmarkReminder`, in both its port and its service wording) is gated by
@@ -152,7 +151,6 @@ other's prompts and race each other's writes.
 serial group. 18.2 secures the admin account and turns login on, every row until
 18.11 runs against a locked server, and 18.11 returns it to open mode. Four facts
 follow from that, and the config relies on all of them:
-
 1. **The database is wiped before `webServer` starts.** `wipeE2EDatabase()` runs
    in the same runner-only block that seeds `config.json`. Securing the admin
    account renames user 1 and gives it a password hash, and nothing in the API
@@ -197,7 +195,7 @@ captured stdout never carries it.
 
 `spawnServer` is the one way to start such a server, so every one of them gets the
 same isolation block as the shared server. Its options cover what the rows vary:
-`env` adds variables, and a key set to `undefined` is *removed* from the child's
+`env` adds variables, and a key set to `undefined` is _removed_ from the child's
 environment (a runner that exports `WS_SCRCPY_ALLOW_REMOTE_ADMIN` would otherwise make
 every "local" assertion lie); `portOverride: false` drops `WS_SCRCPY_WEB_PORT`,
 because that override is exact and never walks forward, so a row about a busy port
@@ -236,21 +234,21 @@ still the file's own). One run is safe because it runs one test at a time, but t
 parallel `WSSW_E2E_PORT` runs must not split `mkcert-provenance.spec.ts` and
 `local-https.spec.ts` between them:
 
-| Spec | Ports | Data roots | Helpers |
-|---|---|---|---|
-| `server-api.spec.ts` | 8151–8157, 8240–8241 (21.3, http and https) | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports`, `tlsFixtures` |
-| `config-overrides.spec.ts` | 8158–8159 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports`, `tlsFixtures` |
-| `auth-admin.spec.ts` | 8161–8169, 8196, 8199 | `ws-scrcpy-web-e2e-164b-*` | `ownedServer` (`OwnedServer`), `sessions`, `rawHttp` (`lanAddress`) |
-| `settings-dialog.spec.ts` | 8171–8175 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `pendingSettings` |
-| `first-run-and-reminders.spec.ts` | 8176–8179 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `ports` |
-| `embed-trust.spec.ts` | 8181, 8184 (its adb daemon), 8188–8189 (embedding pages) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `rawHttp` (`serveHtml`) |
-| `devices-ui.spec.ts` | 8182, 8183 (its adb daemon), 8187 (never bound) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `fetchCounter` |
-| `local-https-fast.spec.ts` | 8191–8195, 8196 (21.9's saved https port: navigated to, never bound; also `auth-admin.spec.ts`'s 12.8 off-box port, harmless because the tier runs one test at a time), 8230 (https 9430) | `ws-scrcpy-web-e2e-164e-*`, `ws-scrcpy-web-e2e-item24-tls` | `tlsFixtures`, `tlsPanel`, `rawHttp` (`lanAddress`), `secureContext`, `ports` |
-| `mkcert-provenance.spec.ts` | 8197, 8198 (its fixture release server); shared with `local-https.spec.ts`, see the next row | `ws-scrcpy-web-e2e-164b-21-12` | `ownedServer` |
-| `local-https.spec.ts` | 8197, 8198 (https): its real-mkcert row, which runs only with `QA_MKCERT_EXE` set. The same two ports as `mkcert-provenance.spec.ts`; both bind them, which is safe only because the tier runs one test at a time | `ws-scrcpy-web-e2e-real-mkcert` | `privateServer`, `tlsFixtures`, `secureContext` |
-| `dependencies-restart.spec.ts` | 8145, 8146 (its fixture nodejs.org), 8242 (6.8) | `ws-scrcpy-web-e2e-deps-restart*` | `privateServer`, `serverLog`, `ownedServer` |
-| `service-handoff.spec.ts` | 8200–8209 | `ws-scrcpy-web-e2e-i24-handoff-*` | `privateServer`, `ports`, `ownedServer` (`apiContext`, `lockDown`), `serviceStubs` |
-| `lifecycle.spec.ts` | 8128 (12.1), 8129 (12.4), 8133–8139 (12.6, with their port blockers), 8142 (12.10, Linux only), 8243–8244 (12.13, on-box and off-box) | `ws-scrcpy-web-e2e-stop-exit`, `-data-root`, `-no-listener-*`, `-double-signal`, `-restart-server`, `-restart-server-offbox` | `privateServer`, `serverLog`, `ports`, `selfSignedCert`, `rawHttp` (`lanAddress`) |
+| Spec                              | Ports                                                                                                                                                                                                             | Data roots                                                                                                                   | Helpers                                                                            |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `server-api.spec.ts`              | 8151–8157, 8240–8241 (21.3, http and https)                                                                                                                                                                       | `ws-scrcpy-web-e2e-164a-*`                                                                                                   | `rawHttp`, `serverLog`, `ports`, `tlsFixtures`                                     |
+| `config-overrides.spec.ts`        | 8158–8159                                                                                                                                                                                                         | `ws-scrcpy-web-e2e-164a-*`                                                                                                   | `rawHttp`, `serverLog`, `ports`, `tlsFixtures`                                     |
+| `auth-admin.spec.ts`              | 8161–8169, 8196, 8199                                                                                                                                                                                             | `ws-scrcpy-web-e2e-164b-*`                                                                                                   | `ownedServer` (`OwnedServer`), `sessions`, `rawHttp` (`lanAddress`)                |
+| `settings-dialog.spec.ts`         | 8171–8175                                                                                                                                                                                                         | `ws-scrcpy-web-e2e-164c-*`                                                                                                   | `ownedServer`, `settingsUi`, `pendingSettings`                                     |
+| `first-run-and-reminders.spec.ts` | 8176–8179                                                                                                                                                                                                         | `ws-scrcpy-web-e2e-164c-*`                                                                                                   | `ownedServer`, `settingsUi`, `ports`                                               |
+| `embed-trust.spec.ts`             | 8181, 8184 (its adb daemon), 8188–8189 (embedding pages)                                                                                                                                                          | `ws-scrcpy-web-e2e-164d-*`                                                                                                   | `lockedServer`, `rawHttp` (`serveHtml`)                                            |
+| `devices-ui.spec.ts`              | 8182, 8183 (its adb daemon), 8187 (never bound)                                                                                                                                                                   | `ws-scrcpy-web-e2e-164d-*`                                                                                                   | `lockedServer`, `fetchCounter`                                                     |
+| `local-https-fast.spec.ts`        | 8191–8195, 8196 (21.9's saved https port: navigated to, never bound; also `auth-admin.spec.ts`'s 12.8 off-box port, harmless because the tier runs one test at a time), 8230 (https 9430)                         | `ws-scrcpy-web-e2e-164e-*`, `ws-scrcpy-web-e2e-item24-tls`                                                                   | `tlsFixtures`, `tlsPanel`, `rawHttp` (`lanAddress`), `secureContext`, `ports`      |
+| `mkcert-provenance.spec.ts`       | 8197, 8198 (its fixture release server); shared with `local-https.spec.ts`, see the next row                                                                                                                      | `ws-scrcpy-web-e2e-164b-21-12`                                                                                               | `ownedServer`                                                                      |
+| `local-https.spec.ts`             | 8197, 8198 (https): its real-mkcert row, which runs only with `QA_MKCERT_EXE` set. The same two ports as `mkcert-provenance.spec.ts`; both bind them, which is safe only because the tier runs one test at a time | `ws-scrcpy-web-e2e-real-mkcert`                                                                                              | `privateServer`, `tlsFixtures`, `secureContext`                                    |
+| `dependencies-restart.spec.ts`    | 8145, 8146 (its fixture nodejs.org), 8242 (6.8)                                                                                                                                                                   | `ws-scrcpy-web-e2e-deps-restart*`                                                                                            | `privateServer`, `serverLog`, `ownedServer`                                        |
+| `service-handoff.spec.ts`         | 8200–8209                                                                                                                                                                                                         | `ws-scrcpy-web-e2e-i24-handoff-*`                                                                                            | `privateServer`, `ports`, `ownedServer` (`apiContext`, `lockDown`), `serviceStubs` |
+| `lifecycle.spec.ts`               | 8128 (12.1), 8129 (12.4), 8133–8139 (12.6, with their port blockers), 8142 (12.10, Linux only), 8243–8244 (12.13, on-box and off-box)                                                                             | `ws-scrcpy-web-e2e-stop-exit`, `-data-root`, `-no-listener-*`, `-double-signal`, `-restart-server`, `-restart-server-offbox` | `privateServer`, `serverLog`, `ports`, `selfSignedCert`, `rawHttp` (`lanAddress`)  |
 
 8140 is `container-user.spec.ts`'s, 8199 is `auth-admin.spec.ts`'s 18.13 (0.5.5), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180 and
 8190 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
@@ -302,11 +300,11 @@ of the fast tier — not a skip. Before this, every harness run reported the fir
 Three `@docker` stacks exist beside the main one, from `tests/docker/`
 (`support/dockerStack.ts`):
 
-| Row(s) | Stack | Why its own |
-|---|---|---|
-| 1.9 first-run bootstrap banner | `compose.offline.yml`, port 8124 | boots with **no working resolver** (`dns: 127.0.0.1`) so every download fails at once; the spec then writes a real resolver into `/etc/resolv.conf` (root `docker exec`) and clicks Retry. Not `network_mode: none` — such a container can never be connected afterwards — and not an `internal` network, which also disables port publishing so the host could not reach it at all. |
-| 9.5 shell unavailable shows a reason | `compose.no-node-pty.yml`, port 8125 | built from `tests/docker/Dockerfile.no-node-pty`, one `rm` of the node-pty prebuilt layered on the already-built image tag. Not a stage in the main Dockerfile: a trailing stage there would become the default build target and every plain `docker build` would ship it. |
-| 20.6, 20.11, 20.12 container lifecycle; 20.22 (`container-https.spec.ts`) | `compose.lifecycle.yml`, port 8132 | the same image on its own volume, with **no restart policy**, so the specs can stop it, `rm` it and bring it back on the same volume — and assert that a clean exit *stays* exited. The main stack cannot be stopped under the other `@docker` specs. The server log is read off the volume with a throwaway `--entrypoint cat` run of the app image (`readVolumeFile`), because the console echo is TTY-only and `docker logs` never carries the server log. It does carry the entrypoint's own stderr, which is what 20.21 reads (below). |
+| Row(s)                                                                    | Stack                                | Why its own                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.9 first-run bootstrap banner                                            | `compose.offline.yml`, port 8124     | boots with **no working resolver** (`dns: 127.0.0.1`) so every download fails at once; the spec then writes a real resolver into `/etc/resolv.conf` (root `docker exec`) and clicks Retry. Not `network_mode: none` — such a container can never be connected afterwards — and not an `internal` network, which also disables port publishing so the host could not reach it at all.                                                                                                                                                        |
+| 9.5 shell unavailable shows a reason                                      | `compose.no-node-pty.yml`, port 8125 | built from `tests/docker/Dockerfile.no-node-pty`, one `rm` of the node-pty prebuilt layered on the already-built image tag. Not a stage in the main Dockerfile: a trailing stage there would become the default build target and every plain `docker build` would ship it.                                                                                                                                                                                                                                                                  |
+| 20.6, 20.11, 20.12 container lifecycle; 20.22 (`container-https.spec.ts`) | `compose.lifecycle.yml`, port 8132   | the same image on its own volume, with **no restart policy**, so the specs can stop it, `rm` it and bring it back on the same volume — and assert that a clean exit _stays_ exited. The main stack cannot be stopped under the other `@docker` specs. The server log is read off the volume with a throwaway `--entrypoint cat` run of the app image (`readVolumeFile`), because the console echo is TTY-only and `docker logs` never carries the server log. It does carry the entrypoint's own stderr, which is what 20.21 reads (below). |
 
 Row 20.8 (`container-publish.spec.ts`) brings up nothing: it reads Docker Hub's tags
 API, pulls `:beta`, and compares digests.
@@ -346,7 +344,7 @@ row carries one today.
 
 qa-harness does not check this repo out. It mounts `wssw-suite-<version>.tar.gz` — attached to
 every release next to the installers — into a Linux runner and runs the suite against the
-*published image*. `scripts/build-suite-bundle.mjs` builds it from `tests/`, both Playwright
+_published image_. `scripts/build-suite-bundle.mjs` builds it from `tests/`, both Playwright
 configs, `qa-manifest.json`, `tsconfig.json`, `package.json` and `package-lock.json`, and
 nothing else: no `src/`, no `dist/`, no `node_modules/`. `tsconfig.json` is there because
 `tests/e2e/tsconfig.json` extends it; the runner never builds the app.
@@ -384,7 +382,7 @@ locks the screen, reads the process table and counts shells; never the app's own
 the thing under test), connect/disconnect through the app's routes, the device row locator,
 a decoded-frame counter installed before navigation, a canvas signature, and
 `expectFramesArriving()` — which stimulates the screen, because scrcpy encodes only on surface
-updates, and asserts a *picture*, never a connection.
+updates, and asserts a _picture_, never a connection.
 
 Every row is judged on the device: the shell modal by the device's process table, the file modal
 by `ls` and `cat` on the device, sleep/wake by the app's own screen-state route, the stream by

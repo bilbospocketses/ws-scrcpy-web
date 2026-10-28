@@ -20,16 +20,16 @@
 # playwright.docker.config.ts starts for every other `@docker` spec.
 name: wssw-offline
 services:
-  ws-scrcpy-web:
-    extends:
-      file: ../../docker-compose.yml
-      service: ws-scrcpy-web
-    container_name: wssw-offline
-    dns:
-      - 127.0.0.1
-    ports: !override
-      - "127.0.0.1:8124:8000"
-    volumes: !override
-      - wsdata-offline:/data
+    ws-scrcpy-web:
+        extends:
+            file: ../../docker-compose.yml
+            service: ws-scrcpy-web
+        container_name: wssw-offline
+        dns:
+            - 127.0.0.1
+        ports: !override
+            - "127.0.0.1:8124:8000"
+        volumes: !override
+            - wsdata-offline:/data
 volumes:
-  wsdata-offline:
+    wsdata-offline:
