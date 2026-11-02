@@ -61,7 +61,7 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.2",
+    "@biomejs/biome": "^2.6.4",
     "@playwright/test": "^1.64.1",
     "@swc/core": "^1.16.20",
     "@types/node": "^24.19.2",
