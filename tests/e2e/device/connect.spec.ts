@@ -10,6 +10,7 @@ import {
     disconnectIfConnected,
     waitForDeviceRow,
 } from '../support/device';
+import { WAIT_MS } from '../support/timeouts';
 
 /**
  * Smoke rows 7.1, 7.2 and 7.4 — getting a device onto the connected list, and
@@ -49,7 +50,7 @@ async function emulatorIp(host: string): Promise<string> {
     return address;
 }
 
-async function expectRowGone(page: Page, address: string, timeout = 30_000): Promise<void> {
+async function expectRowGone(page: Page, address: string, timeout = WAIT_MS): Promise<void> {
     await expect(
         deviceRow(page, address),
         `the row for ${address} should disappear once adb has dropped it (ControlCenter polls adb every 5 s, so this is not instant)`,
@@ -121,7 +122,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             // to appear during this test for the assertion to mean anything, and
             // waiting for it to vanish first proves the list was tracking it.
             await connectDevice(ctx, address);
-            await waitForDeviceRow(page, address, 30_000);
+            await waitForDeviceRow(page, address);
             await disconnectIfConnected(ctx, address);
             await expectRowGone(page, address);
 
@@ -149,7 +150,6 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             await expect
                 .poll(() => readManualBanner(page), {
                     message: 'the manual-add form should report the result before it auto-hides',
-                    timeout: 10_000,
                 })
                 .not.toBeNull();
             const banner = await readManualBanner(page);
@@ -157,7 +157,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             expect(banner?.className).not.toContain('error');
             expect(banner?.text).toBe(`Connected to ${address}`);
 
-            await waitForDeviceRow(page, address, 30_000);
+            await waitForDeviceRow(page, address);
             const rowLatencyMs = Date.now() - clickedAt;
             test.info().annotations.push({
                 type: '7.1 row latency',
@@ -168,6 +168,11 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             // (POLL_INTERVAL, ControlCenter.ts) and only then fetches the
             // device's properties, so 5 s is the FLOOR, not the ceiling. The
             // bound below still fails a connect that never reaches the list.
+            //
+            // QUIET-BOX-ONLY TIMING ROW: this bound IS the behavior under test
+            // (how soon the UI shows a connected device), so it stays a timing
+            // assertion, and it means something only on a quiet box. On a loaded
+            // one a slow row here is the box, not the app.
             expect(rowLatencyMs, 'the row must appear without a second poll cycle of slack').toBeLessThan(20_000);
         } finally {
             await connectDevice(ctx, address);
@@ -205,7 +210,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
 
         try {
             await connectDevice(ctx, address);
-            await waitForDeviceRow(page, address, 30_000);
+            await waitForDeviceRow(page, address);
             // Detach the alias-addressed connection first. Reconnecting the same
             // emulator by IP while `qa-android:5555` is up would put two
             // transports for one device in front of the tracker's dedupe, and
@@ -255,7 +260,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             const card = page.locator(
                 `#discovery-panel .discovery-card:has(.discovery-card-address[title="${scanAddress}"])`,
             );
-            await expect(card, `a scan of ${ip}/32 must find the emulator's adb port`).toBeVisible({ timeout: 90_000 });
+            await expect(card, `a scan of ${ip}/32 must find the emulator's adb port`).toBeVisible();
 
             // Both data attributes are asserted because they are what the click
             // handler posts — a card that rendered the right text but carried the
@@ -272,7 +277,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             expect(response.status(), 'POST /api/devices/connect from the scan card').toBe(200);
             expect(await response.json()).toMatchObject({ success: true });
 
-            await waitForDeviceRow(page, scanAddress, 30_000);
+            await waitForDeviceRow(page, scanAddress);
         } finally {
             await disconnectIfConnected(ctx, scanAddress);
             await connectDevice(ctx, address);
@@ -292,7 +297,6 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             const probe = await probeWs(page, WS_PROBE_URLS.scan, {
                 sendOnOpen: JSON.stringify({ type: 'scan.start', subnets }),
                 matchType: 'scan.error',
-                timeoutMs: 15_000,
             });
             // "no hang" is half of what this row asks for: a refusal that never
             // answered would surface here as probeWs's timeout, not as a close.
@@ -354,7 +358,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
 
         try {
             await connectDevice(ctx, address);
-            await waitForDeviceRow(page, address, 30_000);
+            await waitForDeviceRow(page, address);
 
             /**
              * One GET /api/devices/labels is issued per table refresh
@@ -473,7 +477,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
 
                 const reconnectedAt = Date.now();
                 await connectDevice(ctx, address);
-                await waitForDeviceRow(page, address, 30_000);
+                await waitForDeviceRow(page, address);
                 const reappearMs = Date.now() - reconnectedAt;
                 test.info().annotations.push({
                     type: '7.4 add/remove latency',
@@ -484,6 +488,12 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
                 // nothing tells the server the device left until that fires — so
                 // the bound here is one poll cycle plus the property fetch, and
                 // the real measurements are annotated above.
+                //
+                // QUIET-BOX-ONLY TIMING ROWS: these two bounds ARE the behavior
+                // under test (how soon the UI reflects a device leaving and
+                // coming back), so they stay timing assertions, and they mean
+                // something only on a quiet box. On a loaded one a slow row here
+                // is the box, not the app.
                 expect(removalMs, 'the row must go within a poll cycle of the disconnect').toBeLessThan(20_000);
                 expect(reappearMs, 'the row must return within a poll cycle of the reconnect').toBeLessThan(20_000);
 

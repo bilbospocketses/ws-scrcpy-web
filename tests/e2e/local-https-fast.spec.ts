@@ -21,6 +21,7 @@ import { probeSecureContext } from './support/secureContext';
 import { selfSignedCert } from './support/selfSignedCert';
 import { countOccurrences, readServerLog } from './support/serverLog';
 import { footerSave, reviewDialog, reviewLines, typeAndLeave } from './support/settingsUi';
+import { WAIT_MS } from './support/timeouts';
 import {
     installFailingMkcert,
     type PlantedCert,
@@ -62,6 +63,7 @@ import { guardTlsWrites, openLocalHttpsPanel, stubTlsState } from './support/tls
 const NO_CERT_404 = { error: 'no certificate has been generated yet' }; // src/server/api/TlsApi.ts
 const CA_RATE_429 = { error: 'too many CA downloads; wait a moment and try again' }; // TlsApi.ts
 const CA_RATE_LIMIT = 10; // TlsApi.ts CA_ROOT_RATE_LIMIT
+const CA_ROOT_RATE_WINDOW_ENV = 'WS_SCRCPY_CA_ROOT_RATE_WINDOW_MS'; // TlsApi.ts
 const CA_DOWNLOADED_LOG = 'CA root downloaded'; // TlsApi.ts
 const KIND_400 = { error: 'kind must be "ip" or "hostname"' }; // TlsApi.ts
 const VALUE_400 = { error: 'value is required' }; // TlsApi.ts
@@ -294,7 +296,7 @@ async function tlsState(api: APIRequestContext): Promise<Record<string, unknown>
  */
 function servedFingerprint(port: number, expectedLeaf: string): Promise<string> {
     return new Promise((resolve, reject) => {
-        const socket = tls.connect({ host: 'localhost', port, ca: expectedLeaf, timeout: 3_000 }, () => {
+        const socket = tls.connect({ host: 'localhost', port, ca: expectedLeaf, timeout: WAIT_MS }, () => {
             const fp = socket.getPeerCertificate().fingerprint256;
             socket.end();
             resolve(fp);
@@ -845,7 +847,9 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
         test.setTimeout(150_000);
         seedPrivateDataRoot(A, { httpsPort: HTTPS_PORT });
         installFailingMkcert(A);
-        handle = spawnServer(A);
+        // A one-hour ca-root rate window (the seam can only lengthen it): 21.10's
+        // eleven requests then share one window however slowly they run.
+        handle = spawnServer(A, { env: { [CA_ROOT_RATE_WINDOW_ENV]: String(60 * 60_000) } });
         await waitForServer(handle, A.baseURL);
         await seedPrivateUser(A.baseURL);
         api = await request.newContext({ baseURL: A.baseURL });
@@ -885,7 +889,7 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
         }
     });
 
-    test('21.10 ca-root: with no certificate 404 spends no rate-limit slot; with one, ten downloads within 60 s each serve the PEM and log, and the 11th is 429', async () => {
+    test('21.10 ca-root: with no certificate 404 spends no rate-limit slot; with one, ten downloads in one window each serve the PEM and log, and the 11th is 429', async () => {
         // More 404s than the limit: had any of them spent a slot, the very
         // first real download below would already be refused.
         for (let i = 0; i < CA_RATE_LIMIT + 2; i++) {
@@ -901,7 +905,6 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
             httpsListener: { bound: false, reason: 'restart-required' },
         });
 
-        const started = Date.now();
         for (let i = 0; i < CA_RATE_LIMIT; i++) {
             const res = await api.get('/api/tls/ca-root');
             expect(res.status(), `download ${i + 1}`).toBe(200);
@@ -909,8 +912,8 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
             expect(res.headers()['content-disposition']).toBe(`attachment; filename="${CA_FILE_NAME}"`);
             expect(await res.text(), `download ${i + 1} is the CA on disk`).toBe(planted.ca.cert);
         }
+        // The server runs a one-hour window (beforeAll), so all eleven share it.
         const eleventh = await api.get('/api/tls/ca-root');
-        expect(Date.now() - started, 'all eleven inside the 60 s window').toBeLessThan(60_000);
         expect(eleventh.status()).toBe(429);
         expect(await eleventh.json()).toEqual(CA_RATE_429);
 
@@ -1149,7 +1152,7 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
         });
         expect(configHttpsPort(), 'config.json after the save').toBe(NEW_HTTPS_PORT);
         expect(existsSync(A.restartMarkerPath), 'the .restart marker').toBe(true);
-        const exit = await withTimeout(handle!.exited, 15_000, () => `waiting for exit 75:\n${handle!.output()}`);
+        const exit = await withTimeout(handle!.exited, WAIT_MS, () => `waiting for exit 75:\n${handle!.output()}`);
         expect(exit.code, handle!.output()).toBe(75);
     });
 });
@@ -1178,9 +1181,7 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
         await mintToken(api);
         const firstFp = new X509Certificate(first.leaf.cert).fingerprint256;
         await expect
-            .poll(() => servedFingerprint(SECURE_PORT, first.leaf.cert).catch((e: Error) => e.message), {
-                timeout: 30_000,
-            })
+            .poll(() => servedFingerprint(SECURE_PORT, first.leaf.cert).catch((e: Error) => e.message))
             .toBe(firstFp);
 
         const bound = await tlsState(api);
@@ -1241,7 +1242,7 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
             await typeAndLeave(p.https, String(NEXT_SECURE_PORT));
             const redirect = page.waitForRequest(
                 (r) => r.isNavigationRequest() && new URL(r.url()).port === String(NEXT_SECURE_PORT),
-                { timeout: 20_000 },
+                { timeout: WAIT_MS },
             );
             await footerSave(settings).click();
             const review = reviewDialog(page);
@@ -1251,7 +1252,7 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
             expect(target.protocol).toBe('https:');
             expect(target.hostname).toBe('localhost');
             expect(target.port).toBe(String(NEXT_SECURE_PORT));
-            const exit = await withTimeout(handle.exited, 15_000, () => `waiting for exit 75:\n${handle.output()}`);
+            const exit = await withTimeout(handle.exited, WAIT_MS, () => `waiting for exit 75:\n${handle.output()}`);
             expect(exit.code, handle.output()).toBe(75);
         } finally {
             await httpsContext.close();
@@ -1295,7 +1296,7 @@ const UNTRUSTED_CHAIN_RE =
 function verifiedHandshake(host: string, port: number, ca?: string): Promise<{ fingerprint: string; san: string }> {
     return new Promise((resolve, reject) => {
         const socket = tls.connect(
-            { host, port, rejectUnauthorized: true, timeout: 5_000, ...(ca === undefined ? {} : { ca }) },
+            { host, port, rejectUnauthorized: true, timeout: WAIT_MS, ...(ca === undefined ? {} : { ca }) },
             () => {
                 const peer = socket.getPeerCertificate();
                 socket.end();
@@ -1329,7 +1330,7 @@ async function restartAsSupervisor(
     const res = await api.post('/api/server/restart');
     expect(res.status(), 'POST /api/server/restart').toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    const exit = await withTimeout(handle.exited, 60_000, () => `HUNG waiting for exit 75:\n${handle.output()}`);
+    const exit = await withTimeout(handle.exited, WAIT_MS, () => `HUNG waiting for exit 75:\n${handle.output()}`);
     expect(exit.code, handle.output()).toBe(75);
     expect(existsSync(paths.restartMarkerPath), 'the .restart marker').toBe(true);
     rmSync(paths.restartMarkerPath, { force: true });
@@ -1402,13 +1403,11 @@ test.describe('local https fast tier: a certificate through restart, off-box use
         // The listener binds during the boot, after the page already answers.
         const leafFp = new X509Certificate(planted.leaf.cert).fingerprint256;
         await expect
-            .poll(
-                () =>
-                    verifiedHandshake('127.0.0.1', HTTPS_PORT, planted.ca.cert).then(
-                        (h) => h.fingerprint,
-                        (e: Error) => e.message,
-                    ),
-                { timeout: 30_000 },
+            .poll(() =>
+                verifiedHandshake('127.0.0.1', HTTPS_PORT, planted.ca.cert).then(
+                    (h) => h.fingerprint,
+                    (e: Error) => e.message,
+                ),
             )
             .toBe(leafFp);
         const bound = await tlsState(api);

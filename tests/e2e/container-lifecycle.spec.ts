@@ -10,6 +10,7 @@ import {
     readVolumeFile,
 } from './support/dockerStack';
 import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke rows 20.6, 20.12 and 20.11 — the container's lifecycle from the
@@ -35,8 +36,8 @@ const VOLUME = 'wssw-lifecycle_wsdata-lifecycle';
 const BASE = 'http://127.0.0.1:8132';
 const SERVER_LOG = '/data/logs/ws-scrcpy-web.log';
 const TEARDOWN_LINE = 'Stopping adb daemon (kill-server)';
-/** Docker's default `docker stop` grace before it SIGKILLs. */
-const STOP_GRACE_MS = 10_000;
+/** The first boot's hydrate downloads: it fails only when nothing changes for this long, never on its total time. */
+const HYDRATE_STALL_MS = 300_000;
 
 interface DependencyInfo {
     name: string;
@@ -44,10 +45,14 @@ interface DependencyInfo {
     status: string;
 }
 
-async function waitForExit(timeoutMs: number): Promise<{ status: string; exitCode: number }> {
-    const deadline = Date.now() + timeoutMs;
+/** The container's state once it has exited; a container still up after WAIT_MS fails as HUNG. */
+async function waitForExit(): Promise<{ status: string; exitCode: number }> {
+    const deadline = Date.now() + WAIT_MS;
     let last = dockerInspectState(CONTAINER);
-    while (last.status !== 'exited' && Date.now() < deadline) {
+    while (last.status !== 'exited') {
+        if (Date.now() > deadline) {
+            throw new Error(`HUNG: ${CONTAINER} still ${last.status} after ${WAIT_MS / 1000} s; waited for it to exit`);
+        }
         await new Promise((r) => setTimeout(r, 500));
         last = dockerInspectState(CONTAINER);
     }
@@ -58,24 +63,32 @@ async function waitForExit(timeoutMs: number): Promise<{ status: string; exitCod
  * Every BOOT-INSTALLED dependency installed, polled: the first boot on a fresh
  * volume hydrates them. The container lists only adb and scrcpy-server: Node.js
  * and mkcert are `hostOnly`, so it does not manage them at all.
+ *
+ * Bounded by NO PROGRESS: the wait gives up only when the dependency list has
+ * not changed for `stallMs`, so a slow download is only slow.
  */
-async function waitForHydrate(baseURL: string, timeoutMs: number): Promise<DependencyInfo[]> {
+async function waitForHydrate(baseURL: string, stallMs: number): Promise<DependencyInfo[]> {
     const ctx = await request.newContext({ baseURL });
     try {
         await mintToken(ctx);
-        const deadline = Date.now() + timeoutMs;
         let deps: DependencyInfo[] = [];
-        while (Date.now() < deadline) {
+        let seen = '';
+        let changedAt = Date.now();
+        for (;;) {
             deps = (await (await ctx.get('/api/dependencies')).json()) as DependencyInfo[];
             const boot = deps.filter((d) =>
                 (CONTAINER_BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name),
             );
             if (boot.length > 0 && boot.every((d) => d.installedVersion !== null)) return deps;
+            const now = deps.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', ');
+            if (now !== seen) {
+                seen = now;
+                changedAt = Date.now();
+            } else if (Date.now() - changedAt > stallMs) {
+                throw new Error(`HUNG: dependencies unchanged for ${stallMs / 1000} s, never hydrated: ${now}`);
+            }
             await new Promise((r) => setTimeout(r, 1_000));
         }
-        throw new Error(
-            `dependencies not hydrated within ${timeoutMs} ms: ${deps.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', ')}`,
-        );
     } finally {
         await ctx.dispose();
     }
@@ -93,17 +106,16 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
         try {
             // Let the first-run hydrate finish first: stopping mid-download would
             // put that abort in the log and blame it on the stop.
-            await waitForHydrate(BASE, 300_000);
+            await waitForHydrate(BASE, HYDRATE_STALL_MS);
             expect(dockerInspectState(CONTAINER).status).toBe('running');
 
-            const { elapsedMs } = dockerStop(CONTAINER);
+            dockerStop(CONTAINER);
             const state = dockerInspectState(CONTAINER);
             // 143 is SIGTERM unhandled, 137 is the SIGKILL after the grace; both
-            // are the failure this row exists to catch.
+            // are the failure this row exists to catch. Exit 0 is the proof that
+            // node finished inside the grace: a SIGKILL cannot exit 0. How long
+            // the stop took is not, since a loaded box stretches it.
             expect(state, 'docker inspect after stop').toEqual({ status: 'exited', exitCode: 0 });
-            expect(elapsedMs, `docker stop took ${elapsedMs} ms; docker SIGKILLs at ${STOP_GRACE_MS} ms`).toBeLessThan(
-                STOP_GRACE_MS,
-            );
             // "the log shows Stopping adb daemon (kill-server)": the server log on
             // the volume, read off it directly — the container is stopped, and the
             // console echo is TTY-only so `docker logs` never carries it.
@@ -118,7 +130,7 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
         composeUpFresh(FILE);
         let ctx: BrowserContext | undefined;
         try {
-            await waitForHydrate(BASE, 300_000);
+            await waitForHydrate(BASE, HYDRATE_STALL_MS);
             // A fresh volume has no dismissed prompts; the bookmark reminder would
             // otherwise sit over the Settings button and swallow the click.
             const seed = await request.newContext({ baseURL: BASE });
@@ -153,7 +165,7 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
             // The whole container exits — node's exit 0 has to propagate through
             // start.sh's restart loop (it restarts only on 75 / the marker) and
             // through tini — and it stays exited: no restart policy, no respawn.
-            const state = await waitForExit(60_000);
+            const state = await waitForExit();
             expect(state, 'container state after stop server & exit').toEqual({ status: 'exited', exitCode: 0 });
             await new Promise((r) => setTimeout(r, 5_000));
             expect(dockerInspectState(CONTAINER).status, 'still exited 5 s later — not restarted').toBe('exited');
@@ -169,7 +181,7 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
         composeUpFresh(FILE);
         let ctx: BrowserContext | undefined;
         try {
-            const before = await waitForHydrate(BASE, 300_000);
+            const before = await waitForHydrate(BASE, HYDRATE_STALL_MS);
             // Something in the SQLite store to survive: the prompt dismissals,
             // which are also what keeps the second boot's home page prompt-free.
             const seed = await request.newContext({ baseURL: BASE });
@@ -191,7 +203,7 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
             composeRecreateKeepingVolume(FILE);
 
             // Dependencies: present at once, from the volume — no hydrate.
-            const after = await waitForHydrate(BASE, 15_000);
+            const after = await waitForHydrate(BASE, WAIT_MS);
             expect(after.map((d) => [d.name, d.installedVersion])).toEqual(
                 before.map((d) => [d.name, d.installedVersion]),
             );

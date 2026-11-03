@@ -31,6 +31,7 @@ import { json, lanAddress, raw } from './support/rawHttp';
 import { selfSignedCert } from './support/selfSignedCert';
 import { countOccurrences, LOG_REL, logOffset, logSince, NOTHING_SERVES, readServerLog } from './support/serverLog';
 import { typeAndLeave } from './support/settingsUi';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke module 12 — lifecycle (rows 12.1, 12.4, 12.6, 12.10's double signal on
@@ -66,7 +67,7 @@ const RESTART_LOGGED = 'restart requested via /api/server/restart';
 /** GET / over HTTPS, trusting exactly the throwaway certificate: verification stays ON. */
 function httpsStatus(port: number, ca: string): Promise<number> {
     return new Promise((resolve, reject) => {
-        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: 2_000 }, (res) => {
+        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: WAIT_MS }, (res) => {
             res.resume();
             resolve(res.statusCode ?? 0);
         });
@@ -140,7 +141,7 @@ test.describe('lifecycle (smoke §12)', () => {
             const closed = new Promise<'closed'>((resolve) => visitor.page.once('close', () => resolve('closed')));
             const notice = visitor.page
                 .getByText('app stopped — you can close this tab.')
-                .waitFor({ timeout: 15_000 })
+                .waitFor({ timeout: WAIT_MS })
                 .then(() => 'notice' as const)
                 .catch(() => 'neither' as const);
             const outcome = await Promise.race([closed, notice]);
@@ -154,7 +155,7 @@ test.describe('lifecycle (smoke §12)', () => {
             // The process tree exits clean: exit 0, not the restart sentinel.
             const exit = await withTimeout(
                 handle.exited,
-                60_000,
+                WAIT_MS,
                 () => `waiting for a clean exit:\n${handle.output()}`,
             );
             expect(exit.code).toBe(0);
@@ -202,9 +203,7 @@ test.describe('lifecycle (smoke §12)', () => {
             // the suite's own root, which proves the override was read rather than
             // the default reached for.
             for (const rel of ['config.json', 'wsscrcpy.db', 'dependencies', LOG_REL]) {
-                await expect
-                    .poll(() => existsSync(path.join(paths.dataRoot, rel)), { message: rel, timeout: 30_000 })
-                    .toBe(true);
+                await expect.poll(() => existsSync(path.join(paths.dataRoot, rel)), { message: rel }).toBe(true);
             }
             const log = readFileSync(path.join(paths.dataRoot, LOG_REL), 'utf8');
             expect(log.length).toBeGreaterThan(0);
@@ -319,7 +318,6 @@ test.describe('lifecycle (smoke §12)', () => {
             await expect
                 .poll(() => httpsStatus(securePort, tls.cert).catch(() => 0), {
                     message: `HTTPS on ${securePort} never served:\n${handle.output()}`,
-                    timeout: 90_000,
                 })
                 .toBe(200);
             const logPath = path.join(paths.dataRoot, LOG_REL);
@@ -330,7 +328,6 @@ test.describe('lifecycle (smoke §12)', () => {
                         readFileSync(logPath, 'utf8').includes(`HTTP listener on port ${plainPort} failed to bind`),
                     {
                         message: 'the refused HTTP listener is logged by name',
-                        timeout: 30_000,
                     },
                 )
                 .toBe(true);
@@ -361,15 +358,19 @@ test.describe('lifecycle (smoke §12)', () => {
             await waitForServer(handle, paths.baseURL);
             const offset = logOffset(paths);
             const pid = handle.child.pid as number;
-            const signalledAt = Date.now();
+            // Whether this stop wrote the backup, judged against the file as it
+            // was before it, never against this process's clock.
+            const bakBefore = existsSync(bak) ? statSync(bak).mtimeMs : null;
             // What a terminal Ctrl+C under the launcher delivers: the terminal's
             // SIGINT to the process group, and the launcher's SIGTERM
-            // (launcher/src/supervisor.rs wait_with_signal) a moment later.
+            // (launcher/src/supervisor.rs wait_with_signal) a moment later. Sent
+            // back to back, with no timer between them: a timer a loaded box
+            // stretches past the server's 2 s repeat window would turn the
+            // repeat into a forced exit.
             process.kill(pid, 'SIGINT');
-            await new Promise((r) => setTimeout(r, 50));
             process.kill(pid, 'SIGTERM');
 
-            const exit = await withTimeout(handle.exited, 60_000, () => `waiting for the exit:\n${handle.output()}`);
+            const exit = await withTimeout(handle.exited, WAIT_MS, () => `waiting for the exit:\n${handle.output()}`);
             expect(exit, handle.output()).toEqual({ code: 0, signal: null });
 
             const log = logSince(paths, offset);
@@ -380,9 +381,9 @@ test.describe('lifecycle (smoke §12)', () => {
             expect(log).toContain('Stopping adb daemon (kill-server)');
             // The backup is the teardown's LAST step, so a fresh one proves the stop ran to the end.
             expect(existsSync(bak), 'the graceful stop writes wsscrcpy.db.bak').toBe(true);
-            expect(statSync(bak).mtimeMs, 'wsscrcpy.db.bak was written by this stop').toBeGreaterThanOrEqual(
-                signalledAt - 2_000,
-            );
+            if (bakBefore !== null) {
+                expect(statSync(bak).mtimeMs, 'wsscrcpy.db.bak was written by this stop').toBeGreaterThan(bakBefore);
+            }
         } finally {
             try {
                 await stopServer(handle);
@@ -496,7 +497,7 @@ test.describe('lifecycle (smoke §12)', () => {
 
             // Exit 75 and the marker: the restart signal every supervisor reads.
             const first = handles[0]!;
-            const exit = await withTimeout(first.exited, 30_000, () => `waiting for exit 75:\n${first.output()}`);
+            const exit = await withTimeout(first.exited, WAIT_MS, () => `waiting for exit 75:\n${first.output()}`);
             expect(exit.code, first.output()).toBe(75);
             expect(readFileSync(paths.restartMarkerPath, 'utf8')).toMatch(/^restart-requested-\d+$/);
             // Neither cancel sent anything: the one request is the confirmed POST,
@@ -511,7 +512,7 @@ test.describe('lifecycle (smoke §12)', () => {
             // below can only be ServerTab's reload, which waits for the NEW process
             // to refuse the page's old token (waitForServerRestart).
             unlinkSync(paths.restartMarkerPath);
-            const reloaded = page.waitForEvent('load', { timeout: 90_000 });
+            const reloaded = page.waitForEvent('load', { timeout: WAIT_MS });
             handles.push(spawnServer(paths, spawnOptions));
             await waitForServer(handles[1]!, paths.baseURL);
             await reloaded;

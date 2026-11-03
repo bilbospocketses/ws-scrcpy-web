@@ -1,6 +1,7 @@
 import { expect, request, test } from '@playwright/test';
 import { mintToken } from './support/auth';
 import { appImage, dockerCli, dockerExecRoot, dockerInspectState, dockerLogs } from './support/dockerStack';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke row 20.21: the image run as another user (`docker run --user`, compose
@@ -35,10 +36,14 @@ function cleanup(): void {
     }
 }
 
-async function waitForExit(timeoutMs: number): Promise<{ status: string; exitCode: number }> {
-    const deadline = Date.now() + timeoutMs;
+/** The container's state once it has exited; a container still up after WAIT_MS fails as HUNG. */
+async function waitForExit(): Promise<{ status: string; exitCode: number }> {
+    const deadline = Date.now() + WAIT_MS;
     let last = dockerInspectState(NAME);
-    while (last.status !== 'exited' && Date.now() < deadline) {
+    while (last.status !== 'exited') {
+        if (Date.now() > deadline) {
+            throw new Error(`HUNG: ${NAME} still ${last.status} after ${WAIT_MS / 1000} s; waited for it to exit`);
+        }
         await new Promise((r) => setTimeout(r, 500));
         last = dockerInspectState(NAME);
     }
@@ -51,7 +56,7 @@ test.describe('the container run as another user (smoke §20.21)', () => {
         cleanup();
         try {
             dockerCli(['run', '-d', '--name', NAME, '--user', UID, '-v', `${VOLUME}:/data`, appImage()]);
-            expect(await waitForExit(60_000), 'container state').toEqual({ status: 'exited', exitCode: 1 });
+            expect(await waitForExit(), 'container state').toEqual({ status: 'exited', exitCode: 1 });
             const logs = dockerLogs(NAME);
             expect(logs).toContain('[entrypoint] /data is not writable by uid 1234:1234.');
             expect(logs).toContain('--entrypoint chown');
