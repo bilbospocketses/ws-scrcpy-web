@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { type APIRequestContext, expect, type Locator, type Page } from '@playwright/test';
+import { WAIT_MS } from './timeouts';
 
 /**
  * Shared ground for the `@device` specs (smoke modules 7, 8, 9 and 19). These run
@@ -38,7 +39,15 @@ export function qaAdb(...args: string[]): string {
         adb,
         'QA_ADB is unset: the runner image bakes the absolute path of its vendored adb; this suite never resolves adb from PATH.',
     ).toBeTruthy();
-    return execFileSync(adb as string, ['-s', deviceAddress(), ...args], { encoding: 'utf8', timeout: 30_000 });
+    try {
+        // A hang guard, never a speed check: a busy emulator answers slowly.
+        return execFileSync(adb as string, ['-s', deviceAddress(), ...args], { encoding: 'utf8', timeout: WAIT_MS });
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+            throw new Error(`HUNG: \`adb ${args.join(' ')}\` did not finish in ${WAIT_MS / 1000} s`, { cause: err });
+        }
+        throw err;
+    }
 }
 
 export async function connectDevice(
@@ -103,7 +112,7 @@ export function deviceRow(page: Page, udid = deviceAddress()): Locator {
     return page.locator(`#devices .device-list .device[data-udid="${udid}"]`);
 }
 
-export async function waitForDeviceRow(page: Page, udid = deviceAddress(), timeout = 10_000): Promise<Locator> {
+export async function waitForDeviceRow(page: Page, udid = deviceAddress(), timeout = WAIT_MS): Promise<Locator> {
     const row = deviceRow(page, udid);
     await expect(row, `device row for ${udid}`).toBeVisible({ timeout });
     return row;
@@ -169,7 +178,7 @@ export function stimulateScreen(): void {
  * black. The beta.75 regression this guards produced a healthy-looking
  * connection with no picture; "connected" is never the assertion here.
  */
-export async function expectFramesArriving(page: Page, timeoutMs = 20_000): Promise<void> {
+export async function expectFramesArriving(page: Page, timeoutMs = WAIT_MS): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     const before = await decodedFrames(page);
     const signatures = new Set<string>();
@@ -185,7 +194,7 @@ export async function expectFramesArriving(page: Page, timeoutMs = 20_000): Prom
     const after = await decodedFrames(page);
     expect(
         false,
-        `no picture arrived within ${timeoutMs} ms: decoded frames ${before} -> ${after}, canvas signatures [${[...signatures].join(', ') || 'none'}]. The frame count must rise, the canvas must change, and it must show something other than black.`,
+        `HUNG: no picture arrived in ${timeoutMs / 1000} s: decoded frames ${before} -> ${after}, canvas signatures [${[...signatures].join(', ') || 'none'}]. The frame count must rise, the canvas must change, and it must show something other than black.`,
     ).toBe(true);
 }
 
@@ -205,7 +214,6 @@ export async function lockDevice(ctx: APIRequestContext): Promise<void> {
     if (state.awake !== false) qaAdb('shell', 'input', 'keyevent', '26');
     await expect
         .poll(async () => (await screenState(ctx)).locked, {
-            timeout: 10_000,
             message: 'the device did not report locked',
         })
         .toBe(true);
@@ -217,7 +225,6 @@ export async function unlockDevice(ctx: APIRequestContext): Promise<void> {
     qaAdb('shell', 'input', 'keyevent', '82');
     await expect
         .poll(async () => (await screenState(ctx)).locked, {
-            timeout: 10_000,
             message: 'the device did not report unlocked',
         })
         .toBe(false);

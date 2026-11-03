@@ -27,6 +27,7 @@ import {
     wsHandshake,
 } from './support/rawHttp';
 import { countOccurrences, LOG_REL, logOffset, logSince, readServerLog } from './support/serverLog';
+import { WAIT_MS } from './support/timeouts';
 import { plantCert, tlsServerPaths } from './support/tlsFixtures';
 
 /**
@@ -189,7 +190,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             await waitForServer(handle, paths.baseURL);
             const failure = `browser open failed for http://localhost:${paths.port} (best-effort):`;
             await expect
-                .poll(() => readServerLog(paths), { message: 'the failed browser open is logged', timeout: 30_000 })
+                .poll(() => readServerLog(paths), { message: 'the failed browser open is logged' })
                 .toContain(failure);
             const line = readServerLog(paths)
                 .split(/\r?\n/)
@@ -538,7 +539,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
                 { ok: true },
                 'POST /api/server/shutdown with no token',
             );
-            const exit = await withTimeout(handle.exited, 60_000, () => `waiting for the stop:\n${handle.output()}`);
+            const exit = await withTimeout(handle.exited, WAIT_MS, () => `waiting for the stop:\n${handle.output()}`);
             expect(exit.code).toBe(0);
             expect(readServerLog(paths)).toContain('shutdown requested via /api/server/shutdown');
         } finally {
@@ -727,7 +728,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
                 { ok: true },
                 'graceful stop',
             );
-            expect((await withTimeout(h.exited, 60_000, () => h.output())).code).toBe(0);
+            expect((await withTimeout(h.exited, WAIT_MS, () => h.output())).code).toBe(0);
             // The stop closes the store, so SQLite has checkpointed the WAL into
             // wsscrcpy.db: the data is in the main file, not the sidecar (finding
             // 10.21 — before the fix this was a 4 KB header beside a ~119 KB -wal,
@@ -900,7 +901,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             const listener = async () =>
                 ((await (await api.get('/api/tls/state')).json()) as { httpsListener?: unknown }).httpsListener;
             await expect
-                .poll(listener, { message: `the https listener on ${securePort} binds`, timeout: 30_000 })
+                .poll(listener, { message: `the https listener on ${securePort} binds` })
                 .toEqual({ bound: true, port: securePort });
 
             /** The serving process, as this machine sees it (whoami answers loopback only). */

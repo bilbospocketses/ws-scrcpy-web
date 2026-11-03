@@ -18,6 +18,7 @@ import {
     withTimeout,
 } from './support/privateServer';
 import { logOffset, logSince, readServerLog } from './support/serverLog';
+import { WAIT_MS } from './support/timeouts';
 
 /** Escape every regex metacharacter, so text becomes a literal pattern. */
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -284,12 +285,12 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
                 'The server is restarting. This page will reload automatically.',
             );
 
-            const exit = await withTimeout(first.exited, 15_000, () => `waiting for exit 75:\n${first.output()}`);
+            const exit = await withTimeout(first.exited, WAIT_MS, () => `waiting for exit 75:\n${first.output()}`);
             expect(exit.code, first.output()).toBe(75);
             expect(fs.readFileSync(paths.restartMarkerPath, 'utf8')).toMatch(/^restart-requested-\d+$/);
 
             // The launcher's part: the same root, the same port, the same environment.
-            const reloaded = page.waitForEvent('load', { timeout: 60_000 });
+            const reloaded = page.waitForEvent('load', { timeout: WAIT_MS });
             handles.push(spawnServer(paths, { env }));
             await waitForServer(handles[1]!, paths.baseURL);
             await reloaded;
@@ -377,7 +378,7 @@ test('6.8 a tab left open across a restart reloads itself onto the new instance 
                 await api.dispose();
             }
             const first = handles[0]!;
-            const exit = await withTimeout(first.exited, 30_000, () => `waiting for exit 75:\n${first.output()}`);
+            const exit = await withTimeout(first.exited, WAIT_MS, () => `waiting for exit 75:\n${first.output()}`);
             expect(exit.code, first.output()).toBe(75);
             expect(fs.readFileSync(paths.restartMarkerPath, 'utf8')).toMatch(/^restart-requested-\d+$/);
 
@@ -386,7 +387,7 @@ test('6.8 a tab left open across a restart reloads itself onto the new instance 
             // reload, once its token probe reads stale (staleTokenReload.ts).
             fs.unlinkSync(paths.restartMarkerPath);
             const offset = logOffset(paths);
-            const reloaded = page.waitForEvent('load', { timeout: 90_000 });
+            const reloaded = page.waitForEvent('load', { timeout: WAIT_MS });
             restarted = true;
             handles.push(spawnServer(paths, { dependenciesPath }));
             await waitForServer(handles[1]!, paths.baseURL);

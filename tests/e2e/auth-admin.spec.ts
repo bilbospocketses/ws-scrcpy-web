@@ -47,6 +47,7 @@ import {
     socketState,
 } from './support/sessions';
 import { footerSave, reviewDialog, reviewLines } from './support/settingsUi';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke rows 12.8, 18.13 and 18.16–18.22 — who may administer the server, and what
@@ -199,7 +200,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
             expect(await granted.json()).toEqual({ ok: true });
             const exit = await withTimeout(
                 server.handle.exited,
-                60_000,
+                WAIT_MS,
                 () => `waiting for the admin's shutdown to exit the server:\n${server.handle.output()}`,
             );
             expect(exit.code).toBe(0);
@@ -263,7 +264,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
             expect(await granted.json()).toEqual({ ok: true });
             const exit = await withTimeout(
                 server.handle.exited,
-                60_000,
+                WAIT_MS,
                 () => `waiting for the admin's shutdown to exit the server:\n${server.handle.output()}`,
             );
             expect(exit.code).toBe(0);
@@ -763,7 +764,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
                 await line.evaluate((el) => el.parentElement?.lastElementChild === el),
                 'the last thing in the tab',
             ).toBe(true);
-            await expect(line).toBeHidden({ timeout: 15_000 });
+            await expect(line).toBeHidden();
             await expect(settings).toBeVisible();
             expect(await page.evaluate(() => (window as unknown as { __e2e_18_20?: string }).__e2e_18_20)).toBe(
                 'armed',

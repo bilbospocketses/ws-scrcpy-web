@@ -20,6 +20,7 @@ import {
 } from './support/privateServer';
 import { json, raw, tokenCookieFor } from './support/rawHttp';
 import { countOccurrences, NOTHING_SERVES, readServerLog } from './support/serverLog';
+import { WAIT_MS } from './support/timeouts';
 import { placeCertificate } from './support/tlsFixtures';
 
 /**
@@ -72,7 +73,7 @@ function configWarnings(paths: PrivateServerPaths, key: string): string[] {
 /** GET / over HTTPS, trusting exactly the throwaway certificate. */
 function httpsStatus(port: number, ca: string): Promise<number> {
     return new Promise((resolve, reject) => {
-        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: 5_000 }, (res) => {
+        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: WAIT_MS }, (res) => {
             res.resume();
             resolve(res.statusCode ?? 0);
         });

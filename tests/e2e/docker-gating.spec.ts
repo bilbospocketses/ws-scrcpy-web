@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { dismissPromptsFor, openSettingsTab, settingsRow } from './support/auth';
 import { dockerCli } from './support/dockerStack';
 import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * The suite container's log, for a failure message. The config starts it with
@@ -12,7 +13,7 @@ import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 function composeServiceLog(): string {
     if (process.env['QA_EXTERNAL_STACK'] === '1') return '(external stack: read its log where it runs)';
     try {
-        return dockerCli(['compose', 'logs', '--no-color', '--tail', '300', 'ws-scrcpy-web'], 30_000);
+        return dockerCli(['compose', 'logs', '--no-color', '--tail', '300', 'ws-scrcpy-web'], WAIT_MS);
     } catch (err) {
         return `(docker compose logs failed: ${(err as Error).message})`;
     }

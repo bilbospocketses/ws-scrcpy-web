@@ -15,6 +15,7 @@ import {
 import { e2eBaseUrl, mintToken } from '../support/auth';
 import { gotoHome } from '../support/consent';
 import { captureConsole, connectDevice, deviceAddress, qaAdb, screenState, waitForDeviceRow } from '../support/device';
+import { WAIT_MS } from '../support/timeouts';
 
 /**
  * Smoke rows 9.1, 9.2 and 9.3 — the two device modals and the device-card
@@ -182,7 +183,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             const opened = await openApp(browser);
             context = opened.context;
             const page = opened.page;
-            const row = await waitForDeviceRow(page, udid, 30_000);
+            const row = await waitForDeviceRow(page, udid);
 
             // The shell link is soft-disabled (aria-disabled, pointer-events off)
             // when /api/capabilities reports node-pty missing. Assert the
@@ -212,7 +213,6 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             const rows = modal.locator('.terminal-container .xterm-rows');
             await expect
                 .poll(async () => (await terminalText(rows)).trim().length, {
-                    timeout: 60_000,
                     message: 'the shell never printed a prompt: the session did not start',
                 })
                 .toBeGreaterThan(0);
@@ -229,7 +229,6 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             // NOT contain the model string — so this can only pass on real output.
             await expect
                 .poll(async () => terminalText(rows), {
-                    timeout: 30_000,
                     message: 'getprop produced no output in the terminal',
                 })
                 .toContain('sdk_gphone64_x86_64');
@@ -243,7 +242,6 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             await page.keyboard.press('Enter');
             await expect
                 .poll(async () => terminalText(rows), {
-                    timeout: 30_000,
                     message: `the shell did not evaluate the expression to ${computed}`,
                 })
                 .toContain(computed);
@@ -277,7 +275,6 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             // The session ended cleanly: no orphaned shell survives on the device.
             await expect
                 .poll(deviceShellCount, {
-                    timeout: 30_000,
                     message: `an adb shell outlived the modal: count did not return to the baseline of ${baseline}`,
                 })
                 .toBe(baseline);
@@ -320,7 +317,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             const opened = await openApp(browser);
             context = opened.context;
             const { page, logs, http } = opened;
-            const row = await waitForDeviceRow(page, udid, 30_000);
+            const row = await waitForDeviceRow(page, udid);
 
             const listLink = row.locator('div.file-listing.desc-block > a.link-list-files');
             await expect(listLink).toHaveCount(1);
@@ -356,16 +353,13 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             // rather than trusting the click. This is also the persistence claim.
             await expect
                 .poll(async () => (await readSettings(api))['iconSize'], {
-                    timeout: 15_000,
                     message: 'the icon-size preference never reached the server',
                 })
                 .toBe(28);
 
             // --- navigate into a directory row
             const dirRow = modal.locator(`.list-files-row[data-path="${WORK_DIR}"]`);
-            await expect(dirRow, `${WORK_DIR} is missing from the listing of ${TMP_DIR}`).toBeVisible({
-                timeout: 30_000,
-            });
+            await expect(dirRow, `${WORK_DIR} is missing from the listing of ${TMP_DIR}`).toBeVisible();
             await expect(dirRow).toHaveClass(/directory/);
             await dirRow.click();
             await expect(modal.locator('.list-files-breadcrumb-current')).toHaveText('qa-9-2');
@@ -377,7 +371,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             // exercises the app's real push path (FilePushHandler → adb sync).
             await modal.locator('input[type="file"]').setInputFiles(localFile);
             const fileRow = modal.locator(`.list-files-row[data-path="${remoteFile}"]`);
-            await expect(fileRow, 'the uploaded file never appeared in the listing').toBeVisible({ timeout: 60_000 });
+            await expect(fileRow, 'the uploaded file never appeared in the listing').toBeVisible();
             await expect(fileRow.locator('.list-files-row-name')).toHaveText(fileName);
             // The listing could be lying; the device is asked directly.
             expect(deviceFileExists(remoteFile), `${remoteFile} is not on the device`).toBe(true);
@@ -387,7 +381,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             // The row actions are visibility:hidden until the row is hovered, so a
             // bare click would wait forever on an invisible button.
             await fileRow.hover();
-            const downloadPromise = page.waitForEvent('download', { timeout: 60_000 });
+            const downloadPromise = page.waitForEvent('download', { timeout: WAIT_MS });
             await fileRow.locator('.list-files-action-download').click();
             const download = await downloadPromise;
             expect(download.suggestedFilename()).toBe(fileName);
@@ -411,11 +405,10 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             });
             await fileRow.hover();
             await fileRow.locator('.list-files-action-delete').click();
-            await expect(fileRow, 'the deleted file is still listed').toHaveCount(0, { timeout: 30_000 });
+            await expect(fileRow, 'the deleted file is still listed').toHaveCount(0);
             expect(confirmSeen, 'the row delete must ask before it deletes').toBe(`confirm: delete "${fileName}"?`);
             await expect
                 .poll(() => deviceFileExists(remoteFile), {
-                    timeout: 30_000,
                     message: `${remoteFile} still exists on the device after the delete`,
                 })
                 .toBe(false);
@@ -447,14 +440,14 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             await page.evaluate(() => localStorage.setItem('ws-scrcpy-web-debug', 'true'));
             const before = logs.all.length;
             await page.reload();
-            const row2 = await waitForDeviceRow(page, udid, 30_000);
+            const row2 = await waitForDeviceRow(page, udid);
             await row2.locator('div.file-listing.desc-block > a.link-list-files').click();
             const modal2 = page.locator('dialog.list-files-modal[open]');
             await expect(modal2).toBeVisible();
             // Breadcrumbs mean initFileBrowser() ran; the picker branch and this
             // one are mutually exclusive, so asserting the picker's absence only
             // after the browser has rendered is a real check rather than a race.
-            await expect(modal2.locator('.list-files-breadcrumbs')).toBeVisible({ timeout: 30_000 });
+            await expect(modal2.locator('.list-files-breadcrumbs')).toBeVisible();
             await expect(
                 modal2.locator('.list-files-size-picker'),
                 'the saved preference must skip the picker',
@@ -500,7 +493,6 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             if ((await screenState(api)).awake === false) qaAdb('shell', 'input', 'keyevent', '224');
             await expect
                 .poll(async () => (await screenState(api)).awake, {
-                    timeout: 30_000,
                     message: 'could not bring the device awake before the row starts',
                 })
                 .toBe(true);
@@ -508,15 +500,13 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             const opened = await openApp(browser);
             context = opened.context;
             const page = opened.page;
-            const row = await waitForDeviceRow(page, udid, 30_000);
+            const row = await waitForDeviceRow(page, udid);
             const btn = row.locator('button.sleep-wake-btn');
 
             // The card renders `state-unknown` ("checking...") until the server's
             // poll has reported a screen state, so this waits for the real reading
             // rather than asserting on the placeholder.
-            await expect(btn, 'the button never left the "checking..." placeholder').toHaveClass(/state-on/, {
-                timeout: 60_000,
-            });
+            await expect(btn, 'the button never left the "checking..." placeholder').toHaveClass(/state-on/);
             await expect(btn).toHaveText('turn off');
             await expect(btn).toHaveAttribute('data-awake', 'true');
             await expect(btn).toBeEnabled();
@@ -526,7 +516,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
 
             // --- sleep
             await btn.click();
-            await expect(btn).toHaveClass(/state-off/, { timeout: 30_000 });
+            await expect(btn).toHaveClass(/state-off/);
             await expect(btn).toHaveText('turn on');
             await expect(btn).toHaveAttribute('data-awake', 'false');
             await expect(btn).toHaveCSS('color', await themeColor(page, '--success-color'));
@@ -534,20 +524,18 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             // screen-state route reads `dumpsys power` on the device.
             await expect
                 .poll(async () => (await screenState(api)).awake, {
-                    timeout: 30_000,
                     message: 'the button showed asleep but the device is still awake',
                 })
                 .toBe(false);
 
             // --- wake again, leaving the device as the suite found it
             await btn.click();
-            await expect(btn).toHaveClass(/state-on/, { timeout: 30_000 });
+            await expect(btn).toHaveClass(/state-on/);
             await expect(btn).toHaveText('turn off');
             await expect(btn).toHaveAttribute('data-awake', 'true');
             await expect(btn).toHaveCSS('color', await themeColor(page, '--danger-color'));
             await expect
                 .poll(async () => (await screenState(api)).awake, {
-                    timeout: 30_000,
                     message: 'the button showed awake but the device is still asleep',
                 })
                 .toBe(true);

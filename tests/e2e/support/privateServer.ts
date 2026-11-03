@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { type APIRequestContext, expect, request, test } from '@playwright/test';
 import { E2E_BASE_URL, E2E_DATA_ROOT, E2E_TEMP_ENV, E2E_TEMP_ROOT, SEED_CONFIG } from './paths';
 import { removeTree, stopProcessesUnder } from './rootProcesses';
+import { WAIT_MS } from './timeouts';
 
 /**
  * Spec-owned servers: every row that stops, restarts, locks or otherwise
@@ -225,10 +226,14 @@ export function withoutInheritedOverrides(
     return { ...cleared, ...env };
 }
 
+/**
+ * `p`, or a HUNG failure naming `label` once `ms` has passed. A hang guard,
+ * never a speed check: pass WAIT_MS or more (support/timeouts.ts).
+ */
 export async function withTimeout<T>(p: Promise<T>, ms: number, label: () => string): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms: ${label()}`)), ms);
+        timer = setTimeout(() => reject(new Error(`HUNG after ${ms / 1000} s: ${label()}`)), ms);
     });
     try {
         return await Promise.race([p, timeout]);
@@ -240,9 +245,9 @@ export async function withTimeout<T>(p: Promise<T>, ms: number, label: () => str
 /**
  * Poll GET / until 200. A document GET answers 200 in BOTH modes (the shell, or
  * the inline login page); /api/config would be 401 in locked mode. Fails with
- * the child's output if it exits first.
+ * the child's output if it exits first, and as HUNG if it never answers.
  */
-export async function waitForServer(handle: ServerHandle, baseURL: string, timeoutMs = 90_000): Promise<void> {
+export async function waitForServer(handle: ServerHandle, baseURL: string, timeoutMs = WAIT_MS): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     let exitedEarly: { code: number | null; signal: NodeJS.Signals | null } | undefined;
     void handle.exited.then((r) => {
@@ -257,14 +262,16 @@ export async function waitForServer(handle: ServerHandle, baseURL: string, timeo
                 );
             }
             try {
-                const res = await ctx.get('/', { timeout: 2_000 });
+                // Not listening yet is refused at once; one attempt is bounded
+                // only against a hang, so a slow first answer is still an answer.
+                const res = await ctx.get('/', { timeout: timeoutMs });
                 if (res.status() === 200) return;
             } catch {
                 // not listening yet
             }
             await new Promise((r) => setTimeout(r, 250));
         }
-        throw new Error(`server on ${baseURL} not ready within ${timeoutMs} ms:\n${handle.output()}`);
+        throw new Error(`HUNG: server on ${baseURL} not ready after ${timeoutMs / 1000} s:\n${handle.output()}`);
     } finally {
         await ctx.dispose();
     }
@@ -308,10 +315,14 @@ export const CONTAINER_BOOT_INSTALLED_DEPENDENCIES = ['adb', 'scrcpy-server'] as
  * locked mode /api/dependencies needs a signed-in admin, so pass that admin's
  * context; it is used as it is.
  *
+ * Bounded by NO PROGRESS, never by total time: it gives up only when what
+ * /api/dependencies reports has not changed for `stallMs`, so a slow download
+ * is only slow, and a stalled one fails as HUNG naming where it stopped.
+ *
  * **Budget it against the caller's `test.setTimeout`, not against nothing.**
  * This waits on a real first-run download (Node + ADB), so on a slow runner it
  * can legitimately take minutes. If the caller's test budget is not comfortably
- * larger than `timeoutMs`, Playwright kills the test before this function can
+ * larger than `stallMs`, Playwright kills the test before this function can
  * throw, and the failure reads `Test timeout of Nms exceeded` with no clue which
  * dependency stalled — the message below never prints. That is exactly what
  * happened on 2026-09-09, when this default and row 10.3's `test.setTimeout`
@@ -321,16 +332,17 @@ export const CONTAINER_BOOT_INSTALLED_DEPENDENCIES = ['adb', 'scrcpy-server'] as
  */
 export async function waitForDependencies(
     target: string | APIRequestContext,
-    timeoutMs = 120_000,
+    stallMs = WAIT_MS,
     names: readonly string[] = BOOT_INSTALLED_DEPENDENCIES,
 ): Promise<void> {
     const owned = typeof target === 'string' ? await request.newContext({ baseURL: target }) : undefined;
     const ctx = owned ?? (target as APIRequestContext);
     try {
         if (owned) expect((await owned.get('/')).status(), 'document GET (mints the token)').toBe(200);
-        const deadline = Date.now() + timeoutMs;
         let last = '';
-        while (Date.now() < deadline) {
+        let seen = '';
+        let changedAt = Date.now();
+        for (;;) {
             const res = await ctx.get('/api/dependencies');
             if (res.status() === 200) {
                 const deps = (await res.json()) as { name: string; installedVersion: string | null; status: string }[];
@@ -351,9 +363,14 @@ export async function waitForDependencies(
             } else {
                 last = `HTTP ${res.status()}`;
             }
+            if (last !== seen) {
+                seen = last;
+                changedAt = Date.now();
+            } else if (Date.now() - changedAt > stallMs) {
+                throw new Error(`HUNG: dependencies unchanged for ${stallMs / 1000} s, not installed: ${last}`);
+            }
             await new Promise((r) => setTimeout(r, 1_000));
         }
-        throw new Error(`dependencies not installed within ${timeoutMs} ms: ${last}`);
     } finally {
         await owned?.dispose();
     }
@@ -388,8 +405,8 @@ let sharedDependenciesReady: Promise<void> | undefined;
  * It waits because the shared server answers `/` before its first-run install
  * is done (index.ts runs it in the background), and a private server booted
  * over a half-installed folder would install into it too, racing the shared
- * server's own install. Once per worker, at most `waitForDependencies`'s
- * default 120 s: budget that into the caller's `test.setTimeout`.
+ * server's own install. Once per worker, until `waitForDependencies` sees no
+ * progress for its default 120 s: budget that into the caller's `test.setTimeout`.
  */
 export async function sharedDependencies(): Promise<string> {
     sharedDependenciesReady ??= waitForDependencies(E2E_BASE_URL).catch((err: unknown) => {
@@ -402,7 +419,7 @@ export async function sharedDependencies(): Promise<string> {
 }
 
 /** No-op once exited; otherwise kill (TerminateProcess on Windows, SIGTERM elsewhere) and await the exit. */
-export async function stopServer(handle: ServerHandle, timeoutMs = 15_000): Promise<void> {
+export async function stopServer(handle: ServerHandle, timeoutMs = WAIT_MS): Promise<void> {
     if (handle.child.exitCode !== null || handle.child.signalCode !== null) return;
     handle.child.kill();
     await withTimeout(handle.exited, timeoutMs, () => `waiting for the private server to exit:\n${handle.output()}`);

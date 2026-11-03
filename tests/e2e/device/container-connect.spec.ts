@@ -31,7 +31,7 @@ test.describe('wireless connect from a container (smoke §20.10)', () => {
 
         try {
             await connectDevice(ctx, address);
-            await waitForDeviceRow(page, address, 30_000);
+            await waitForDeviceRow(page, address);
         } finally {
             await disconnectIfConnected(ctx, address);
         }

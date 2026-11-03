@@ -457,7 +457,7 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                     { timeout: 180_000, message: 'every dependency installed after Retry' },
                 )
                 .toBe(true);
-            await expect(banner).toBeHidden({ timeout: 30_000 });
+            await expect(banner).toBeHidden();
         } catch (err) {
             console.warn(`1.9 container log:\n${dockerLogs(CONTAINER).slice(-3000)}`);
             throw err;

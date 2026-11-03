@@ -1,4 +1,5 @@
 import net from 'node:net';
+import { WAIT_MS } from './timeouts';
 
 /**
  * Ports held and probed the way another program on the host would.
@@ -41,7 +42,8 @@ export function isListening(port: number, host = '127.0.0.1'): Promise<boolean> 
             socket.destroy();
             resolve(v);
         };
-        socket.setTimeout(2_000, () => done(false));
+        // A refused port answers at once; this bounds only a connect that hangs.
+        socket.setTimeout(WAIT_MS, () => done(false));
         socket.once('connect', () => done(true));
         socket.once('error', () => done(false));
     });

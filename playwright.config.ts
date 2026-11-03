@@ -12,6 +12,7 @@ import {
     SEED_CONFIG,
     wipeE2EDatabase,
 } from './tests/e2e/support/paths';
+import { TEST_MS, WAIT_MS } from './tests/e2e/support/timeouts';
 
 /**
  * End-to-end suite.
@@ -108,8 +109,9 @@ export default defineConfig({
 
     forbidOnly: !!process.env['CI'],
     retries: process.env['CI'] ? 1 : 0,
-    timeout: 30_000,
-    expect: { timeout: 10_000 },
+    // Hang guards, never speed checks: tests/e2e/support/timeouts.ts.
+    timeout: TEST_MS,
+    expect: { timeout: WAIT_MS },
     reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : 'list',
 
     use: {

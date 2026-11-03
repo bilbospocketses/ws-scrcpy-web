@@ -13,6 +13,7 @@ import {
     stopQuietly,
     waitForServer,
 } from './privateServer';
+import { WAIT_MS } from './timeouts';
 
 /**
  * A spec-owned server in locked mode, optionally with an adb daemon of its own,
@@ -80,7 +81,7 @@ export function isolatedAdb(server: LockedPrivateServer, ...args: string[]): str
     expect(adb, 'the private server has not installed adb yet').toBeDefined();
     return execFileSync(adb as string, args, {
         encoding: 'utf8',
-        timeout: 30_000,
+        timeout: WAIT_MS,
         env: { ...process.env, ANDROID_ADB_SERVER_PORT: String(server.isolatedAdbPort), ADB_MDNS: '0' },
     });
 }

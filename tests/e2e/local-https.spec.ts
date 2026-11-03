@@ -13,6 +13,7 @@ import {
     waitForServer,
 } from './support/privateServer';
 import { probeSecureContext } from './support/secureContext';
+import { WAIT_MS } from './support/timeouts';
 import { tlsServerPaths } from './support/tlsFixtures';
 
 /**
@@ -352,7 +353,7 @@ const REAL_MKCERT = process.env['QA_MKCERT_EXE'];
 /** A handshake that trusts only `ca`; resolves the leaf's SAN, rejects on any verification failure. */
 function verifiedHandshake(port: number, servername: string, ca: string): Promise<string> {
     return new Promise((resolve, reject) => {
-        const socket = tls.connect({ host: '127.0.0.1', port, servername, ca, timeout: 5_000 }, () => {
+        const socket = tls.connect({ host: '127.0.0.1', port, servername, ca, timeout: WAIT_MS }, () => {
             const san = socket.getPeerCertificate().subjectaltname ?? '';
             socket.end();
             resolve(san);
@@ -407,7 +408,7 @@ test.describe('local https: a one-word hostname certificate from real mkcert', (
             await waitForServer(handle, P.baseURL);
             const ca = readFileSync(P.caPemFile, 'utf8');
             await expect
-                .poll(() => verifiedHandshake(HTTPS_PORT, NAME, ca).catch((e: Error) => e.message), { timeout: 30_000 })
+                .poll(() => verifiedHandshake(HTTPS_PORT, NAME, ca).catch((e: Error) => e.message))
                 .toBe(`DNS:${NAME}`);
             // The check can fail: the same leaf, asked for under another name, is refused.
             await expect(verifiedHandshake(HTTPS_PORT, 'e2eother', ca)).rejects.toThrow(/e2eother|altnames/i);

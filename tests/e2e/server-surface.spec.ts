@@ -14,6 +14,7 @@ import {
     waitForServer,
     withTimeout,
 } from './support/privateServer';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke module 10 — the server surface (rows 10.1, 10.4, 10.5, 10.6).
@@ -140,7 +141,7 @@ test.describe('server surface (smoke §10)', () => {
             } finally {
                 await ctx.dispose();
             }
-            const exit = await withTimeout(handle.exited, 60_000, () => `waiting for the stop:\n${handle.output()}`);
+            const exit = await withTimeout(handle.exited, WAIT_MS, () => `waiting for the stop:\n${handle.output()}`);
             expect(exit.code).toBe(0);
 
             const logPath = path.join(paths.dataRoot, 'logs', 'ws-scrcpy-web.log');
@@ -183,7 +184,7 @@ test.describe('server surface (smoke §10)', () => {
             expect(restart.status()).toBe(200);
             const exit = await withTimeout(
                 (handles[0] as ServerHandle).exited,
-                30_000,
+                WAIT_MS,
                 () => `waiting for the first process to exit:\n${(handles[0] as ServerHandle).output()}`,
             );
             expect(exit.code).toBe(75);
