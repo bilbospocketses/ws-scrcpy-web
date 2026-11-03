@@ -30,10 +30,49 @@ import { verifyDetachedSignature } from '../verifyOpenPgp';
 const ENABLED = process.env['WS_SCRCPY_NETWORK_TESTS'] === '1';
 const UA = { 'User-Agent': 'ws-scrcpy-web release-signature check' };
 
+/**
+ * A download here is bounded by NO PROGRESS, never by its total time: a slow
+ * mirror only makes the test slower. It fails when nothing at all arrives --
+ * no response, or no further body bytes -- for this long.
+ */
+const STALL_MS = 120_000;
+
+/** `fetch` plus its whole body, aborted as HUNG only when it stops making progress. */
+async function fetchWatched(url: string, init: RequestInit = {}): Promise<{ res: Response; body: Uint8Array }> {
+    const controller = new AbortController();
+    let stalled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const progress = (): void => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            stalled = true;
+            controller.abort();
+        }, STALL_MS);
+    };
+    progress();
+    try {
+        const res = await fetch(url, { ...init, headers: UA, signal: controller.signal });
+        const chunks: Uint8Array[] = [];
+        const reader = res.body?.getReader();
+        for (;;) {
+            progress();
+            const chunk = await reader?.read();
+            if (!chunk || chunk.done) break;
+            chunks.push(chunk.value);
+        }
+        return { res, body: new Uint8Array(Buffer.concat(chunks)) };
+    } catch (err) {
+        if (stalled) throw new Error(`HUNG: nothing arrived from ${url} for ${STALL_MS / 1000} s`, { cause: err });
+        throw err;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function bytes(url: string): Promise<Uint8Array> {
-    const res = await fetch(url, { headers: UA });
+    const { res, body } = await fetchWatched(url);
     if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
-    return new Uint8Array(await res.arrayBuffer());
+    return body;
 }
 
 /**
@@ -56,11 +95,15 @@ async function nodeVersionTheUpdaterOffers(): Promise<string> {
     }
 }
 
+// `timeout: 0` turns off vitest's total-time limit for these two: every
+// download in them is bounded by its own stall watch (fetchWatched), and the
+// updater's lookup by the product's own timeouts.
 describe.runIf(ENABLED)('the newest published hash lists verify against the pinned keys', () => {
-    it('Node.js: the release the updater offers, and the newest Current and LTS', { timeout: 90_000 }, async () => {
-        const res = await fetch('https://nodejs.org/dist/index.json', { headers: UA });
-        expect(res.ok).toBe(true);
-        const index = (await res.json()) as { version: string; lts: string | false }[];
+    it('Node.js: the release the updater offers, and the newest Current and LTS', { timeout: 0 }, async () => {
+        const index = JSON.parse(new TextDecoder().decode(await bytes('https://nodejs.org/dist/index.json'))) as {
+            version: string;
+            lts: string | false;
+        }[];
         const current = index[0]!.version;
         const lts = index.find((r) => r.lts !== false)!.version;
         const offered = await nodeVersionTheUpdaterOffers();
@@ -78,9 +121,8 @@ describe.runIf(ENABLED)('the newest published hash lists verify against the pinn
         }
     });
 
-    it('scrcpy: the latest release SHA256SUMS.txt', { timeout: 60_000 }, async () => {
-        const res = await fetch('https://github.com/Genymobile/scrcpy/releases/latest', {
-            headers: UA,
+    it('scrcpy: the latest release SHA256SUMS.txt', { timeout: 0 }, async () => {
+        const { res } = await fetchWatched('https://github.com/Genymobile/scrcpy/releases/latest', {
             redirect: 'manual',
         });
         const location = res.headers.get('location') ?? '';
