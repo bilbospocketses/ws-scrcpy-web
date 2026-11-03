@@ -183,6 +183,7 @@ describe('watchForStuckClosing (real ws socket)', () => {
         expect(onStuck).toHaveBeenCalledWith({ closingForMs: graceMs, bufferedAmount: expect.any(Number) });
         expect(onStuck.mock.calls[0]?.[0].bufferedAmount).toBeGreaterThan(0);
 
+        await until("the socket's 'close' after terminate()", () => closeCode !== undefined);
         expect(await closed).toBe(1006);
     });
 });

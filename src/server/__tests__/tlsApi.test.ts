@@ -1000,6 +1000,13 @@ describe('TlsApi', () => {
                     expect(await eleventhAfter(59_000), value).toBe(429);
                 }
             });
+
+            it(`${CA_ROOT_RATE_WINDOW_ENV}=Infinity is ignored: the default 60 s window still applies`, async () => {
+                // Not finite, so not a window at all: honoring it would refuse
+                // every download after the tenth for the life of the process.
+                vi.stubEnv(CA_ROOT_RATE_WINDOW_ENV, 'Infinity');
+                expect(await eleventhAfter(61_000)).toBe(200);
+            });
         });
     });
 

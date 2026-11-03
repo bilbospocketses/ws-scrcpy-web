@@ -576,13 +576,17 @@ describe('NetworkScanner — cancel drain', () => {
 
 describe('NetworkScanner — spectator snapshot', () => {
     it('sends scan.started and last scan.progress to mid-scan spectator', async () => {
-        // The probes are held open until the spectator has attached, so it
-        // attaches mid-scan however slowly the box runs.
+        // The first two probes answer at once, so one scan.progress (checked: 2)
+        // has gone out; every later probe is held open until the spectator has
+        // attached, so it attaches mid-scan however slowly the box runs.
         let inFlight = 0;
+        let probes = 0;
         const probesHeld = deferred();
         const scanner = new NetworkScanner(
             baseDeps({
                 adbHandshakeProbe: async () => {
+                    probes++;
+                    if (probes <= 2) return { isAdb: false };
                     inFlight++;
                     await probesHeld.promise;
                     inFlight--;
@@ -592,16 +596,21 @@ describe('NetworkScanner — spectator snapshot', () => {
                 progressInterval: 2,
             }),
         );
-        const { ws: ws1 } = makeWs();
+        const { ws: ws1, messages: ownerMessages } = makeWs();
         const hosts = Array.from({ length: 20 }, (_, i) => `10.0.0.${i + 1}`);
         const scanPromise = scanner.start([makeSubnet(hosts)], ws1, 0);
 
         await waitFor(() => expect(inFlight).toBe(2));
+        expect(ownerMessages.filter((m) => m.type === 'scan.progress')).toEqual([
+            { type: 'scan.progress', checked: 2, total: 20, foundSoFar: 0 },
+        ]);
 
         const { ws: ws2, messages: spectatorMessages } = makeWs();
         scanner.attachSpectator(ws2, 0);
 
-        expect(spectatorMessages.some((m) => m.type === 'scan.started')).toBe(true);
+        // The snapshot: what the scan has said so far, replayed to the newcomer.
+        expect(spectatorMessages.map((m) => m.type)).toEqual(['scan.started', 'scan.progress']);
+        expect(spectatorMessages[1]).toEqual({ type: 'scan.progress', checked: 2, total: 20, foundSoFar: 0 });
         probesHeld.resolve();
         await scanPromise;
     });
