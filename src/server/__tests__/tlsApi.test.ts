@@ -994,10 +994,10 @@ describe('TlsApi', () => {
                 expect(await eleventhAfter(61_000)).toBe(429);
             });
 
-            it(`${CA_ROOT_RATE_WINDOW_ENV} below the default, or not a number, is ignored`, async () => {
+            it(`${CA_ROOT_RATE_WINDOW_ENV} below the default, or not a number, is ignored: the limit still holds`, async () => {
                 for (const value of ['1000', '0', '-5', 'soon']) {
                     vi.stubEnv(CA_ROOT_RATE_WINDOW_ENV, value);
-                    expect(await eleventhAfter(61_000), value).toBe(200);
+                    expect(await eleventhAfter(59_000), value).toBe(429);
                 }
             });
         });
