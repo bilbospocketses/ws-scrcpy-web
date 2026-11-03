@@ -71,6 +71,7 @@ vi.mock('../../../player/webCodecsConfig', async (importOriginal) => ({
     probeDecodeSupport: async () => true,
 }));
 
+import { waitFor } from '../../../../testSupport/waitFor';
 import type { ParamsStreamScrcpy } from '../../../../types/ParamsStreamScrcpy';
 import { settingsService } from '../../../client/SettingsService';
 import type { PlayerClass } from '../../../player/BasePlayer';
@@ -126,7 +127,7 @@ const params: ParamsStreamScrcpy = {
 
 /** StreamClientScrcpy.startStream is async; the socket exists once it settles. */
 async function socketOpened(count = 1) {
-    await vi.waitFor(() => expect(h.demuxers.length).toBe(count));
+    await waitFor(() => expect(h.demuxers.length).toBe(count));
     return h.demuxers[count - 1]!;
 }
 

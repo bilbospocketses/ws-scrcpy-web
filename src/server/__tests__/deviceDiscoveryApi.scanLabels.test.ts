@@ -21,6 +21,7 @@ const { resolveMac, dnsLookup } = vi.hoisted(() => ({
 vi.mock('../network/MacResolver', () => ({ resolveMac }));
 vi.mock('dns/promises', () => ({ lookup: dnsLookup }));
 
+import { waitFor } from '../../testSupport/waitFor';
 import { AdbClient } from '../AdbClient';
 import { DeviceDiscoveryApi } from '../api/DeviceDiscoveryApi';
 import { _resetPendingLabelsForTest } from '../api/pendingLabels';
@@ -103,7 +104,7 @@ async function sight(udid: string, serial: string): Promise<Device> {
         .spyOn(AdbClient.prototype, 'getProperties')
         .mockResolvedValue({ 'ro.serialno': serial, 'ro.product.model': 'Pixel 7' });
     const device = new Device(udid, 'device');
-    await vi.waitFor(() => expect(props).toHaveBeenCalledWith(udid));
+    await waitFor(() => expect(props).toHaveBeenCalledWith(udid));
     await new Promise((r) => setImmediate(r));
     return device;
 }
@@ -228,7 +229,7 @@ describe('the device tracker files what it sees under the real serial (M11)', ()
         });
 
         await sight('qa-android:5555', SERIAL);
-        await vi.waitFor(() => expect(Config.getInstance().db.devices.getDevice(SERIAL)?.address).toBe(HIT));
+        await waitFor(() => expect(Config.getInstance().db.devices.getDevice(SERIAL)?.address).toBe(HIT));
 
         expect(rows()).toEqual([SERIAL]);
     });
@@ -240,7 +241,7 @@ describe('the device tracker files what it sees under the real serial (M11)', ()
         dnsLookup.mockImplementation(() => new Promise((r) => (answer = r)));
 
         const device = await sight('qa-android:5555', SERIAL);
-        await vi.waitFor(() => expect(dnsLookup).toHaveBeenCalled());
+        await waitFor(() => expect(dnsLookup).toHaveBeenCalled());
         device.setState('disconnected');
         answer({ address: '10.0.0.5', family: 4 });
         await new Promise((r) => setImmediate(r));
@@ -255,14 +256,14 @@ describe('the device tracker files what it sees under the real serial (M11)', ()
         dnsLookup.mockImplementation(() => new Promise((r) => answers.push(r)));
 
         const device = await sight('qa-android:5555', SERIAL);
-        await vi.waitFor(() => expect(answers).toHaveLength(1));
+        await waitFor(() => expect(answers).toHaveLength(1));
         device.setState('offline');
         const props = vi
             .spyOn(AdbClient.prototype, 'getProperties')
             .mockResolvedValue({ 'ro.serialno': 'OTHER0SERIAL', 'ro.product.model': 'Pixel 8' });
         props.mockClear();
         device.setState('device');
-        await vi.waitFor(() => expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL'));
+        await waitFor(() => expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL'));
         answers[0]!({ address: '10.0.0.5', family: 4 });
         await new Promise((r) => setImmediate(r));
 

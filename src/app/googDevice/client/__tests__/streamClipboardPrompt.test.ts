@@ -52,6 +52,7 @@ vi.mock('../../../player/webCodecsConfig', async (importOriginal) => ({
     probeDecodeSupport: async () => true,
 }));
 
+import { waitFor } from '../../../../testSupport/waitFor';
 import type { ParamsStreamScrcpy } from '../../../../types/ParamsStreamScrcpy';
 import { settingsService } from '../../../client/SettingsService';
 import type { PlayerClass } from '../../../player/BasePlayer';
@@ -122,7 +123,7 @@ async function startedStreamWithStop(): Promise<{ container: HTMLElement; stop: 
     const container = document.createElement('div');
     document.body.appendChild(container);
     const { stop } = StreamClientScrcpy.start(params, undefined, true, videoSettings(), container);
-    await vi.waitFor(() => expect(h.deviceMessage).toBeDefined());
+    await waitFor(() => expect(h.deviceMessage).toBeDefined());
     return { container, stop };
 }
 
