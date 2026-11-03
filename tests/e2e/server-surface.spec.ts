@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import path from 'node:path';
 import { type Browser, type BrowserContext, expect, request, test } from '@playwright/test';
 import { APP_TITLE, e2eBaseUrl, fetchFromPage, mintToken, newVisitorContext, tokenCookie } from './support/auth';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { E2E_PORT } from './support/paths';
 import {
     privateServerPaths,
@@ -85,9 +86,10 @@ test.describe('server surface (smoke §10)', () => {
     });
 
     test('10.3 the log is clean: the teardown lines are present on stop and no error line appears that is not on the allow-list', async () => {
-        // MUST stay comfortably larger than the `waitForDependencies` budget
-        // below. Both were 180_000 until 2026-09-09, so the inner wait could
-        // consume the entire outer budget: Playwright killed the test first and
+        // No total time limit: the `waitForDependencies` below is bounded by no
+        // progress, and a test budget would cut it off mid-download. Until
+        // 2026-09-09 the two were both 180_000, so the inner wait could consume
+        // the entire outer budget: Playwright killed the test first and
         // reported a bare "Test timeout of 180000ms exceeded", while the
         // helper's own message — which names the dependency that stalled — was
         // unreachable by construction. A slow-but-successful install and a real
@@ -97,7 +99,7 @@ test.describe('server surface (smoke §10)', () => {
         // that overlapped one of the failures — it is runner speed, and this
         // test downloads Node + ADB for a genuine first run (seedPrivateDataRoot
         // wipes ProgramData and seeds config only, deliberately).
-        test.setTimeout(360_000);
+        noTotalTimeLimit();
         // Made falsifiable: (a) the teardown line must be present after a stop;
         // (b) zero lines matching the error pattern, except an allow-list where
         // every entry justifies itself in a comment. An allow-list that grows
@@ -119,10 +121,8 @@ test.describe('server surface (smoke §10)', () => {
             await waitForServer(handle, paths.baseURL);
             // Let the first-run install finish: stopping mid-download would put
             // that abort in the log and blame it on the stop.
-            // Explicit, and deliberately well inside test.setTimeout above: the
-            // budget relationship is the whole bug this call had, so it is
-            // stated here rather than inherited from a default that happened to
-            // equal the test's own. On expiry the helper throws with the
+            // Bounded by no progress only, and the test above sets no total
+            // limit, so on a stall the helper throws HUNG with the
             // per-dependency state (`node=..., adb=...`), which is the line that
             // actually tells you what stalled.
             await waitForDependencies(paths.baseURL, 240_000);
@@ -161,7 +161,6 @@ test.describe('server surface (smoke §10)', () => {
     });
 
     test('10.4 a restart rotates the per-instance token: the open tab must reload, and a cookie-less caller is refused', async () => {
-        test.setTimeout(240_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-token-restart', 8126);
         seedPrivateDataRoot(paths);
         const handles: ServerHandle[] = [];
@@ -303,7 +302,6 @@ test.describe('server surface (smoke §10)', () => {
     });
 
     test('10.6 allowedHosts: a listed Host is served, an unlisted domain is refused, and unset means localhost and IP literals only', async () => {
-        test.setTimeout(120_000);
         // The negative first, on the shared server whose config lists nothing.
         const shared = await rawGet(E2E_PORT, '/', { host: 'devices.example.com' });
         expect(shared.status).toBe(403);

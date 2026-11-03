@@ -1,6 +1,7 @@
 import { expect, request, test } from '@playwright/test';
 import { mintToken } from './support/auth';
 import { appImage, dockerCli, dockerExecRoot, dockerInspectState, dockerLogs } from './support/dockerStack';
+import { containerDownloadProgress, noTotalTimeLimit, waitForDownloads } from './support/downloadWait';
 import { WAIT_MS } from './support/timeouts';
 
 /**
@@ -52,7 +53,6 @@ async function waitForExit(): Promise<{ status: string; exitCode: number }> {
 
 test.describe('the container run as another user (smoke §20.21)', () => {
     test('@docker @docker-host 20.21 `--user` on a volume that uid does not own stops at once and names the fix', async () => {
-        test.setTimeout(180_000);
         cleanup();
         try {
             dockerCli(['run', '-d', '--name', NAME, '--user', UID, '-v', `${VOLUME}:/data`, appImage()]);
@@ -67,7 +67,7 @@ test.describe('the container run as another user (smoke §20.21)', () => {
     });
 
     test('@docker @docker-host 20.21 `--user` on a volume that uid owns: it boots, HOME is on the volume, and adb works', async () => {
-        test.setTimeout(480_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         cleanup();
         const ctx = await request.newContext({ baseURL: BASE });
         try {
@@ -113,20 +113,27 @@ test.describe('the container run as another user (smoke §20.21)', () => {
             // included, and aborts when it cannot. So a real installed version
             // is only possible with a writable HOME; before the fix it stayed
             // null on this exact setup.
+            // Bounded by no progress only (support/downloadWait.ts): the
+            // dependency list and the bytes under the container's /tmp and /data.
             let adbVersion: string | null = null;
-            await expect
-                .poll(
-                    async () => {
-                        const deps = (await (await ctx.get('/api/dependencies')).json()) as {
-                            name: string;
-                            installedVersion: string | null;
-                        }[];
-                        adbVersion = deps.find((d) => d.name === 'adb')?.installedVersion ?? null;
-                        return adbVersion;
-                    },
-                    { timeout: 300_000, message: 'adb installed and answering --version' },
-                )
-                .toMatch(/^\d+\.\d+\.\d+$/);
+            await waitForDownloads({
+                what: 'adb installed and answering --version',
+                progress: containerDownloadProgress(NAME),
+                read: async () => {
+                    const deps = (await (await ctx.get('/api/dependencies')).json()) as {
+                        name: string;
+                        installedVersion: string | null;
+                        status: string;
+                    }[];
+                    const adb = deps.find((d) => d.name === 'adb');
+                    adbVersion = adb?.installedVersion ?? null;
+                    return {
+                        done: /^\d+\.\d+\.\d+$/.test(adbVersion ?? ''),
+                        summary: `adb=${adbVersion ?? adb?.status ?? 'not listed'}`,
+                    };
+                },
+            });
+            expect(adbVersion, 'adb installed and answering --version').toMatch(/^\d+\.\d+\.\d+$/);
 
             expect(dockerExecRoot(NAME, 'stat -c %u /proc/1').trim(), 'PID 1 runs as the requested uid').toBe('1234');
             expect(dockerExecRoot(NAME, 'test -d /data/home/.android && echo present').trim()).toBe('present');

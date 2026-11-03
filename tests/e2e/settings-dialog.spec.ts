@@ -92,7 +92,6 @@ test.describe('settings dialog: the staged save (smoke 13.4-13.6, 13.9)', () => 
     let context: BrowserContext | undefined;
 
     test.beforeAll(async () => {
-        test.setTimeout(150_000);
         server = await startPrivateServer('staged-save', 8171);
         await dismissPrivatePrompts(server.paths.baseURL);
         api = await apiContext(server.paths.baseURL);
@@ -559,7 +558,6 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
     test('13.8 the batch is journalled, the web port applies last, an unfinished batch is abandoned at boot, and bad ids and values are refused', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
         const name = 'batch-1308';
         let server: PrivateServer | undefined;
         let context: BrowserContext | undefined;
@@ -728,7 +726,6 @@ test.describe('settings dialog: the port hand-off keeps the host (smoke 13.11)',
     test('13.11 from 127.0.0.1 a web-port save lands on 127.0.0.1, the reminder cards name 127.0.0.1, and PATCH /api/config returns redirectPort', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
         const name = 'handoff-1311';
         let server: PrivateServer | undefined;
         let context: BrowserContext | undefined;

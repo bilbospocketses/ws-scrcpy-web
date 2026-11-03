@@ -164,7 +164,10 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         // would quietly annotate itself "install not offered" on every host —
         // recording a skip it never actually established.
         const service = await openSettingsTab(settings, 'Service');
-        await expect(service.getByText('loading…')).toHaveCount(0);
+        // The Service tab's own placeholder (ServiceTab.ts), shown until its
+        // status read answers. A bare 'loading…' matched nothing here, so this
+        // wait used to pass at once, before the tab had rendered anything.
+        await expect(service.getByText('loading install/uninstall status…')).toHaveCount(0);
         const install = service.getByRole('button', { name: /install/i }).first();
         // The section renders the install ENABLED for an instant and then
         // re-renders it disabled once its second probe answers (measured on

@@ -9,6 +9,7 @@ import {
 } from '@playwright/test';
 import { type Credentials, dismissPromptsFor, expectAppShell, loginAs } from './support/auth';
 import { gotoHome } from './support/consent';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { countFetches, fetchCount } from './support/fetchCounter';
 import {
     isolatedAdb,
@@ -285,7 +286,6 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
     const contexts: BrowserContext[] = [];
 
     test.beforeAll(async () => {
-        test.setTimeout(180_000);
         server = await startLockedPrivateServer('ws-scrcpy-web-e2e-164d-devices', 8182, { isolatedAdbPort: 8183 });
     });
 
@@ -305,7 +305,7 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
     test('7.13 with no device connected the list says No devices connected and shows no device card', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const srv = live();
         const admin = await signedIn(browser, srv.paths.baseURL, PRIVATE_ADMIN);
         contexts.push(admin.context);
@@ -331,7 +331,7 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
     test('7.10 quick scan with nothing advertising shows the mDNS line, then the no-devices message', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const srv = live();
 
         // A pass-through to the REAL server that holds its replies until the

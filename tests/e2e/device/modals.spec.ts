@@ -166,7 +166,6 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
     test('@device 9.1 the shell modal runs commands on the real device, and closing it leaves no shell behind', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
         const udid = deviceAddress();
         const api = await request.newContext({ baseURL: e2eBaseUrl() });
         let context: BrowserContext | undefined;
@@ -287,7 +286,6 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
     test('@device 9.2 the file modal browses, transfers and deletes on the device, remembers the icon size, and keeps the console quiet', async ({
         browser,
     }) => {
-        test.setTimeout(240_000);
         const udid = deviceAddress();
         const api = await request.newContext({ baseURL: e2eBaseUrl() });
         let context: BrowserContext | undefined;
@@ -478,7 +476,6 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
     test('@device 9.3 the sleep/wake button reflects the device state, changes it, and is themed by the state it shows', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
         const udid = deviceAddress();
         const api = await request.newContext({ baseURL: e2eBaseUrl() });
         let context: BrowserContext | undefined;

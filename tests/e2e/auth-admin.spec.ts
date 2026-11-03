@@ -150,7 +150,6 @@ function isNavigationTo(pathname: string) {
 
 test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('12.8 shutdown from this machine with login on: a signed-in non-admin is refused 403 forbidden, logs nothing and the server stays up; a signed-in admin is the control that stops it', async () => {
-        test.setTimeout(150_000);
         // Finding 12.12 (fixed 2026-10-05): /api/server/shutdown is allow-listed,
         // and AuthGate used to return before reading the session there, so
         // requireAdmin took this signed-in non-admin for the implicit admin and
@@ -219,7 +218,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     });
 
     test('12.8 shutdown from another machine: in open mode (c) with no token and (d) with a token but remote admin off answer 403, with login on (a) signed out answers 401; each logs its refusal and the server stays up', async () => {
-        test.setTimeout(150_000);
         const server = await OwnedServer.start('12-8-offbox', PORT.r12_8_offbox);
         const offBox = offBoxURL(server.paths.port);
         let bare: APIRequestContext | undefined;
@@ -286,7 +284,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     });
 
     test('18.16 every admin write named in the row is refused 403 from another machine and passes from this machine; under WS_SCRCPY_ALLOW_REMOTE_ADMIN=1, and signed in as an admin, it passes from both, and /api/config reports adminScope local, remote, authenticated with callerIsLocal false off-box', async () => {
-        test.setTimeout(240_000);
         const server = await OwnedServer.start('18-16', PORT.r18_16);
         const PROBE_USER: Credentials = { username: 'e2e164b-probe', password: 'e2e164b-probe-pw' };
         let ctx: APIRequestContext | undefined;
@@ -484,7 +481,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('18.17 an already-open socket closes 4401 when its session ends — by logout, by disabling the user, by deleting the user — and another user’s session and socket are untouched', async ({
         browser,
     }) => {
-        test.setTimeout(150_000);
         const server = await OwnedServer.start('18-17', PORT.r18_17);
         let admin: APIRequestContext | undefined;
         let a: { context: BrowserContext; page: Page } | undefined;
@@ -553,7 +549,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('18.17 in open mode a logout closes nothing: a socket opened after login was turned off survives a logout from the same browser', async ({
         browser,
     }) => {
-        test.setTimeout(150_000);
         // Finding 18.23 (fixed 2026-10-05): the handshake registered every socket
         // under the cookie's session token whatever the mode, so this browser's
         // open-mode socket was closed 4401 by the logout. A socket now carries a
@@ -597,7 +592,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     });
 
     test('18.18 a session idle for over 30 days answers 401 and its row is deleted; a session used inside the window slides its 30-day deadline forward', async () => {
-        test.setTimeout(150_000);
         const server = await OwnedServer.start('18-18', PORT.r18_18);
         let stale: APIRequestContext | undefined;
         let fresh: APIRequestContext | undefined;
@@ -665,7 +659,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     });
 
     test('18.19 with login on, a signed-out request under /login-assets/ is refused exactly like any other unauthenticated path, and the same path is served once signed in', async () => {
-        test.setTimeout(120_000);
         const server = await OwnedServer.start('18-19', PORT.r18_19);
         let owner: APIRequestContext | undefined;
         try {
@@ -715,7 +708,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('18.20 Users → enable login: on a store with no admin password it says to add one and changes nothing; with a passworded admin it reloads behind the login page; then back to open mode', async ({
         browser,
     }) => {
-        test.setTimeout(150_000);
         const server = await OwnedServer.start('18-20', PORT.r18_20);
         let probe: APIRequestContext | undefined;
         let owner: APIRequestContext | undefined;
@@ -820,7 +812,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('18.21 with login turned off and the admin still passworded, Users → Add user is an ordinary create: no secure-the-admin block, no "Login is now required", no reload', async ({
         browser,
     }) => {
-        test.setTimeout(150_000);
         const server = await OwnedServer.start('18-21', PORT.r18_21);
         const NEW_USER: Credentials = { username: 'e2e164b-added', password: 'e2e164b-added-pw' };
         let probe: APIRequestContext | undefined;
@@ -905,7 +896,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('18.22 admin-scope banner: on this machine three actions, from another machine read-only with Dismiss only; Dismiss persists per user and reset brings it back, only the explicit accept widens exposure, and with remote admin on the home page shows no banner on either', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
         const server = await OwnedServer.start('18-22', PORT.r18_22);
         let probe: APIRequestContext | undefined;
         let context: BrowserContext | undefined;
@@ -1112,7 +1102,6 @@ test.describe('auth and admin scope (smoke 12.8, 18.13, 18.16–18.22)', () => {
     test('18.13 remote admin without sign-in is a checkbox on Settings → Users: turning it on goes through the warning and Save, it survives a restart and an unrelated save, another machine turning it off is warned and loses admin, and an environment that forces it shows it checked and disabled', async ({
         browser,
     }) => {
-        test.setTimeout(240_000);
         const server = await OwnedServer.start('18-13', PORT.r18_13);
         let probe: APIRequestContext | undefined;
         let offBox: APIRequestContext | undefined;

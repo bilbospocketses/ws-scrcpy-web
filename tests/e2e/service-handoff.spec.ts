@@ -2,6 +2,7 @@ import type net from 'node:net';
 import type { APIResponse, BrowserContext, Locator, Page, Request, Response } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import { ADMIN, loginAs, openSettings, openSettingsTab, REGULAR } from './support/auth';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { apiContext, lockDown } from './support/ownedServer';
 import { holdPort, releasePort } from './support/ports';
 import {
@@ -344,7 +345,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     test('4.7 / 4.3 / 13.11 (install) / 13.10 / 5.5 the configured port held: local on +1, the service walks to +2 and persists it, the page follows on 127.0.0.1 and reads installed; uninstalled, it ends on the relaunched local app', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const configured = 8200;
         const local = 8201;
         const service = 8202;
@@ -487,7 +488,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     test('4.3 the local app gone before the service is up: the service takes the same port and the page ends on it, reading installed', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const port = 8203;
         const paths = await seed('same-port', port);
         const a = spawnLocal(paths);
@@ -557,7 +558,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     test('1.11 (c) "yes, install service" on a first run shares the Settings poll: the welcome modal follows the service to its shifted port, where no welcome modal opens', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const configured = 8204;
         const local = 8205;
         const service = 8206;
@@ -602,7 +603,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     });
 
     test('3.7 (b) a second instance that finds the configured port held by a sibling binds the next port and does not persist it', async () => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const configured = 8207;
         const next = 8208;
         const paths = await seed('sibling', configured);
@@ -628,7 +629,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     });
 
     test('3.7 (b) with users configured, the second instance still finds the sibling and does not persist its port', async () => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const configured = 8208;
         const next = 8209;
         const paths = await seed('sibling-locked', configured);

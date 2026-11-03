@@ -13,6 +13,7 @@ import {
     settingsRow,
     tokenCookie,
 } from './support/auth';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { E2E_PORT } from './support/paths';
 import { holdPort, releasePort } from './support/ports';
 import {
@@ -71,7 +72,9 @@ function httpsStatus(port: number, ca: string): Promise<number> {
             res.resume();
             resolve(res.statusCode ?? 0);
         });
-        req.on('timeout', () => req.destroy(new Error('timeout')));
+        req.on('timeout', () =>
+            req.destroy(new Error(`HUNG: no answer to GET https://localhost:${port}/ in ${WAIT_MS / 1000} s`)),
+        );
         req.on('error', reject);
     });
 }
@@ -83,7 +86,6 @@ test.describe('lifecycle (smoke §12)', () => {
     });
 
     test('12.1 "stop server & exit": confirm, the page blanks to the stopped notice, the process exits 0 with the adb teardown logged, and no restart is requested', async () => {
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-stop-exit', 8128);
         seedPrivateDataRoot(paths);
         const handle = spawnServer(paths);
@@ -185,7 +187,6 @@ test.describe('lifecycle (smoke §12)', () => {
     });
 
     test('12.4 the data-root override is honoured: config, database, dependencies and logs all land under it', async () => {
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-data-root', 8129);
         seedPrivateDataRoot(paths);
         const handle = spawnServer(paths);
@@ -238,7 +239,6 @@ test.describe('lifecycle (smoke §12)', () => {
     // asks for both orders because #718's bug existed in one order only.
 
     test('12.6 HTTP only: with its port held by another program the server exits 1 and says why', async () => {
-        test.setTimeout(150_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-no-listener-http', 8133);
         seedPrivateDataRoot(paths);
         const blocker = await holdPort(paths.port);
@@ -261,7 +261,6 @@ test.describe('lifecycle (smoke §12)', () => {
 
     for (const order of ['http-first', 'https-first'] as const) {
         test(`12.6 both listeners refused (${order}): the server exits 1, and both failures are named in that order`, async () => {
-            test.setTimeout(150_000);
             const [plainPort, securePort] = order === 'http-first' ? [8134, 8135] : [8137, 8136];
             const tls = selfSignedCert();
             const plain = { secure: false, port: plainPort };
@@ -301,7 +300,6 @@ test.describe('lifecycle (smoke §12)', () => {
     }
 
     test('12.6 one listener still binds: HTTP refused, HTTPS serves, and the server stays up', async () => {
-        test.setTimeout(150_000);
         const [plainPort, securePort] = [8138, 8139];
         const tls = selfSignedCert();
         const paths = privateServerPaths('ws-scrcpy-web-e2e-no-listener-degrade', plainPort);
@@ -349,7 +347,6 @@ test.describe('lifecycle (smoke §12)', () => {
     // POSIX signals: on Windows the harness can only TerminateProcess the child.
     test('12.10 one Ctrl+C is two signals (SIGINT, then the launcher SIGTERM): the repeat is ignored, the stop finishes and writes the backup, exit 0', async () => {
         test.skip(process.platform === 'win32', 'Windows has no SIGINT/SIGTERM to deliver to a child process');
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-double-signal', 8142);
         seedPrivateDataRoot(paths);
         const handle = spawnServer(paths);
@@ -394,7 +391,7 @@ test.describe('lifecycle (smoke §12)', () => {
     });
 
     test('12.13 restart server: the first Application row; cancel sends nothing; confirm exits 75 with the .restart marker, shows the overlay, and the page reloads onto a new instance token on the same port', async () => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const paths = privateServerPaths('ws-scrcpy-web-e2e-restart-server', 8243);
         seedPrivateDataRoot(paths);
         // Nothing in this row installs a dependency: both boots run from the fast tier's.
@@ -545,7 +542,7 @@ test.describe('lifecycle (smoke §12)', () => {
     test('12.13 off-box with remote admin off: the Application card is hidden with the note in its place, and POST /api/server/restart answers 403', async () => {
         const lan = lanAddress() ?? '';
         test.skip(!lan, 'no non-loopback IPv4 interface on this host to call from');
-        test.setTimeout(270_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const paths = privateServerPaths('ws-scrcpy-web-e2e-restart-server-offbox', 8244);
         seedPrivateDataRoot(paths);
         // withoutInheritedOverrides removes WS_SCRCPY_ALLOW_REMOTE_ADMIN: a runner

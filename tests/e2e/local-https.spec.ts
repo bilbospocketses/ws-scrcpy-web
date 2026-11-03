@@ -358,7 +358,9 @@ function verifiedHandshake(port: number, servername: string, ca: string): Promis
             socket.end();
             resolve(san);
         });
-        socket.on('timeout', () => socket.destroy(new Error('timeout')));
+        socket.on('timeout', () =>
+            socket.destroy(new Error(`HUNG: no TLS handshake on 127.0.0.1:${port} in ${WAIT_MS / 1000} s`)),
+        );
         socket.on('error', reject);
     });
 }
@@ -367,7 +369,6 @@ test.describe('local https: a one-word hostname certificate from real mkcert', (
     test.skip(!REAL_MKCERT, 'QA_MKCERT_EXE not set -- see the doc comment above for what it needs.');
 
     test('mkcert mints e2enas, a client trusting only its CA accepts it under that name, and the app loads at https://e2enas', async () => {
-        test.setTimeout(180_000);
         // http 8197, https 8198: next to local-https-fast.spec.ts's 8191-8196.
         const P = tlsServerPaths('ws-scrcpy-web-e2e-real-mkcert', 8197);
         const HTTPS_PORT = 8198;

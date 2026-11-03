@@ -24,7 +24,7 @@ import {
     unlockDevice,
     waitForDeviceRow,
 } from '../support/device';
-import { WAIT_MS } from '../support/timeouts';
+import { TEST_MS, WAIT_MS } from '../support/timeouts';
 
 /**
  * Smoke module 8 — the stream itself. Rows 8.1, 8.2, 8.3, 8.4, 8.5, 8.6 and 8.8.
@@ -85,6 +85,8 @@ const LOCKED_NOTICE_TEXT = 'device is locked — unlock it to see the screen';
  * speed check (support/timeouts.ts).
  */
 const FRAMES_TIMEOUT_MS = WAIT_MS;
+/** Row 8.8's wait for the locked-device banner: a hang guard, ten times the 60 s the row once asserted. */
+const BANNER_WAIT_MS = 2 * TEST_MS;
 
 /** Shared API context: connect/lock/unlock and the screen-state witness all go through it. */
 let api: APIRequestContext;
@@ -768,7 +770,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.1 the stream renders live video with no decode errors and rescales with the window at the device aspect ratio', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
         const from = logs.all.length;
@@ -828,7 +829,6 @@ test.describe('device streaming (smoke §8)', () => {
     });
 
     test('@device 8.2 the on-screen buttons, canvas touches and keyboard all reach the device', async ({ browser }) => {
-        test.setTimeout(240_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
         const from = logs.all.length;
@@ -986,7 +986,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.3 audio streams with the selected codec, the codec toggle changes it, and disabling it is honoured', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
 
@@ -1087,7 +1086,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.4 codec, encoder, fps and bitrate apply to the stream and persist per device across a reload and a resize', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
 
@@ -1184,7 +1182,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.5 H.264 decodes and paints a picture (the beta.75 black-screen regression check)', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
 
@@ -1219,7 +1216,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.6 every other codec the device and browser both support decodes and paints', async ({
         browser,
     }) => {
-        test.setTimeout(420_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
 
@@ -1289,7 +1285,8 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.8 (partial) a locked device is reported rather than shown as a black screen, in both orderings', async ({
         browser,
     }) => {
-        test.setTimeout(420_000);
+        // Two banner waits of up to BANNER_WAIT_MS each, plus the connects around them.
+        test.setTimeout(5 * TEST_MS);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
         const banner = lockedNotice(page);
@@ -1337,8 +1334,9 @@ test.describe('device streaming (smoke §8)', () => {
                 let bannerAt = 0;
                 let visible = false;
                 // A hang guard, never a speed check: how long the banner took is
-                // logged below, not asserted.
-                while (Date.now() - started < WAIT_MS) {
+                // logged below, not asserted. Ten times the minute this row used
+                // to allow, so only a banner that never comes reaches it.
+                while (Date.now() - started < BANNER_WAIT_MS) {
                     // A locked device only feeds the detector while its display
                     // is composing. KEYCODE_WAKEUP turns the screen on WITHOUT
                     // dismissing the keyguard, so frames keep coming and the
@@ -1378,7 +1376,7 @@ test.describe('device streaming (smoke §8)', () => {
                     // stretches it while the app is right.
                     expect(
                         visible,
-                        `HUNG: ${label}: no banner in ${WAIT_MS / 1000} s, though the canvas went black while the ` +
+                        `HUNG: ${label}: no banner in ${BANNER_WAIT_MS / 1000} s, though the canvas went black while the ` +
                             `device was locked, so the banner must say why. Samples: ${[...signatures].join(' ')}.`,
                     ).toBe(true);
                     await expect(banner, 'the banner says what is wrong in words').toHaveText(LOCKED_NOTICE_TEXT);

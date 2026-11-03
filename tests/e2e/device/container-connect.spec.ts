@@ -18,7 +18,6 @@ test.describe('wireless connect from a container (smoke §20.10)', () => {
     test('@device 20.10 the subject is the container, and a wireless connect lists the device through its adb', async ({
         page,
     }) => {
-        test.setTimeout(120_000);
         const address = deviceAddress();
         const ctx = page.request;
 

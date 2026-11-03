@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import path from 'node:path';
 import { expect, request, test } from '@playwright/test';
 import { e2eBaseUrl, mintToken, SID_SET_COOKIE_RE, TOKEN_SET_COOKIE_RE } from './support/auth';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { holdPort, isListening, releasePort } from './support/ports';
 import {
     privateServerPaths,
@@ -72,7 +73,6 @@ test.describe('server and API surface (item 164, batch A)', () => {
     test('1.12 a busy web port moves to the next free one: bound, persisted, reported as shifted, shown on the page, logged', async ({
         browser,
     }) => {
-        test.setTimeout(120_000);
         const configured = 8151;
         const next = 8152;
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-busy-port', configured);
@@ -143,7 +143,6 @@ test.describe('server and API surface (item 164, batch A)', () => {
             process.platform !== 'linux',
             '[Linux] row: the first-run browser open goes through xdg-open only on Linux (Windows uses cmd.exe start)',
         );
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-no-xdg-open', 8153);
         // firstRunComplete:false with no launcher in the environment is the one
         // state in which a hand-run server opens a tab itself (shouldAutoOpenBrowser).
@@ -269,7 +268,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
     });
 
     test('7.9 connect and disconnect refuse -H, host:port;rm and an empty address with 400 before adb, and the three good forms pass validation', async () => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         // The good forms reach adb; on a cold data root it may still be downloading.
         await waitForDependencies(e2eBaseUrl(), 240_000);
         const ctx = await request.newContext({ baseURL: e2eBaseUrl() });
@@ -314,7 +313,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
         // prints `error: no such device '<addr>'` AND exits 1, and the route
         // answered 500 because the exit hid the text from
         // classifyDisconnectResult. AdbClient.disconnect now hands that text on.
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         await waitForDependencies(e2eBaseUrl(), 240_000);
         const ctx = await request.newContext({ baseURL: e2eBaseUrl() });
         try {
@@ -331,7 +330,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
     });
 
     test('9.8 file deletes refuse protected roots, traversal and an unbounded list with 400 before adb; a valid list reaches adb and names each failed path', async () => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         await waitForDependencies(e2eBaseUrl(), 240_000);
         const ctx = await request.newContext({ baseURL: e2eBaseUrl() });
         // A well-formed serial that no adb will ever report: nothing can be
@@ -381,7 +380,6 @@ test.describe('server and API surface (item 164, batch A)', () => {
     });
 
     test('10.12 a foreign Origin is refused even with the token, on the API and on the WebSocket (logged); without a token only five routes answer', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-gate', 8154);
         seedPrivateDataRoot(paths);
         const port = paths.port;
@@ -548,7 +546,6 @@ test.describe('server and API surface (item 164, batch A)', () => {
     });
 
     test('10.13 with an approved embedder, https cookies are SameSite=None; Secure; Partitioned; plain http, no embedder and after revoking they are Strict / Lax', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-cookies', 8155);
         seedPrivateDataRoot(paths);
         const port = paths.port;
@@ -683,7 +680,6 @@ test.describe('server and API surface (item 164, batch A)', () => {
     test('10.13 X-Forwarded-Proto: https from the LAN address of this machine (not loopback) changes nothing', async () => {
         const lan = lanAddress() ?? '';
         test.skip(!lan, 'no non-loopback IPv4 interface on this host to call from');
-        test.setTimeout(120_000);
         const embedder = 'http://localhost:5159';
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-cookies-lan', 8155);
         // An embedder approved in config.json, so loopback https WOULD relax the cookie.
@@ -708,7 +704,6 @@ test.describe('server and API surface (item 164, batch A)', () => {
     });
 
     test('10.17 a corrupt store is moved aside and restored from its backup with users and labels intact; with no backup the app starts on a fresh store', async () => {
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-corrupt-db', 8156);
         seedPrivateDataRoot(paths);
         const port = paths.port;
@@ -841,7 +836,6 @@ test.describe('server and API surface (item 164, batch A)', () => {
     });
 
     test('10.18 ws-scrcpy-web.log past 10 MB rotates on the next start to exactly one ws-scrcpy-web.log.1', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-log-rotation', 8157);
         seedPrivateDataRoot(paths);
         const logsDir = path.dirname(path.join(paths.dataRoot, LOG_REL));
@@ -879,7 +873,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
     test('21.3 each plain-http exposure mode answers a visitor on the LAN address of this machine 200 / 421 / 302 and http://localhost 200, with no restart', async () => {
         const lan = lanAddress() ?? '';
         test.skip(!lan, 'no non-loopback IPv4 interface on this host to call from');
-        test.setTimeout(240_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const securePort = 8241;
         const paths = tlsServerPaths('ws-scrcpy-web-e2e-164a-exposure', 8240);
         seedPrivateDataRoot(paths, { httpsPort: securePort });

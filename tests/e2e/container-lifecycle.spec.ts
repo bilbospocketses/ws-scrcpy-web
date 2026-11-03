@@ -9,6 +9,7 @@ import {
     dockerStop,
     readVolumeFile,
 } from './support/dockerStack';
+import { containerDownloadProgress, noTotalTimeLimit, waitForDownloads } from './support/downloadWait';
 import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 import { WAIT_MS } from './support/timeouts';
 
@@ -36,8 +37,6 @@ const VOLUME = 'wssw-lifecycle_wsdata-lifecycle';
 const BASE = 'http://127.0.0.1:8132';
 const SERVER_LOG = '/data/logs/ws-scrcpy-web.log';
 const TEARDOWN_LINE = 'Stopping adb daemon (kill-server)';
-/** The first boot's hydrate downloads: it fails only when nothing changes for this long, never on its total time. */
-const HYDRATE_STALL_MS = 300_000;
 
 interface DependencyInfo {
     name: string;
@@ -64,31 +63,31 @@ async function waitForExit(): Promise<{ status: string; exitCode: number }> {
  * volume hydrates them. The container lists only adb and scrcpy-server: Node.js
  * and mkcert are `hostOnly`, so it does not manage them at all.
  *
- * Bounded by NO PROGRESS: the wait gives up only when the dependency list has
- * not changed for `stallMs`, so a slow download is only slow.
+ * Bounded by NO PROGRESS (support/downloadWait.ts): the wait gives up only
+ * when neither the dependency list nor the bytes under the container's /tmp and
+ * /data change for the stall window, so a slow download is only slow. The rows
+ * that call it set no total time limit.
  */
-async function waitForHydrate(baseURL: string, stallMs: number): Promise<DependencyInfo[]> {
+async function waitForHydrate(baseURL: string): Promise<DependencyInfo[]> {
     const ctx = await request.newContext({ baseURL });
     try {
         await mintToken(ctx);
         let deps: DependencyInfo[] = [];
-        let seen = '';
-        let changedAt = Date.now();
-        for (;;) {
-            deps = (await (await ctx.get('/api/dependencies')).json()) as DependencyInfo[];
-            const boot = deps.filter((d) =>
-                (CONTAINER_BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name),
-            );
-            if (boot.length > 0 && boot.every((d) => d.installedVersion !== null)) return deps;
-            const now = deps.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', ');
-            if (now !== seen) {
-                seen = now;
-                changedAt = Date.now();
-            } else if (Date.now() - changedAt > stallMs) {
-                throw new Error(`HUNG: dependencies unchanged for ${stallMs / 1000} s, never hydrated: ${now}`);
-            }
-            await new Promise((r) => setTimeout(r, 1_000));
-        }
+        await waitForDownloads({
+            what: `waiting for ${CONTAINER}'s first boot to hydrate its dependencies`,
+            progress: containerDownloadProgress(CONTAINER),
+            read: async () => {
+                deps = (await (await ctx.get('/api/dependencies')).json()) as DependencyInfo[];
+                const boot = deps.filter((d) =>
+                    (CONTAINER_BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name),
+                );
+                return {
+                    done: boot.length > 0 && boot.every((d) => d.installedVersion !== null),
+                    summary: deps.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', '),
+                };
+            },
+        });
+        return deps;
     } finally {
         await ctx.dispose();
     }
@@ -101,12 +100,12 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
     });
 
     test('@docker @docker-host 20.12 `docker stop` exits 0 inside the default grace with the adb teardown logged, so nothing was SIGKILLed', async () => {
-        test.setTimeout(600_000);
+        noTotalTimeLimit(); // download-bound: waitForHydrate's no-progress watch is its bound
         composeUpFresh(FILE);
         try {
             // Let the first-run hydrate finish first: stopping mid-download would
             // put that abort in the log and blame it on the stop.
-            await waitForHydrate(BASE, HYDRATE_STALL_MS);
+            await waitForHydrate(BASE);
             expect(dockerInspectState(CONTAINER).status).toBe('running');
 
             dockerStop(CONTAINER);
@@ -126,11 +125,11 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
     });
 
     test('@docker @docker-host 20.6 "stop server & exit" from inside a container reaches node through start.sh: the container exits 0 and is not restarted', async () => {
-        test.setTimeout(600_000);
+        noTotalTimeLimit(); // download-bound: waitForHydrate's no-progress watch is its bound
         composeUpFresh(FILE);
         let ctx: BrowserContext | undefined;
         try {
-            await waitForHydrate(BASE, HYDRATE_STALL_MS);
+            await waitForHydrate(BASE);
             // A fresh volume has no dismissed prompts; the bookmark reminder would
             // otherwise sit over the Settings button and swallow the click.
             const seed = await request.newContext({ baseURL: BASE });
@@ -177,11 +176,11 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
     });
 
     test('@docker @docker-host 20.11 `docker rm` + a second `compose up` on the same volume: the store, the hydrated dependencies and the log survive, and nothing re-downloads or re-prompts', async () => {
-        test.setTimeout(900_000);
+        noTotalTimeLimit(); // download-bound: waitForHydrate's no-progress watch is its bound
         composeUpFresh(FILE);
         let ctx: BrowserContext | undefined;
         try {
-            const before = await waitForHydrate(BASE, HYDRATE_STALL_MS);
+            const before = await waitForHydrate(BASE);
             // Something in the SQLite store to survive: the prompt dismissals,
             // which are also what keeps the second boot's home page prompt-free.
             const seed = await request.newContext({ baseURL: BASE });
@@ -203,7 +202,7 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
             composeRecreateKeepingVolume(FILE);
 
             // Dependencies: present at once, from the volume — no hydrate.
-            const after = await waitForHydrate(BASE, WAIT_MS);
+            const after = await waitForHydrate(BASE);
             expect(after.map((d) => [d.name, d.installedVersion])).toEqual(
                 before.map((d) => [d.name, d.installedVersion]),
             );

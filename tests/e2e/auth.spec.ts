@@ -1374,7 +1374,6 @@ test.describe('auth / opt-in login (smoke §18)', () => {
     });
 
     test('18.12 sessions survive a server restart (spec-owned server on 8124)', async () => {
-        test.setTimeout(240_000);
         // Never the shared server: the fast tier's webServer has no supervisor,
         // and POST /api/dependencies/restart exits the process with code 75.
         const paths = privateServerPaths('ws-scrcpy-web-e2e-restart', 8124);

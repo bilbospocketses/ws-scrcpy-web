@@ -111,7 +111,6 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
     test('@device 7.1 the manual-add form connects a device by address and its row appears in the connected list', async ({
         page,
     }) => {
-        test.setTimeout(180_000);
         const address = deviceAddress();
         const { host, port } = splitAddress(address);
         await gotoHome(page);
@@ -182,7 +181,6 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
     test('@device 7.2 a private-subnet scan finds the emulator and connecting from its card adds it to the device list', async ({
         page,
     }) => {
-        test.setTimeout(240_000);
         const address = deviceAddress();
         const { host } = splitAddress(address);
         const ip = await emulatorIp(host);
@@ -344,7 +342,6 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
     test('@device 7.4 the device list updates in place: a rename keeps the same row node, labels are fetched per refresh, and disconnect/reconnect are reflected', async ({
         page,
     }) => {
-        test.setTimeout(300_000);
         const address = deviceAddress();
         // The label cell keys on the device's own `ro.serialno`, NOT on the adb
         // address (DeviceTracker.buildDeviceRow). Reading it out of band gives

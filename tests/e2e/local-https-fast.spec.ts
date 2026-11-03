@@ -301,7 +301,9 @@ function servedFingerprint(port: number, expectedLeaf: string): Promise<string> 
             socket.end();
             resolve(fp);
         });
-        socket.on('timeout', () => socket.destroy(new Error('timeout')));
+        socket.on('timeout', () =>
+            socket.destroy(new Error(`HUNG: no TLS handshake on localhost:${port} in ${WAIT_MS / 1000} s`)),
+        );
         socket.on('error', reject);
     });
 }
@@ -844,7 +846,6 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
     let api: APIRequestContext;
 
     test.beforeAll(async () => {
-        test.setTimeout(150_000);
         seedPrivateDataRoot(A, { httpsPort: HTTPS_PORT });
         installFailingMkcert(A);
         // A one-hour ca-root rate window (the seam can only lengthen it): 21.10's
@@ -1165,7 +1166,6 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
 test('21.9 against a real bound listener: a new leaf under it reports restart-required while bound stays true, the old leaf is still served, and the panel says so', async ({
     browser,
 }) => {
-    test.setTimeout(150_000);
     // http 8194, https 8195; 8196 is the https port the last step saves.
     const B = tlsServerPaths('ws-scrcpy-web-e2e-164e-bound', 8194);
     const SECURE_PORT = 8195;
@@ -1303,7 +1303,9 @@ function verifiedHandshake(host: string, port: number, ca?: string): Promise<{ f
                 resolve({ fingerprint: peer.fingerprint256, san: peer.subjectaltname ?? '' });
             },
         );
-        socket.on('timeout', () => socket.destroy(new Error('timeout')));
+        socket.on('timeout', () =>
+            socket.destroy(new Error(`HUNG: no TLS handshake on ${host}:${port} in ${WAIT_MS / 1000} s`)),
+        );
         socket.on('error', reject);
     });
 }
@@ -1361,7 +1363,6 @@ test.describe('local https fast tier: a certificate through restart, off-box use
     const SPAWN: SpawnOptions = { env: withoutInheritedOverrides() };
 
     test.beforeAll(async () => {
-        test.setTimeout(150_000);
         seedPrivateDataRoot(C, { httpsPort: HTTPS_PORT });
         // Should the operator gate ever be missing, 21.2's generate fails on
         // this mkcert at once instead of downloading the real one. It sits in
@@ -1383,7 +1384,6 @@ test.describe('local https fast tier: a certificate through restart, off-box use
     });
 
     test('21.1 a certificate that appears on disk is not served until the restart: the https port refuses and the state asks for a restart; after it the listener is bound and serves that leaf', async () => {
-        test.setTimeout(240_000);
         expect(await tlsState(api)).toMatchObject({ status: 'none', httpsListener: { bound: false } });
 
         // What a generate leaves behind, chained as mkcert's is: the subject is
@@ -1528,7 +1528,6 @@ test.describe('local https fast tier: a certificate through restart, off-box use
     test('21.5 revoke deletes the certificate and the CA; the old listener serves until the restart, the panel is empty with download and revoke disabled, ca-root is 404; after the restart nothing listens on https', async ({
         browser,
     }) => {
-        test.setTimeout(240_000);
         const leafFp = new X509Certificate(planted.leaf.cert).fingerprint256;
         const context = await browser.newContext({ baseURL: C.baseURL });
         try {

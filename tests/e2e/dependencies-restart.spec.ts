@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { fetchFromPage, openSettings, openSettingsTab, tokenCookie } from './support/auth';
+import { fetchWatched, noTotalTimeLimit } from './support/downloadWait';
 import { apiContext, dismissPrivatePrompts, freshPage } from './support/ownedServer';
 import {
     privateServerPaths,
@@ -105,9 +106,10 @@ async function fetchFromNodejsOrg(file: string): Promise<Buffer> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-            if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
-            return Buffer.from(await res.arrayBuffer());
+            // Bounded by no progress, not total time: the archive is ~30 MB.
+            const res = await fetchWatched(url);
+            if (res.status < 200 || res.status > 299) throw new Error(`HTTP ${res.status} from ${url}`);
+            return res.body;
         } catch (err) {
             lastError = err;
         }
@@ -181,7 +183,7 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
         'Linux only: the installed fake node is a shell script, and the update installs the Linux binary',
     );
     test.skip(OFFERED === INSTALLED, `the runner's Node is ${OFFERED}, the same as the installed fake`);
-    test.setTimeout(300_000);
+    noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
 
     const paths = privateServerPaths('ws-scrcpy-web-e2e-deps-restart', SERVER_PORT);
     seedPrivateDataRoot(paths);
@@ -322,7 +324,7 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
 test('6.8 a tab left open across a restart reloads itself onto the new instance token, and the server logs at most one rejected WS connection for it', async ({
     browser,
 }) => {
-    test.setTimeout(300_000);
+    noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
     const paths = privateServerPaths('ws-scrcpy-web-e2e-deps-restart-stale-tab', 8242);
     seedPrivateDataRoot(paths);
     // Nothing in this row installs a dependency: both boots run from the fast tier's.

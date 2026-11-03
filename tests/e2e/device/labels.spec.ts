@@ -173,7 +173,6 @@ function hitFor(messages: ScanWireMessage[], address: string): ScanWireMessage {
 test('@device 19.1 in open mode a label set on the device row is stored per user and survives a reload', async ({
     page,
 }) => {
-    test.setTimeout(180_000);
     const address = deviceAddress();
     const serial = deviceSerial();
 
@@ -250,7 +249,6 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
     };
 
     test.beforeAll(async ({ browser }) => {
-        test.setTimeout(180_000);
         address = deviceAddress();
         serial = deviceSerial();
 
@@ -306,7 +304,6 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
     });
 
     test.afterAll(async () => {
-        test.setTimeout(180_000);
         const clear = async (ctx: APIRequestContext | undefined): Promise<void> => {
             if (!ctx) return;
             for (const key of writtenKeys) {
@@ -330,7 +327,6 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
     });
 
     test('@device 19.2 device labels are isolated per account: B never sees A-name, and A still does after B renames', async () => {
-        test.setTimeout(180_000);
         const userA = a as Visitor;
         const userB = b as Visitor;
 
@@ -364,7 +360,6 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
     });
 
     test('@device 19.3 a live scan hit carries the label of the user watching that scan', async () => {
-        test.setTimeout(300_000);
         const userA = a as Visitor;
         const userB = b as Visitor;
         const idx = address.lastIndexOf(':');

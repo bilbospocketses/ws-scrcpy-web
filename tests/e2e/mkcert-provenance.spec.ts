@@ -136,7 +136,6 @@ test.describe('21.12 mkcert provenance: the refusals (a fixture release server)'
     let mkcertDir = '';
 
     test.beforeAll(async () => {
-        test.setTimeout(150_000);
         await fixture.start();
         server = await OwnedServer.start('21-12', SERVER_PORT, {
             [REMOTE_ADMIN_ENV]: undefined,
