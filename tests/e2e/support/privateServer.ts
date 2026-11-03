@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type APIRequestContext, expect, request, test } from '@playwright/test';
+import { localDownloadProgress, waitForDownloads } from './downloadWait';
 import { E2E_BASE_URL, E2E_DATA_ROOT, E2E_TEMP_ENV, E2E_TEMP_ROOT, SEED_CONFIG } from './paths';
 import { removeTree, stopProcessesUnder } from './rootProcesses';
 import { WAIT_MS } from './timeouts';
@@ -315,20 +316,16 @@ export const CONTAINER_BOOT_INSTALLED_DEPENDENCIES = ['adb', 'scrcpy-server'] as
  * locked mode /api/dependencies needs a signed-in admin, so pass that admin's
  * context; it is used as it is.
  *
- * Bounded by NO PROGRESS, never by total time: it gives up only when what
- * /api/dependencies reports has not changed for `stallMs`, so a slow download
- * is only slow, and a stalled one fails as HUNG naming where it stopped.
+ * Bounded by NO PROGRESS, never by total time (support/downloadWait.ts): it
+ * gives up only when neither what /api/dependencies reports nor the bytes in the
+ * local servers' download scratch directories change for `stallMs`, so a slow
+ * download is only slow, and a stalled one fails as HUNG naming where it stopped.
  *
- * **Budget it against the caller's `test.setTimeout`, not against nothing.**
- * This waits on a real first-run download (Node + ADB), so on a slow runner it
- * can legitimately take minutes. If the caller's test budget is not comfortably
- * larger than `stallMs`, Playwright kills the test before this function can
- * throw, and the failure reads `Test timeout of Nms exceeded` with no clue which
- * dependency stalled — the message below never prints. That is exactly what
- * happened on 2026-09-09, when this default and row 10.3's `test.setTimeout`
- * were both 180_000.
- *
- * The default is deliberately lower than any current caller's test budget.
+ * **A caller sets no total time limit** (`noTotalTimeLimit()`): a test budget
+ * would cut off a download that is still progressing, and the failure would read
+ * `Test timeout of Nms exceeded` with no clue which dependency it was waiting
+ * on -- what happened on 2026-09-09, when this wait's bound and row 10.3's
+ * `test.setTimeout` were both 180_000.
  */
 export async function waitForDependencies(
     target: string | APIRequestContext,
@@ -339,12 +336,13 @@ export async function waitForDependencies(
     const ctx = owned ?? (target as APIRequestContext);
     try {
         if (owned) expect((await owned.get('/')).status(), 'document GET (mints the token)').toBe(200);
-        let last = '';
-        let seen = '';
-        let changedAt = Date.now();
-        for (;;) {
-            const res = await ctx.get('/api/dependencies');
-            if (res.status() === 200) {
+        await waitForDownloads({
+            what: `waiting for ${names.join(', ')} to install`,
+            progress: localDownloadProgress(),
+            stallMs,
+            read: async () => {
+                const res = await ctx.get('/api/dependencies');
+                if (res.status() !== 200) return { done: false, summary: `HTTP ${res.status()}` };
                 const deps = (await res.json()) as { name: string; installedVersion: string | null; status: string }[];
                 const required = deps.filter((d) => names.includes(d.name));
                 // A filter is only as good as the names it matches: rename a
@@ -358,19 +356,12 @@ export async function waitForDependencies(
                     required.map((d) => d.name).sort(),
                     'the awaited dependency names must all appear in /api/dependencies',
                 ).toEqual([...names].sort());
-                if (required.every((d) => d.installedVersion !== null)) return;
-                last = required.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', ');
-            } else {
-                last = `HTTP ${res.status()}`;
-            }
-            if (last !== seen) {
-                seen = last;
-                changedAt = Date.now();
-            } else if (Date.now() - changedAt > stallMs) {
-                throw new Error(`HUNG: dependencies unchanged for ${stallMs / 1000} s, not installed: ${last}`);
-            }
-            await new Promise((r) => setTimeout(r, 1_000));
-        }
+                return {
+                    done: required.every((d) => d.installedVersion !== null),
+                    summary: required.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', '),
+                };
+            },
+        });
     } finally {
         await owned?.dispose();
     }
@@ -405,8 +396,9 @@ let sharedDependenciesReady: Promise<void> | undefined;
  * It waits because the shared server answers `/` before its first-run install
  * is done (index.ts runs it in the background), and a private server booted
  * over a half-installed folder would install into it too, racing the shared
- * server's own install. Once per worker, until `waitForDependencies` sees no
- * progress for its default 120 s: budget that into the caller's `test.setTimeout`.
+ * server's own install. Once per worker, bounded by no progress only
+ * (`waitForDependencies`), so a caller sets no total time limit
+ * (`noTotalTimeLimit()`).
  */
 export async function sharedDependencies(): Promise<string> {
     sharedDependenciesReady ??= waitForDependencies(E2E_BASE_URL).catch((err: unknown) => {

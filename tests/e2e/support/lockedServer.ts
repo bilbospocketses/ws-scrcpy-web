@@ -79,11 +79,19 @@ export function isolatedAdb(server: LockedPrivateServer, ...args: string[]): str
     expect(server.isolatedAdbPort, 'this private server was started without an isolated adb daemon').toBeDefined();
     const adb = installedAdb(server.paths);
     expect(adb, 'the private server has not installed adb yet').toBeDefined();
-    return execFileSync(adb as string, args, {
-        encoding: 'utf8',
-        timeout: WAIT_MS,
-        env: { ...process.env, ANDROID_ADB_SERVER_PORT: String(server.isolatedAdbPort), ADB_MDNS: '0' },
-    });
+    try {
+        // A hang guard, never a speed check (support/timeouts.ts).
+        return execFileSync(adb as string, args, {
+            encoding: 'utf8',
+            timeout: WAIT_MS,
+            env: { ...process.env, ANDROID_ADB_SERVER_PORT: String(server.isolatedAdbPort), ADB_MDNS: '0' },
+        });
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+            throw new Error(`HUNG: \`adb ${args.join(' ')}\` did not finish in ${WAIT_MS / 1000} s`, { cause: err });
+        }
+        throw err;
+    }
 }
 
 /**

@@ -66,6 +66,10 @@ export default defineConfig({
 
     use: {
         baseURL: process.env['PLAYWRIGHT_BASE_URL'] || E2E_BASE_URL,
+        // Hang guards for every action and navigation, which otherwise have no
+        // bound of their own: a download-bound test runs with no total limit.
+        actionTimeout: WAIT_MS,
+        navigationTimeout: WAIT_MS,
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         video: 'retain-on-failure',

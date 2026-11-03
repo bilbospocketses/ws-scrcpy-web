@@ -5,5 +5,5 @@
         "noEmit": true,
         "types": ["node"]
     },
-    "include": ["**/*.ts", "../unit/**/*.ts", "../../playwright.config.ts"]
+    "include": ["**/*.ts", "../unit/**/*.ts", "../../playwright.config.ts", "../../playwright.docker.config.ts"]
 }

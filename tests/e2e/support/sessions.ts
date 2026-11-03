@@ -70,8 +70,17 @@ export function tokenHash(sid: string): string {
 function withDb<T>(dbPath: string, fn: (db: DatabaseSync) => T): T {
     const db = new DatabaseSync(dbPath);
     try {
-        db.exec('PRAGMA busy_timeout = 5000');
-        return fn(db);
+        // A hang guard, never a speed check (support/timeouts.ts): the server's
+        // own write is a moment's work, however loaded the box.
+        db.exec(`PRAGMA busy_timeout = ${WAIT_MS}`);
+        try {
+            return fn(db);
+        } catch (err) {
+            if (/database is locked|SQLITE_BUSY/i.test(String((err as Error)?.message ?? err))) {
+                throw new Error(`HUNG: ${dbPath} stayed locked for ${WAIT_MS / 1000} s`, { cause: err });
+            }
+            throw err;
+        }
     } finally {
         db.close();
     }

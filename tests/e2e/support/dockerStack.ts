@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { test } from '@playwright/test';
 import { WAIT_MS } from './timeouts';
@@ -132,9 +132,59 @@ export function dockerCli(args: string[], timeoutMs = WAIT_MS): string {
     return docker(args, timeoutMs);
 }
 
-/** `docker pull`, generously timed: a first pull of the ~200 MB image on a cold runner. */
-export function dockerPull(ref: string): void {
-    docker(['pull', ref], 600_000);
+/**
+ * How long a `docker pull` may print nothing before it fails as HUNG. Without a
+ * TTY docker prints one line per layer event (waiting, download complete,
+ * extracting, pull complete), so one large layer on a slow link is silent for
+ * its whole download; the window is long for that reason.
+ */
+const DOCKER_PULL_STALL_MS = 10 * 60_000;
+
+/**
+ * `docker pull`, bounded by NO PROGRESS rather than total time: a first pull of
+ * the ~200 MB image on a cold runner is only slow. It fails as HUNG when docker
+ * prints nothing for DOCKER_PULL_STALL_MS, and with docker's own output when the
+ * pull itself fails.
+ */
+export function dockerPull(ref: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const child = spawn('docker', ['pull', ref], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let output = '';
+        let stalled = false;
+        let timer: NodeJS.Timeout | undefined;
+        const progress = (): void => {
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                stalled = true;
+                child.kill();
+            }, DOCKER_PULL_STALL_MS);
+        };
+        const onData = (chunk: Buffer): void => {
+            output += chunk.toString();
+            progress();
+        };
+        progress();
+        child.stdout?.on('data', onData);
+        child.stderr?.on('data', onData);
+        child.once('error', (err) => {
+            clearTimeout(timer);
+            reject(err);
+        });
+        child.once('close', (code) => {
+            clearTimeout(timer);
+            if (stalled) {
+                reject(
+                    new Error(
+                        `HUNG: \`docker pull ${ref}\` printed nothing for ${DOCKER_PULL_STALL_MS / 1000} s:\n${output}`,
+                    ),
+                );
+            } else if (code !== 0) {
+                reject(new Error(`\`docker pull ${ref}\` exited ${code}:\n${output}`));
+            } else {
+                resolve();
+            }
+        });
+    });
 }
 
 /** `docker image inspect --format <fmt>` for one image ref. */
