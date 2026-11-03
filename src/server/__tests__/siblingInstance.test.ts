@@ -168,11 +168,11 @@ describe('isSiblingInstance', () => {
         expect(await isSiblingInstance(port)).toBe(false);
     });
 
-    it('gives up within its timeout when the port accepts but never answers', async () => {
+    it('gives up at its timeout when the port accepts but never answers', async () => {
+        // The answer arriving at all is the proof: without the timeout the
+        // probe would wait on the hung port until the test itself timed out.
         const { server, port } = await serve(() => 'hang');
         servers.push(server);
-        const started = Date.now();
         expect(await isSiblingInstance(port, { timeoutMs: 300 })).toBe(false);
-        expect(Date.now() - started).toBeLessThan(5000);
     });
 });

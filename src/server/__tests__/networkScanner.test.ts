@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ScanServerMessage } from '../../common/ScanMessage';
 import type { ParsedSubnet } from '../../common/SubnetParser';
+import { waitFor } from '../../testSupport/waitFor';
 import { NetworkScanner, type NetworkScannerDeps } from '../network/NetworkScanner';
+
+/** A promise the test resolves by hand, to hold a step open until it says so. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+        resolve = r;
+    });
+    return { promise, resolve };
+}
 
 function makeSubnet(hosts: string[]): ParsedSubnet {
     return {
@@ -531,14 +541,17 @@ describe('NetworkScanner — mDNS track', () => {
 
 describe('NetworkScanner — cancel drain', () => {
     it('drains in-flight probes after cancel', async () => {
+        // The probes are held open until the test lets them go, so cancel()
+        // lands while all four are in flight however slowly the box runs.
         let peak = 0;
         let inFlight = 0;
+        const probesHeld = deferred();
         const scanner = new NetworkScanner(
             baseDeps({
                 adbHandshakeProbe: async () => {
                     inFlight++;
                     peak = Math.max(peak, inFlight);
-                    await new Promise((r) => setTimeout(r, 20));
+                    await probesHeld.promise;
                     inFlight--;
                     return { isAdb: false };
                 },
@@ -549,10 +562,13 @@ describe('NetworkScanner — cancel drain', () => {
         const { ws, messages } = makeWs();
         const hosts = Array.from({ length: 100 }, (_, i) => `10.0.0.${i + 1}`);
         const p = scanner.start([makeSubnet(hosts)], ws, 0);
-        setTimeout(() => scanner.cancel(), 5);
+        await waitFor(() => expect(inFlight).toBe(4));
+        scanner.cancel();
+        await waitFor(() => expect(messages.some((m) => m.type === 'scan.draining')).toBe(true));
+        expect(inFlight, 'scan.draining is sent while the probes are still in flight').toBe(4);
+        probesHeld.resolve();
         await p;
 
-        expect(messages.some((m) => m.type === 'scan.draining')).toBe(true);
         expect(messages.some((m) => m.type === 'scan.cancelled')).toBe(true);
         expect(peak).toBeLessThanOrEqual(4);
     });
@@ -560,12 +576,15 @@ describe('NetworkScanner — cancel drain', () => {
 
 describe('NetworkScanner — spectator snapshot', () => {
     it('sends scan.started and last scan.progress to mid-scan spectator', async () => {
+        // The probes are held open until the spectator has attached, so it
+        // attaches mid-scan however slowly the box runs.
         let inFlight = 0;
+        const probesHeld = deferred();
         const scanner = new NetworkScanner(
             baseDeps({
                 adbHandshakeProbe: async () => {
                     inFlight++;
-                    await new Promise((r) => setTimeout(r, 30));
+                    await probesHeld.promise;
                     inFlight--;
                     return { isAdb: false };
                 },
@@ -577,14 +596,13 @@ describe('NetworkScanner — spectator snapshot', () => {
         const hosts = Array.from({ length: 20 }, (_, i) => `10.0.0.${i + 1}`);
         const scanPromise = scanner.start([makeSubnet(hosts)], ws1, 0);
 
-        while (inFlight === 0) await new Promise((r) => setTimeout(r, 5));
-        await new Promise((r) => setTimeout(r, 40));
+        await waitFor(() => expect(inFlight).toBe(2));
 
         const { ws: ws2, messages: spectatorMessages } = makeWs();
         scanner.attachSpectator(ws2, 0);
-        await new Promise((r) => setTimeout(r, 5));
 
         expect(spectatorMessages.some((m) => m.type === 'scan.started')).toBe(true);
+        probesHeld.resolve();
         await scanPromise;
     });
 });
