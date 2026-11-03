@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { refusedSubjectMessage } from '../../common/refusedSubject';
-import { buildHttpsListenerField, TlsApi } from '../api/TlsApi';
+import { buildHttpsListenerField, CA_ROOT_RATE_WINDOW_ENV, TlsApi } from '../api/TlsApi';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
@@ -956,6 +956,50 @@ describe('TlsApi', () => {
             const r = makeReqRes('GET', '/api/tls/ca-root');
             await second.api.handle(r.req, r.res);
             expect(r.getStatus()).toBe(200);
+        });
+
+        // The window, on a fake clock: ten downloads, then the eleventh 61 s
+        // later. The test seam may only LENGTHEN the window (e2e row 21.10 uses
+        // it so its burst cannot outlast a real 60 s on a slow box).
+        describe('the window, and the env seam that can only lengthen it', () => {
+            beforeEach(() => {
+                vi.useFakeTimers({ toFake: ['Date'] });
+                vi.setSystemTime(new Date('2026-11-03T12:00:00Z'));
+            });
+            afterEach(() => {
+                vi.useRealTimers();
+                vi.unstubAllEnvs();
+            });
+
+            async function eleventhAfter(ms: number): Promise<number> {
+                const { api } = makeApi();
+                for (let i = 0; i < 10; i++) {
+                    const r = makeReqRes('GET', '/api/tls/ca-root');
+                    await api.handle(r.req, r.res);
+                    expect(r.getStatus(), `download ${i + 1}`).toBe(200);
+                }
+                vi.advanceTimersByTime(ms);
+                const r = makeReqRes('GET', '/api/tls/ca-root');
+                await api.handle(r.req, r.res);
+                return r.getStatus();
+            }
+
+            it('is 60 s by default: refused inside it, served once the first download ages out', async () => {
+                expect(await eleventhAfter(59_000)).toBe(429);
+                expect(await eleventhAfter(61_000)).toBe(200);
+            });
+
+            it(`${CA_ROOT_RATE_WINDOW_ENV} lengthens it`, async () => {
+                vi.stubEnv(CA_ROOT_RATE_WINDOW_ENV, String(60 * 60_000));
+                expect(await eleventhAfter(61_000)).toBe(429);
+            });
+
+            it(`${CA_ROOT_RATE_WINDOW_ENV} below the default, or not a number, is ignored`, async () => {
+                for (const value of ['1000', '0', '-5', 'soon']) {
+                    vi.stubEnv(CA_ROOT_RATE_WINDOW_ENV, value);
+                    expect(await eleventhAfter(61_000), value).toBe(200);
+                }
+            });
         });
     });
 
