@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { StreamDeepLink, streamDeepLinkUdid } from './streamDeepLink';
+import { devicePropertiesRead, StreamDeepLink, streamDeepLinkUdid } from './streamDeepLink';
 
 describe('streamDeepLinkUdid (#995)', () => {
     it('reads the udid from the link the connect button carries', () => {
@@ -28,11 +28,11 @@ describe('StreamDeepLink (#995)', () => {
         const other = vi.fn(() => true);
         const open = vi.fn(() => true);
 
-        link.offer('dev-2', other);
+        link.offer({ udid: 'dev-2' }, other);
         expect(other).not.toHaveBeenCalled();
         expect(clearHash).not.toHaveBeenCalled();
 
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, open);
         expect(open).toHaveBeenCalledTimes(1);
         expect(clearHash).toHaveBeenCalledTimes(1);
     });
@@ -41,9 +41,9 @@ describe('StreamDeepLink (#995)', () => {
         const link = new StreamDeepLink('#!action=stream&udid=dev-1', vi.fn());
         const open = vi.fn(() => true);
 
-        link.offer('dev-1', open);
-        link.offer('dev-1', open);
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, open);
+        link.offer({ udid: 'dev-1' }, open);
+        link.offer({ udid: 'dev-1' }, open);
         expect(open).toHaveBeenCalledTimes(1);
     });
 
@@ -57,7 +57,7 @@ describe('StreamDeepLink (#995)', () => {
         expect(clearHash).not.toHaveBeenCalled();
 
         // It connects a moment later.
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, open);
         expect(open).toHaveBeenCalledTimes(1);
         expect(clearHash).toHaveBeenCalledTimes(1);
     });
@@ -67,8 +67,8 @@ describe('StreamDeepLink (#995)', () => {
         const stale = vi.fn(() => false);
         const open = vi.fn(() => true);
 
-        link.offer('dev-1', stale);
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, stale);
+        link.offer({ udid: 'dev-1' }, open);
         expect(stale).toHaveBeenCalledTimes(1);
         expect(open).toHaveBeenCalledTimes(1);
     });
@@ -78,7 +78,7 @@ describe('StreamDeepLink (#995)', () => {
         const link = new StreamDeepLink('', clearHash);
         const open = vi.fn(() => true);
 
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, open);
         expect(open).not.toHaveBeenCalled();
         expect(clearHash).not.toHaveBeenCalled();
     });
@@ -87,7 +87,7 @@ describe('StreamDeepLink (#995)', () => {
         const clearHash = vi.fn();
         const link = new StreamDeepLink('', clearHash);
         const open = vi.fn(() => true);
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, open);
 
         link.onHashChange('#!action=stream&udid=dev-1');
         expect(open).toHaveBeenCalledTimes(1);
@@ -101,14 +101,14 @@ describe('StreamDeepLink (#995)', () => {
         link.onHashChange('#!action=stream&udid=dev-1');
         expect(open).not.toHaveBeenCalled();
 
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, open);
         expect(open).toHaveBeenCalledTimes(1);
     });
 
     it('does not use the opener of a device that has gone offline', () => {
         const link = new StreamDeepLink('', vi.fn());
         const open = vi.fn(() => true);
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, open);
         link.withdraw('dev-1');
 
         link.onHashChange('#!action=stream&udid=dev-1');
@@ -119,11 +119,48 @@ describe('StreamDeepLink (#995)', () => {
         const clearHash = vi.fn();
         const link = new StreamDeepLink('', clearHash);
         const open = vi.fn(() => true);
-        link.offer('dev-1', open);
+        link.offer({ udid: 'dev-1' }, open);
 
         link.onHashChange('');
         link.onHashChange('#!action=shell&udid=dev-1');
         expect(open).not.toHaveBeenCalled();
         expect(clearHash).not.toHaveBeenCalled();
+    });
+});
+
+describe('devicePropertiesRead (#995 review)', () => {
+    it('is false for the first device-state record, sent before getprop answers', () => {
+        expect(devicePropertiesRead({ 'ro.build.version.sdk': '' })).toBe(false);
+    });
+
+    it('is true once the record carries the SDK level', () => {
+        expect(devicePropertiesRead({ 'ro.build.version.sdk': '34' })).toBe(true);
+    });
+});
+
+describe('StreamDeepLink matches a device by its serial too (#995 review)', () => {
+    it('opens a Wi-Fi device linked by its serial rather than its address', () => {
+        const link = new StreamDeepLink('#!action=stream&udid=SERIAL123', vi.fn());
+        const open = vi.fn(() => true);
+
+        link.offer({ udid: '192.168.1.20:5555', serial: 'SERIAL123' }, open);
+        expect(open).toHaveBeenCalledTimes(1);
+    });
+
+    it('finds a listed device by its serial when the link is entered in the same tab', () => {
+        const link = new StreamDeepLink('', vi.fn());
+        const open = vi.fn(() => true);
+        link.offer({ udid: '192.168.1.20:5555', serial: 'SERIAL123' }, open);
+
+        link.onHashChange('#!action=stream&udid=SERIAL123');
+        expect(open).toHaveBeenCalledTimes(1);
+    });
+
+    it('never matches an empty serial', () => {
+        const link = new StreamDeepLink('#!action=stream&udid=dev-1', vi.fn());
+        const open = vi.fn(() => true);
+
+        link.offer({ udid: 'other', serial: '' }, open);
+        expect(open).not.toHaveBeenCalled();
     });
 });

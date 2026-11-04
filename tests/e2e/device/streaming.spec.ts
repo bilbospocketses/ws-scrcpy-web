@@ -1247,6 +1247,9 @@ test.describe('device streaming (smoke §8)', () => {
                 page.locator('dialog.connect-modal[open]'),
                 'the ctrl+click must not also open the stream in the first tab',
             ).toHaveCount(0);
+            // Close the stream first: a tab closed mid-stream leaves the next row
+            // to start while the server is still tearing that session down.
+            await closeStream(tab);
             await tab.close();
         });
     });

@@ -16,7 +16,7 @@ import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
 import { bindDeviceSettings } from './deviceSettingsBinding';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
-import { pageStreamDeepLink } from './streamDeepLink';
+import { devicePropertiesRead, pageStreamDeepLink } from './streamDeepLink';
 
 // ---------- capability gating ----------
 
@@ -410,18 +410,30 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         });
 
         // #995: a page loaded from a stream link (`#!action=stream&udid=...`)
-        // opens this device's stream as soon as its connect button exists.
+        // opens this device's stream as soon as its connect button exists and
+        // the server has read the device's properties (devicePropertiesRead):
+        // until then the card has no name, no serial binding and no SDK level.
         const deepLink = pageStreamDeepLink();
         const connectLink = connectLinks[0];
-        if (connectLink) {
-            deepLink.offer(device.udid, () => {
+        if (connectLink && devicePropertiesRead(device)) {
+            deepLink.offer({ udid: device.udid, serial: device['ro.serialno'] }, () => {
                 if (!connectLink.isConnected) return false;
-                void this.openConnectModal(device, connectLink);
+                // Entered again while this device's stream is open: that stream
+                // is the answer, not a second one stacked on top of it.
+                if (!DeviceTracker.streamOpenFor(device.udid)) {
+                    void this.openConnectModal(device, connectLink);
+                }
                 return true;
             });
         } else {
             deepLink.withdraw(device.udid);
         }
+    }
+
+    private static streamOpenFor(udid: string): boolean {
+        return Array.from(document.querySelectorAll<HTMLDialogElement>('dialog.connect-modal[open]')).some(
+            (dialog) => dialog.dataset['udid'] === udid,
+        );
     }
 
     /** What the connect button does: open ConnectModal for this device. */
