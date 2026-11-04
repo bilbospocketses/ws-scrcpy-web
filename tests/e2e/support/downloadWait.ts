@@ -94,24 +94,69 @@ export function serverIsLocal(baseURL?: string): boolean {
  * None where the server is not local (`serverIsLocal`): the directories seen
  * here would be some other server's, so the wait falls back to watching the
  * status alone, with the long status-only window, and says so.
+ *
+ * Only directories that can still be live are read. A server stopped
+ * mid-download (TerminateProcess on Windows) leaves its directory behind, and
+ * they pile up: one development box held 560 of them, 234,608 files and 34 GiB,
+ * and reading them all took 45 s per poll. So a directory last written over
+ * SCRATCH_LOOKBACK_MS ago is never read, and one unchanged for
+ * SCRATCH_DEAD_AFTER_MS (longer than any stall window, so a paused download
+ * cannot be dropped while its wait still watches it) is read no more; its last
+ * reading stays in the total, so dropping it is not mistaken for progress.
  */
-export function localDownloadProgress(baseURL?: string): ProgressProbe {
+export function localDownloadProgress(baseURL?: string, root = E2E_TEMP_ROOT): ProgressProbe {
     if (!serverIsLocal(baseURL)) return () => null;
+    const watched = new Map<string, { reading: string; files: number; bytes: number; since: number }>();
+    const frozen = new Set<string>();
     return () => {
         let entries: Dirent[];
         try {
-            entries = readdirSync(E2E_TEMP_ROOT, { withFileTypes: true });
+            entries = readdirSync(root, { withFileTypes: true });
         } catch {
             return null;
         }
+        const now = Date.now();
         const total = { files: 0, bytes: 0 };
         for (const e of entries) {
-            if (e.isDirectory() && e.name.startsWith(UPDATE_DIR_PREFIX))
-                addTree(path.join(E2E_TEMP_ROOT, e.name), total);
+            if (!e.isDirectory() || !e.name.startsWith(UPDATE_DIR_PREFIX)) continue;
+            const dir = path.join(root, e.name);
+            const last = watched.get(dir);
+            if (!frozen.has(dir)) {
+                if (last === undefined) {
+                    let mtimeMs: number;
+                    try {
+                        mtimeMs = statSync(dir).mtimeMs;
+                    } catch {
+                        continue; // removed between the listing and the stat
+                    }
+                    if (now - mtimeMs > SCRATCH_LOOKBACK_MS) {
+                        frozen.add(dir); // a leftover: contributes nothing, ever
+                        continue;
+                    }
+                }
+                const tree = { files: 0, bytes: 0 };
+                addTree(dir, tree);
+                const reading = `${tree.files}/${tree.bytes}`;
+                if (last === undefined || last.reading !== reading) {
+                    watched.set(dir, { reading, ...tree, since: now });
+                } else if (now - last.since > SCRATCH_DEAD_AFTER_MS) {
+                    frozen.add(dir);
+                }
+            }
+            const counted = watched.get(dir);
+            if (counted) {
+                total.files += counted.files;
+                total.bytes += counted.bytes;
+            }
         }
         return `${total.files} files, ${total.bytes} bytes in update scratch dirs`;
     };
 }
+
+/** An update scratch directory last written longer ago than this is a leftover, never read. */
+const SCRATCH_LOOKBACK_MS = 24 * 60 * 60_000;
+/** A scratch directory unchanged for this long is read no more (longer than any stall window). */
+const SCRATCH_DEAD_AFTER_MS = 2 * STATUS_ONLY_STALL_MS;
 
 const DU = 'du -sk /tmp /data 2>/dev/null; true';
 

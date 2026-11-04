@@ -1,5 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { localDownloadProgress, serverIsLocal, whileDownloading } from '../e2e/support/downloadWait';
+import { E2E_TEMP_ROOT } from '../e2e/support/paths';
 
 // The e2e suite's no-progress download waits (tests/e2e/support/downloadWait.ts).
 // Pure enough to run here: nothing below calls into a Playwright test.
@@ -56,6 +60,45 @@ describe('whileDownloading', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('localDownloadProgress reads live scratch dirs only', () => {
+    // A temp root of its own, so a download another run has in flight on this
+    // box cannot move the totals under the test.
+    let root = '';
+    afterEach(() => {
+        if (root) rmSync(root, { recursive: true, force: true });
+        root = '';
+    });
+
+    function scratchDir(): string {
+        root ||= mkdtempSync(path.join(E2E_TEMP_ROOT, 'wssw-unit-scratch-'));
+        const dir = path.join(root, `ws-scrcpy-web-update-unit-${randomUUID()}`);
+        mkdirSync(dir, { recursive: true });
+        return dir;
+    }
+
+    it('counts a download growing in a fresh scratch dir, and ignores a leftover from days ago', () => {
+        const leftover = scratchDir();
+        writeFileSync(path.join(leftover, 'node.tar.xz'), Buffer.alloc(1_000_000));
+        const old = new Date(Date.now() - 3 * 24 * 60 * 60_000);
+        utimesSync(leftover, old, old);
+        const live = scratchDir();
+        const archive = path.join(live, 'adb.zip');
+        writeFileSync(archive, Buffer.alloc(1_000));
+
+        const probe = localDownloadProgress('http://127.0.0.1:8145', root);
+        const sizes = (reading: string | null) => Number(/(\d+) bytes/.exec(reading ?? '')?.[1]);
+        const before = sizes(probe());
+        expect(before, 'only the live dir is counted, not the 1 MB leftover').toBe(1_000);
+        appendFileSync(archive, Buffer.alloc(4_000));
+        const after = sizes(probe());
+
+        expect(after - before, 'the growing download is seen').toBe(4_000);
+        // The 1 MB leftover was never in the total: removing it changes nothing.
+        rmSync(leftover, { recursive: true, force: true });
+        expect(sizes(probe()), 'the leftover from days ago was not counted').toBe(after);
     });
 });
 
