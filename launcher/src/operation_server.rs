@@ -459,22 +459,33 @@ fn find_and_extract_nupkg(
     // Pass 1, before anything is written: every entry must read with its
     // local header matching its central-directory record (zip's
     // `enforce_header_consistency`, the GHSA-m665-v7pm-7grj "zip cloaking"
-    // check, which `by_index` alone does not apply) and must have a safe
-    // path. Any that does not refuses the whole update, so `current/` is
-    // never left half-replaced, and no payload file is dropped while the
+    // check, which `by_index` alone does not apply), and every payload
+    // (`lib/app/`) entry must have a safe path. One that fails refuses the
+    // whole update before anything is written, so a bad entry never leaves
+    // `current/` partly replaced, and no payload file is dropped while the
     // update reports success (zip 9's `enclosed_name()` also refuses
-    // Windows-reserved names such as `aux.js` or `con.txt`).
+    // Windows-reserved names such as `aux.js` or `con.txt`). An unsafe name
+    // outside the payload is skipped: it would never be written anyway.
     let mut targets: Vec<(usize, PathBuf)> = Vec::new();
     for i in 0..archive.len() {
         let entry = archive
             .by_index_with_options(i, nupkg_read_options())
             .map_err(|e| format!("refusing update: nupkg entry {i}: {e}"))?;
-        let enclosed = entry.enclosed_name().ok_or_else(|| {
-            format!(
-                "refusing update: unsafe nupkg entry name {:?}",
-                entry.name().map(|n| n.into_owned()).unwrap_or_default()
-            )
-        })?;
+        let enclosed = match entry.enclosed_name() {
+            Some(p) => p,
+            None => {
+                let raw = entry.name().map(|n| n.into_owned()).unwrap_or_default();
+                // Outside the payload it would never be written: skip it. Inside
+                // it, a file the update needs would be missing: refuse.
+                if raw.replace('\\', "/").starts_with("lib/app/") {
+                    return Err(format!("refusing update: unsafe nupkg entry name {raw:?}"));
+                }
+                log::error(&format!(
+                    "operation-server: skipping unsafe nupkg entry outside lib/app/: {raw:?}"
+                ));
+                continue;
+            }
+        };
         // enclosed_name() already collapses `..` and drops a root or drive
         // prefix; normalizing again keeps the post-strip remainder free of
         // any traversal whatever a future zip version does.
@@ -2061,7 +2072,34 @@ mod tests {
 
         let nupkg = packages.join("pkg-1.0.0-full.nupkg");
         // The good entry comes FIRST: a one-pass extractor would already have
-        // written it when it reached the bad one.
+        // written it when it reached the bad one. The bad one is in the
+        // payload and climbs out of the archive root, so it has no safe path.
+        build_nupkg(
+            &nupkg,
+            &[
+                ("lib/app/ok.txt", b"good"),
+                ("lib/app/../../../escape.txt", b"PWNED"),
+            ],
+        );
+        let sha = super::sha256_hex_of_file(&nupkg).expect("hash");
+        let m = manifest("pkg-1.0.0-full.nupkg", &sha, "1.0.0");
+
+        let err = super::find_and_extract_nupkg(&packages, &current, &m)
+            .expect_err("a payload entry with no safe path must refuse the update");
+        assert!(err.contains("unsafe nupkg entry name"), "{err}");
+        assert!(!current.join("ok.txt").exists());
+        assert!(!tmp.path().join("escape.txt").exists());
+    }
+
+    #[test]
+    fn find_and_extract_nupkg_skips_an_unsafe_entry_outside_the_payload() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let packages = tmp.path().join("packages");
+        let current = tmp.path().join("current");
+        std::fs::create_dir_all(&packages).expect("mkdir packages");
+        std::fs::create_dir_all(&current).expect("mkdir current");
+
+        let nupkg = packages.join("pkg-1.0.0-full.nupkg");
         build_nupkg(
             &nupkg,
             &[("lib/app/ok.txt", b"good"), ("../escape.txt", b"PWNED")],
@@ -2069,10 +2107,9 @@ mod tests {
         let sha = super::sha256_hex_of_file(&nupkg).expect("hash");
         let m = manifest("pkg-1.0.0-full.nupkg", &sha, "1.0.0");
 
-        let err = super::find_and_extract_nupkg(&packages, &current, &m)
-            .expect_err("an entry with no safe path must refuse the update");
-        assert!(err.contains("unsafe nupkg entry name"), "{err}");
-        assert!(!current.join("ok.txt").exists());
+        // Outside lib/app/ it would never be written, so it costs the update nothing.
+        super::find_and_extract_nupkg(&packages, &current, &m).expect("extract");
+        assert!(current.join("ok.txt").exists());
         assert!(!tmp.path().join("escape.txt").exists());
     }
 
