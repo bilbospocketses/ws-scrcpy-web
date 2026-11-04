@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Dependency updates, and an update-path check of 0.5.12.** `ws` 8.22.1, `webpack-cli` 7.3.1, `@swc/core` 1.16.21 and `@biomejs/biome` 2.6.4 (its `biome.json` schema moved with it), and `docker/scout-action` 1.29.0 in the image publish workflow. Nothing else changes from 0.5.12: this release is also the first real update an installed 0.5.12 applies, which runs 0.5.12's hardened update extraction (`zip` 9.3 with the header-consistency check) on a real install.
+
 ## [0.5.12] - 2026-11-04
 
 ### Added
