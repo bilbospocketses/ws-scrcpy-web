@@ -1197,7 +1197,7 @@ test.describe('auth / opt-in login (smoke §18)', () => {
         }
     });
 
-    test('18.23 a stream link survives sign-in: the login page returns to the same link once signed in', async () => {
+    test('18.24 a stream link survives sign-in: the login page returns to the same link once signed in', async () => {
         // #995: `/#!action=stream&udid=<serial>` opens that device's stream. In
         // locked mode the login page is served at that URL; the stream can open
         // only if signing in lands back on the link rather than on a bare `/`.

@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs(smoke): the stream-link sign-in row is 18.24, not 18.23.** 0.5.12 numbered it 18.23, an id the register already gives a finding (in open mode a logout closes that browser's sockets), which future rows must skip. Row, register entries and the `auth.spec.ts` title move to 18.24; the finding keeps 18.23.
+- **docs: the technical guide says the device list leaves a service install's stale-token reload to the hand-off.** Its per-instance token paragraph said a stale-token 403 always stops the retry loop and reloads the page; since 0.5.11 (#983) the loop keeps retrying while an install hand-off is in progress (`isInstallHandoffInProgress`), and §19.4's install bullet now says the hand-off owns that reload.
+- **docs: the technical guide's environment-variable table (§9.4) lists `WS_SCRCPY_CA_ROOT_RATE_WINDOW_MS`**, 0.5.12's ca-root rate-window seam, beside the other test seams; its row matches the README's.
+- **docs(smoke): register row 21.10 no longer says "ten downloads within 60 s".** Since 0.5.12 its spec-owned server runs a one-hour rate window through `WS_SCRCPY_CA_ROOT_RATE_WINDOW_MS`, so the eleven requests share one window however slowly they run.
+- **docs: CONTRIBUTING.md says how a test waits.** A unit test uses `waitFor` from `src/testSupport/waitFor.ts` (120 s, failing as `HUNG`), never a short `vi.waitFor` budget; e2e waits follow `tests/e2e/README.md`'s "Waits are hang guards, never speed checks" section.
+- **docs: the technical guide's service components table (§19.6) gains `launcher/src/servy_recovery.rs`**, 0.5.11's crash-recovery install flags and the startup repair of a service installed before them.
+- **docs: the README's feature list names stream links**: the connect button's link opens that device's stream, can be bookmarked, and opens in a new tab on ctrl/cmd+click or middle-click.
+- **docs(smoke): register rows 7.1 and 7.4 say they are quiet-box-only timing rows**, as `device/connect.spec.ts` has marked them since 0.5.12 (#996): their latency bounds are the behavior under test.
+- **docs: the README's glibc requirement says 2.34, not 2.31.** The node-pty prebuilts have had a 2.34 floor since 0.5.12 (#992), so RHEL 9, Ubuntu 22.04 and Debian 12 or newer work, and Ubuntu 20.04 or Debian 11 cannot load the terminal binary.
+- **docs(e2e): the e2e README says how a spec waits.** A new section, "Waits are hang guards, never speed checks", points at `WAIT_MS` and `TEST_MS` in `support/timeouts.ts` and at the no-progress download waits in `support/downloadWait.ts` (#996), so a new spec does not reintroduce a short timeout.
+
 ## [0.5.13] - 2026-11-04
 
 ### Changed
