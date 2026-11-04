@@ -96,7 +96,11 @@ fn unzip_impl(src: &Path, dest: &Path) -> i32 {
             None => {
                 log::error(&format!(
                     "unzip: skipping unsafe entry name: {}",
-                    entry.name()
+                    entry
+                        .name()
+                        .unwrap_or_else(|e| std::borrow::Cow::Owned(format!(
+                            "<unreadable name: {e}>"
+                        )))
                 ));
                 continue;
             }
@@ -186,5 +190,38 @@ mod tests {
         ];
         // dispatch fires, file-open fails → exit 3
         assert_eq!(handle(&args), Some(3));
+    }
+
+    /// A real archive through the real extract path (zip 9, GHSA-m665-v7pm-7grj):
+    /// a nested file lands with its bytes, and a `..` entry is skipped rather
+    /// than written outside dest.
+    #[test]
+    fn handle_extracts_a_real_archive_and_skips_an_escaping_entry() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("deps.zip");
+        {
+            let mut zw = zip::ZipWriter::new(File::create(&src).unwrap());
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("platform-tools/adb", opts).unwrap();
+            zw.write_all(b"adb-bytes").unwrap();
+            zw.start_file("../escaped.txt", opts).unwrap();
+            zw.write_all(b"must not land").unwrap();
+            zw.finish().unwrap();
+        }
+        let dest = tmp.path().join("out");
+        let args = vec![
+            "launcher.exe".to_string(),
+            "--unzip".to_string(),
+            src.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+        ];
+        assert_eq!(handle(&args), Some(0));
+        assert_eq!(
+            fs::read(dest.join("platform-tools").join("adb")).unwrap(),
+            b"adb-bytes"
+        );
+        assert!(!tmp.path().join("escaped.txt").exists());
+        assert!(!dest.join("escaped.txt").exists());
     }
 }

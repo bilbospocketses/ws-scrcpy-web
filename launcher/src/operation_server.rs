@@ -461,7 +461,11 @@ fn find_and_extract_nupkg(
             None => {
                 log::error(&format!(
                     "operation-server: skipping unsafe nupkg entry: {}",
-                    entry.name()
+                    entry
+                        .name()
+                        .unwrap_or_else(|e| std::borrow::Cow::Owned(format!(
+                            "<unreadable name: {e}>"
+                        )))
                 ));
                 continue;
             }
@@ -1962,7 +1966,7 @@ mod tests {
             let mut ar = zip::ZipArchive::new(f).unwrap();
             let mut found = false;
             for i in 0..ar.len() {
-                if ar.by_index(i).unwrap().name().contains("..") {
+                if ar.by_index(i).unwrap().name().unwrap().contains("..") {
                     found = true;
                 }
             }
