@@ -231,6 +231,29 @@ export interface DownloadWait {
     progress: ProgressProbe;
     /** The stall window while the bytes on disk are watched. */
     stallMs?: number;
+    /**
+     * False when `read` reports no dependency status, only whether a reply has
+     * come (`whileDownloading` with no `status`): the HUNG text then names only
+     * what was watched.
+     */
+    statusWatched?: boolean;
+}
+
+function hungText(wait: DownloadWait, window: number, summary: string, bytes: string | null): string {
+    const s = window / 1000;
+    if (wait.statusWatched === false) {
+        return bytes !== null
+            ? `HUNG: ${wait.what}: no reply, and the bytes on disk did not change for ${s} s. On disk: ${bytes}`
+            : `HUNG: ${wait.what}: no reply for ${s} s. Nothing else was watched: this run has no view of the ` +
+                  "bytes on disk and the server's status was not read, so a download still running would read " +
+                  'as stalled too.';
+    }
+    return bytes !== null
+        ? `HUNG: ${wait.what}: neither the dependency list nor the bytes on disk changed for ${s} s. ` +
+              `Dependencies: ${summary}. On disk: ${bytes}`
+        : `HUNG: ${wait.what}: the dependency status did not change for ${s} s. Only the status was watched: this ` +
+              'run has no view of the bytes on disk, so a download still running would read as stalled too. ' +
+              `Dependencies: ${summary}`;
 }
 
 /** Poll `read` until done; fail as HUNG only when neither it nor the bytes on disk change for the stall window. */
@@ -250,16 +273,7 @@ export async function waitForDownloads(wait: DownloadWait): Promise<void> {
             changedAt = Date.now();
         } else {
             const window = bytes !== null ? stallMs : STATUS_ONLY_STALL_MS;
-            if (Date.now() - changedAt > window) {
-                throw new Error(
-                    bytes !== null
-                        ? `HUNG: ${wait.what}: neither the dependency list nor the bytes on disk changed for ` +
-                              `${window / 1000} s. Dependencies: ${summary}. On disk: ${bytes}`
-                        : `HUNG: ${wait.what}: the dependency status did not change for ${window / 1000} s. Only the ` +
-                              'status was watched: this run has no view of the bytes on disk, so a download still ' +
-                              `running would read as stalled too. Dependencies: ${summary}`,
-                );
-            }
+            if (Date.now() - changedAt > window) throw new Error(hungText(wait, window, summary, bytes));
         }
         await new Promise((r) => setTimeout(r, 1_000));
     }
@@ -293,6 +307,7 @@ export async function whileDownloading<T>(reply: Promise<T>, wait: ReplyWait): P
         what: wait.what,
         progress: wait.progress,
         ...(wait.stallMs === undefined ? {} : { stallMs: wait.stallMs }),
+        statusWatched: wait.status !== undefined,
         read: async () => {
             if (settled) return { done: true, summary: '' };
             if (!wait.status) return { done: false, summary: 'waiting for the reply' };

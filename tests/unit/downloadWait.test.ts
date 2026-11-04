@@ -46,20 +46,51 @@ describe('whileDownloading', () => {
         ).rejects.toThrow(/^HUNG: the stuck reply: neither the dependency list nor the bytes on disk changed/);
     });
 
-    it('says plainly when only the status was watched', async () => {
+    it('with no status read, the HUNG names only the reply and the bytes', async () => {
+        const never = new Promise<string>(() => {});
+        const failure = whileDownloading(never, {
+            what: 'the update reply',
+            progress: () => '7 files, 100 bytes',
+            stallMs: 1,
+        }).catch((err: Error) => err.message);
+        const message = await failure;
+        expect(message).toMatch(
+            /^HUNG: the update reply: no reply, and the bytes on disk did not change for 0\.001 s\. On disk: 7 files, 100 bytes$/,
+        );
+        expect(message).not.toMatch(/dependency/);
+    });
+
+    /** A wait with no view of the bytes, failed past the status-only window without spending it. */
+    async function statusOnlyFailure(status?: () => Promise<string>): Promise<string> {
         vi.useFakeTimers({ toFake: ['Date'] });
         try {
             const never = new Promise<string>(() => {});
-            const waiting = whileDownloading(never, { what: 'a remote reply', progress: () => null });
-            waiting.catch(() => {});
-            // Once the first poll has recorded the status, jump past the
-            // status-only window: the next poll sees it, without spending it.
+            const failure = whileDownloading(never, {
+                what: 'a remote reply',
+                progress: () => null,
+                ...(status ? { status } : {}),
+            }).catch((err: Error) => err.message);
+            // Once the first poll has recorded where things stand, jump past the
+            // status-only window: the next poll sees it.
             await new Promise((r) => setTimeout(r, 1_200));
             vi.setSystemTime(Date.now() + 11 * 60_000);
-            await expect(waiting).rejects.toThrow(/Only the status was watched/);
+            return await failure;
         } finally {
             vi.useRealTimers();
         }
+    }
+
+    it('says plainly when only the status was watched', async () => {
+        const message = await statusOnlyFailure(async () => 'adb=updating');
+        expect(message).toMatch(/^HUNG: a remote reply: the dependency status did not change for 600 s\./);
+        expect(message).toMatch(/Only the status was watched/);
+        expect(message).toMatch(/Dependencies: adb=updating$/);
+    });
+
+    it('says plainly when neither the status nor the bytes could be watched', async () => {
+        const message = await statusOnlyFailure();
+        expect(message).toMatch(/^HUNG: a remote reply: no reply for 600 s\. Nothing else was watched/);
+        expect(message).not.toMatch(/dependency status/);
     });
 });
 
@@ -99,6 +130,26 @@ describe('localDownloadProgress reads live scratch dirs only', () => {
         // The 1 MB leftover was never in the total: removing it changes nothing.
         rmSync(leftover, { recursive: true, force: true });
         expect(sizes(probe()), 'the leftover from days ago was not counted').toBe(after);
+    });
+
+    it('freezes a dir unchanged for 20 minutes at its last reading, and reads it no more', () => {
+        const live = scratchDir();
+        const archive = path.join(live, 'adb.zip');
+        writeFileSync(archive, Buffer.alloc(1_000));
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            const probe = localDownloadProgress('http://127.0.0.1:8145', root);
+            const sizes = (reading: string | null) => Number(/(\d+) bytes/.exec(reading ?? '')?.[1]);
+            expect(sizes(probe())).toBe(1_000);
+            // Unchanged past the dead-after window: this reading freezes it.
+            vi.setSystemTime(Date.now() + 21 * 60_000);
+            expect(sizes(probe()), 'a frozen dir keeps its last reading in the total').toBe(1_000);
+            // It is read no more: growth after the freeze does not move the total.
+            appendFileSync(archive, Buffer.alloc(4_000));
+            expect(sizes(probe()), 'a frozen dir is not read again').toBe(1_000);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 
