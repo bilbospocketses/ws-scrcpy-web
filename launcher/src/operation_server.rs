@@ -384,11 +384,17 @@ fn is_bare_filename(name: &str) -> bool {
     )
 }
 
-/// Lexically collapse `.`/`..` in a relative path. `enclosed_name()` already
-/// guarantees the NET path can't escape the archive root, but it may keep
-/// interior `..` un-collapsed — and we strip a `lib/app/` prefix afterwards,
-/// which would otherwise let `lib/app/../x` become `../x`. Normalizing first
-/// keeps the post-strip remainder free of any traversal. Drops any leading
+/// Read options for a nupkg entry: refuse an entry whose local header
+/// disagrees with its central-directory record (GHSA-m665-v7pm-7grj).
+fn nupkg_read_options() -> zip::read::ZipReadOptions<'static> {
+    zip::read::ZipReadOptions::new().enforce_header_consistency(true)
+}
+
+/// Lexically collapse `.`/`..` in a relative path. zip 9's `enclosed_name()`
+/// already collapses interior `..` and drops a root or drive prefix, and we
+/// strip a `lib/app/` prefix afterwards, which an un-collapsed `lib/app/../x`
+/// would turn into `../x`. Normalizing again keeps the post-strip remainder
+/// free of any traversal whatever a zip version does. Drops any leading
 /// `..`/root components defensively (an enclosed name has none).
 fn normalize_relative(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -410,8 +416,9 @@ fn normalize_relative(p: &Path) -> PathBuf {
 /// selected by the EXACT filename in `manifest` (never "newest file in the
 /// dir", which a dropped decoy could win) and its SHA-256 is checked against
 /// `manifest.sha256` BEFORE any extraction — fail-closed, because the nupkg
-/// lives in the user-writable `packages/` dir. Entry paths are constrained
-/// with `enclosed_name()` (zip-slip defense), and the version is taken from
+/// lives in the user-writable `packages/` dir. Every entry is vetted before
+/// any is written (header consistency, `enclosed_name()` zip-slip defense);
+/// one bad entry refuses the whole update. The version is taken from
 /// the manifest, not the (attacker-influenceable) archive filename. Replaces
 /// Update.exe for local-mode updates — no rename dance, no CWD handle locks.
 fn find_and_extract_nupkg(
@@ -447,39 +454,46 @@ fn find_and_extract_nupkg(
     let file = std::fs::File::open(&nupkg_path).map_err(|e| format!("cannot open nupkg: {e}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("cannot read nupkg as zip: {e}"))?;
-
     let prefix = std::path::Path::new("lib").join("app");
-    let mut extracted = 0u32;
+
+    // Pass 1, before anything is written: every entry must read with its
+    // local header matching its central-directory record (zip's
+    // `enforce_header_consistency`, the GHSA-m665-v7pm-7grj "zip cloaking"
+    // check, which `by_index` alone does not apply) and must have a safe
+    // path. Any that does not refuses the whole update, so `current/` is
+    // never left half-replaced, and no payload file is dropped while the
+    // update reports success (zip 9's `enclosed_name()` also refuses
+    // Windows-reserved names such as `aux.js` or `con.txt`).
+    let mut targets: Vec<(usize, PathBuf)> = Vec::new();
     for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| format!("zip entry {i}: {e}"))?;
-        // Zip-slip defense: enclosed_name() is None for any entry that would
-        // escape the archive root (absolute, drive-prefixed, or `..`).
-        let enclosed = match entry.enclosed_name() {
-            Some(p) => p,
-            None => {
-                log::error(&format!(
-                    "operation-server: skipping unsafe nupkg entry: {}",
-                    entry
-                        .name()
-                        .unwrap_or_else(|e| std::borrow::Cow::Owned(format!(
-                            "<unreadable name: {e}>"
-                        )))
-                ));
-                continue;
-            }
-        };
+        let entry = archive
+            .by_index_with_options(i, nupkg_read_options())
+            .map_err(|e| format!("refusing update: nupkg entry {i}: {e}"))?;
+        let enclosed = entry.enclosed_name().ok_or_else(|| {
+            format!(
+                "refusing update: unsafe nupkg entry name {:?}",
+                entry.name().map(|n| n.into_owned()).unwrap_or_default()
+            )
+        })?;
+        // enclosed_name() already collapses `..` and drops a root or drive
+        // prefix; normalizing again keeps the post-strip remainder free of
+        // any traversal whatever a future zip version does.
         let normalized = normalize_relative(&enclosed);
         // Only the app payload under lib/app/ is extracted, into current/.
-        let relative = match normalized.strip_prefix(&prefix) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        if relative.as_os_str().is_empty() {
-            continue;
+        if let Ok(relative) = normalized.strip_prefix(&prefix) {
+            if !relative.as_os_str().is_empty() {
+                targets.push((i, relative.to_path_buf()));
+            }
         }
-        let dest = current_dir.join(relative);
+    }
+
+    // Pass 2: write the vetted entries.
+    let mut extracted = 0u32;
+    for (i, relative) in targets {
+        let mut entry = archive
+            .by_index_with_options(i, nupkg_read_options())
+            .map_err(|e| format!("zip entry {i}: {e}"))?;
+        let dest = current_dir.join(&relative);
         if entry.is_dir() {
             let _ = std::fs::create_dir_all(&dest);
         } else {
@@ -1990,6 +2004,76 @@ mod tests {
             !tmp.path().join("escape.txt").exists(),
             "zip-slip entry escaped current/ — traversal not blocked"
         );
+    }
+
+    /// Write a nupkg, then rewrite the FIRST entry's name in the central
+    /// directory only, so its local header still names `local_name`: the
+    /// "zip cloaking" shape of GHSA-m665-v7pm-7grj. Both names must be the
+    /// same length.
+    fn build_cloaked_nupkg(path: &std::path::Path, local_name: &str, central_name: &str) {
+        assert_eq!(local_name.len(), central_name.len());
+        build_nupkg(path, &[(local_name, b"PWNED"), ("lib/app/ok.txt", b"good")]);
+        let mut z = std::fs::read(path).unwrap();
+        let cdh = z
+            .windows(4)
+            .position(|s| s == b"PK\x01\x02")
+            .expect("central directory header");
+        z[cdh + 46..cdh + 46 + central_name.len()].copy_from_slice(central_name.as_bytes());
+        std::fs::write(path, z).unwrap();
+    }
+
+    #[test]
+    fn find_and_extract_nupkg_refuses_a_cloaked_entry_and_writes_nothing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let packages = tmp.path().join("packages");
+        let current = tmp.path().join("current");
+        std::fs::create_dir_all(&packages).expect("mkdir packages");
+        std::fs::create_dir_all(&current).expect("mkdir current");
+
+        let nupkg = packages.join("pkg-1.0.0-full.nupkg");
+        build_cloaked_nupkg(&nupkg, "lib/app/evil.sh", "lib/app/okay.js");
+        // Fixture sanity: a plain read sees the central-directory name, so
+        // without the consistency check this entry would extract as okay.js.
+        {
+            let mut ar = zip::ZipArchive::new(std::fs::File::open(&nupkg).unwrap()).unwrap();
+            assert_eq!(ar.by_index(0).unwrap().name().unwrap(), "lib/app/okay.js");
+        }
+        let sha = super::sha256_hex_of_file(&nupkg).expect("hash");
+        let m = manifest("pkg-1.0.0-full.nupkg", &sha, "1.0.0");
+
+        let err = super::find_and_extract_nupkg(&packages, &current, &m)
+            .expect_err("a cloaked entry must refuse the update");
+        assert!(err.starts_with("refusing update"), "{err}");
+        assert!(!current.join("okay.js").exists());
+        assert!(
+            !current.join("ok.txt").exists(),
+            "nothing may be written when any entry is refused"
+        );
+    }
+
+    #[test]
+    fn find_and_extract_nupkg_refuses_an_unsafe_entry_name_before_writing_anything() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let packages = tmp.path().join("packages");
+        let current = tmp.path().join("current");
+        std::fs::create_dir_all(&packages).expect("mkdir packages");
+        std::fs::create_dir_all(&current).expect("mkdir current");
+
+        let nupkg = packages.join("pkg-1.0.0-full.nupkg");
+        // The good entry comes FIRST: a one-pass extractor would already have
+        // written it when it reached the bad one.
+        build_nupkg(
+            &nupkg,
+            &[("lib/app/ok.txt", b"good"), ("../escape.txt", b"PWNED")],
+        );
+        let sha = super::sha256_hex_of_file(&nupkg).expect("hash");
+        let m = manifest("pkg-1.0.0-full.nupkg", &sha, "1.0.0");
+
+        let err = super::find_and_extract_nupkg(&packages, &current, &m)
+            .expect_err("an entry with no safe path must refuse the update");
+        assert!(err.contains("unsafe nupkg entry name"), "{err}");
+        assert!(!current.join("ok.txt").exists());
+        assert!(!tmp.path().join("escape.txt").exists());
     }
 
     #[test]
