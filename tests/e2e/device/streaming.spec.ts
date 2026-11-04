@@ -226,14 +226,18 @@ async function expectConnected(
  * the untouched constructors and the counters would never move, which reads as
  * "no frames" against a perfectly healthy stream.
  */
-async function openApp(browser: Browser): Promise<AppPage> {
+async function openApp(browser: Browser, path?: string): Promise<AppPage> {
     const context = await browser.newContext({ baseURL: e2eBaseUrl() });
     openContexts.push(context);
     const page = await context.newPage();
     await installFrameCounter(page);
     await installSocketProbe(page);
     const logs = captureConsole(page);
-    await gotoHome(page);
+    if (path) {
+        await page.goto(path);
+    } else {
+        await gotoHome(page);
+    }
     return { context, page, logs };
 }
 
@@ -1211,6 +1215,43 @@ test.describe('device streaming (smoke §8)', () => {
         const decodeErrors = logs.errors.filter((line) => /decod/i.test(line));
         expect(decodeErrors, 'h264 must decode without faults').toEqual([]);
         await closeStream(page);
+    });
+
+    test('@device 8.33 a stream link opens that device stream on load, and a ctrl+click on connect opens it in a new tab', async ({
+        browser,
+    }) => {
+        const udid = await ensureDeviceReady();
+        // The href the connect button itself carries (#995).
+        const link = `/#!action=stream&udid=${encodeURIComponent(udid)}&player=webcodecs`;
+        const { page, logs } = await openApp(browser, link);
+
+        await test.step('the link opens the stream with no click', async () => {
+            await waitForDeviceRow(page, udid);
+            await expect(page.locator('dialog.connect-modal[open]')).toBeVisible();
+            await expectConnected(page, logs, 0, 'the linked stream should announce itself');
+            await expectPicture(page);
+            // Followed once: the hash is dropped, so a reload is the home page
+            // and the same link entered again in this tab is a fresh hash change.
+            expect(new URL(page.url()).hash, 'the followed link should leave the address bar').toBe('');
+            await closeStream(page);
+        });
+
+        await test.step('a ctrl+click on connect opens the stream in a new tab', async () => {
+            const row = await waitForDeviceRow(page, udid);
+            const [tab] = await Promise.all([
+                page.context().waitForEvent('page'),
+                row.locator('a.link-stream').click({ modifiers: ['ControlOrMeta'] }),
+            ]);
+            await expect(tab.locator('dialog.connect-modal[open]')).toBeVisible();
+            await expect(
+                page.locator('dialog.connect-modal[open]'),
+                'the ctrl+click must not also open the stream in the first tab',
+            ).toHaveCount(0);
+            // Close the stream first: a tab closed mid-stream leaves the next row
+            // to start while the server is still tearing that session down.
+            await closeStream(tab);
+            await tab.close();
+        });
     });
 
     test('@device 8.6 every other codec the device and browser both support decodes and paints', async ({

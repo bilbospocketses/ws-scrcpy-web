@@ -18,6 +18,8 @@ export class ConnectModal extends Modal {
     ) {
         super({ title: deviceLabel });
         this.dialog.classList.add('connect-modal');
+        // Which device this stream is, for a stream link entered again while it is open (#995).
+        this.dialog.dataset['udid'] = params.udid;
 
         const bounds = videoSettings.bounds;
         const maxDim = bounds ? Math.max(bounds.width, bounds.height) : 0;

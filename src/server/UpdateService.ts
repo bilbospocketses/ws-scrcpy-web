@@ -335,7 +335,10 @@ export class UpdateService {
         // download; this one talks to api.github.com.
         this.resolver = opts.releaseFeedResolver ?? new GithubReleaseFeedResolver();
         this.existsSync = opts.existsSync ?? fs.existsSync;
-        this.setIntervalFn = opts.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
+        // unref'd: a background check must never hold the process open. Ref'd,
+        // it kept every installed build alive after Ctrl+C or a service stop
+        // until index.ts's 10 s exit watchdog fired (row 12.10).
+        this.setIntervalFn = opts.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms).unref());
         this.clearIntervalFn = opts.clearIntervalFn ?? ((handle) => clearInterval(handle));
         this.fetchFn = opts.fetchFn ?? fetch;
         this.runPkexecFn = opts.runPkexecFn ?? runPkexec;

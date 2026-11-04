@@ -22,11 +22,13 @@ sha2 = "0.10"
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
 velopack = "1.0"
 winresource = "0.1"
-# Used by launcher --unzip to handle dependency-archive extraction without
-# shelling out to PowerShell/unzip, which would resolve via PATH.
+# Used by the launcher's operation server to extract a verified update nupkg
+# (and by its `--unzip` subcommand, which nothing calls since #528).
 # default-features = false drops the bzip2/zstd/lzma codec features; deflate
-# is the only compression we need for Node.js + ADB platform-tools zips.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# is the only compression a Velopack nupkg uses. 9.0.5 is the first version
+# fixed for GHSA-m665-v7pm-7grj; the readers also opt in to its
+# header-consistency check, which is off by default.
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

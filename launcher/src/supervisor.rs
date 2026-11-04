@@ -30,9 +30,12 @@ use crate::spawn;
 /// before the supervisor kills it. Node's SIGTERM handler runs
 /// `gracefulShutdown` (adb kill-server, service release, SQLite backup) and
 /// exits 0 well inside this. (Item 63: the Linux tray's exit and Ctrl+C both
-/// arrive as a stop request.)
+/// arrive as a stop request.) Kept clearly longer than the server's own 10 s
+/// exit watchdog (`EXIT_WATCHDOG_MS` in src/server/index.ts), which force-exits
+/// after logging what held the process: at an equal 10 s the two raced on every
+/// slow stop, and a SIGKILL that won lost that diagnostic (row 12.10).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Pure: has the graceful window closed? Kept separate so the timing rule is
 /// unit-tested without a child process.
@@ -842,10 +845,12 @@ mod tests {
     }
 
     #[test]
-    fn graceful_timeout_is_ten_seconds() {
+    fn graceful_timeout_is_fifteen_seconds() {
         // Long enough for adb kill-server + the SQLite backup on a slow disk,
-        // short enough that a wedged Node does not hold a Ctrl+C for long.
-        assert_eq!(GRACEFUL_STOP_TIMEOUT, Duration::from_secs(10));
+        // and 5 s past the server's 10 s exit watchdog so that watchdog, not
+        // this SIGKILL, ends a slow stop; short enough that a wedged Node does
+        // not hold a Ctrl+C for long.
+        assert_eq!(GRACEFUL_STOP_TIMEOUT, Duration::from_secs(15));
     }
 
     #[test]

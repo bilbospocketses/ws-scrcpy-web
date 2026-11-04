@@ -1,5 +1,10 @@
 // Unzip dispatch for dependency-archive extraction.
 //
+// NOTE: nothing calls `--unzip` today. Since #528 (2026-08-26) the server
+// extracts its Node.js and adb downloads in-process (DependencyManager +
+// zipExtract.ts). The subcommand stays as a launcher entry point; the
+// history below is why it was written.
+//
 // The Node server's DependencyManager.installNodejs path needs to extract
 // downloaded archives (Node.js + ADB platform-tools ship as zips on
 // Windows and Linux). Pre-this-fix it shelled out to `powershell.exe`
@@ -79,7 +84,10 @@ fn unzip_impl(src: &Path, dest: &Path) -> i32 {
     };
 
     for i in 0..archive.len() {
-        let mut entry = match archive.by_index(i) {
+        // Refuse an entry whose local header disagrees with its central
+        // directory record (GHSA-m665-v7pm-7grj): by_index alone does not.
+        let options = zip::read::ZipReadOptions::new().enforce_header_consistency(true);
+        let mut entry = match archive.by_index_with_options(i, options) {
             Ok(e) => e,
             Err(e) => {
                 log::error(&format!("unzip: read entry {i} failed: {e}"));
@@ -87,16 +95,21 @@ fn unzip_impl(src: &Path, dest: &Path) -> i32 {
             }
         };
 
-        // Zip-slip defense: enclosed_name() returns None for paths that
-        // would escape the destination (absolute, drive prefix, or any
-        // `..` traversal). Skip those silently so a malicious archive
-        // can't write outside dest.
+        // Zip-slip defense: zip 9's enclosed_name() collapses `..`, drops a
+        // root or drive prefix, and returns None for a path that would
+        // still escape the destination or that Windows cannot name (`aux`,
+        // `con`, a trailing dot). Skip those so an archive can't write
+        // outside dest.
         let rel_path = match entry.enclosed_name() {
             Some(p) => p,
             None => {
                 log::error(&format!(
                     "unzip: skipping unsafe entry name: {}",
-                    entry.name()
+                    entry
+                        .name()
+                        .unwrap_or_else(|e| std::borrow::Cow::Owned(format!(
+                            "<unreadable name: {e}>"
+                        )))
                 ));
                 continue;
             }
@@ -186,5 +199,44 @@ mod tests {
         ];
         // dispatch fires, file-open fails → exit 3
         assert_eq!(handle(&args), Some(3));
+    }
+
+    /// A real archive through the real extract path, on zip 9 with the
+    /// header-consistency check on: a nested file lands with its bytes, and a
+    /// `..` entry is skipped rather than written outside dest.
+    #[test]
+    fn handle_extracts_a_real_archive_and_skips_an_escaping_entry() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("deps.zip");
+        {
+            let mut zw = zip::ZipWriter::new(File::create(&src).unwrap());
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("platform-tools/adb", opts).unwrap();
+            zw.write_all(b"adb-bytes").unwrap();
+            zw.start_file("../escaped.txt", opts).unwrap();
+            zw.write_all(b"must not land").unwrap();
+            zw.finish().unwrap();
+        }
+        // Fixture sanity: the escaping name survived the writer, or the
+        // assertion below would pass for the wrong reason.
+        {
+            let mut ar = zip::ZipArchive::new(File::open(&src).unwrap()).unwrap();
+            assert_eq!(ar.by_index(1).unwrap().name().unwrap(), "../escaped.txt");
+        }
+        let dest = tmp.path().join("out");
+        let args = vec![
+            "launcher.exe".to_string(),
+            "--unzip".to_string(),
+            src.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+        ];
+        assert_eq!(handle(&args), Some(0));
+        assert_eq!(
+            fs::read(dest.join("platform-tools").join("adb")).unwrap(),
+            b"adb-bytes"
+        );
+        assert!(!tmp.path().join("escaped.txt").exists());
+        assert!(!dest.join("escaped.txt").exists());
     }
 }
