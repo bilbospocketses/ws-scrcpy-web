@@ -77,9 +77,10 @@ describe('probeStaleToken', () => {
                     init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
                 }),
         );
-        const started = Date.now();
+        // The answer arriving at all is the proof: the fetch only ends when the
+        // probe's own timeout aborts it.
         expect(await probeStaleToken(hung as unknown as typeof fetch, 50)).toBe('unknown');
-        expect(Date.now() - started).toBeLessThan(2000);
+        expect(hung.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
     });
 });
 

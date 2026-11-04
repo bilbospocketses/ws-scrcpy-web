@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { waitFor } from '../../../../testSupport/waitFor';
 import { ConfirmModal } from '../../ConfirmModal';
 import { ResetConfirmModal } from '../../ResetConfirmModal';
 import { settingsService } from '../../SettingsService';
@@ -319,7 +320,7 @@ describe('ServerTab: restart server', () => {
         const confirm = vi.spyOn(ConfirmModal, 'confirm').mockResolvedValue(false);
         const el = buildServerTab(ctx, new StagedSettingsStore());
         restartButton(el).click();
-        await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
+        await waitFor(() => expect(confirm).toHaveBeenCalled());
         await new Promise((r) => setTimeout(r, 0));
         expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -346,10 +347,10 @@ describe('ServerTab: restart server', () => {
         document.body.appendChild(el);
         restartButton(el).click();
 
-        await vi.waitFor(() => expect(document.querySelector('[data-restarting-overlay]')).not.toBeNull());
+        await waitFor(() => expect(document.querySelector('[data-restarting-overlay]')).not.toBeNull());
         expect(document.querySelector('[data-restarting-overlay]')!.textContent).toBe(RESTARTING_MESSAGE);
         expect(fetchMock).toHaveBeenCalledWith('/api/server/restart', { method: 'POST' });
-        await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+        await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
         expect(probes).toBe(3);
         expect(fetchMock.mock.calls.filter(([u]) => u !== '/api/server/restart').map(([u]) => u)).toEqual([
             '/api/auth/me',
@@ -364,14 +365,14 @@ describe('ServerTab: restart server', () => {
         const store = new StagedSettingsStore();
         const el = buildServerTab(ctx, store);
         restartButton(el).click();
-        await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
         expect(confirm.mock.calls[0]![0].message).toBe(restartConfirmMessage(false));
         expect(restartConfirmMessage(false)).not.toContain('unsaved');
 
         store.register({ id: 'probe', label: 'probe', initial: 1 });
         store.set('probe', 2);
         restartButton(el).click();
-        await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
         expect(confirm.mock.calls[1]![0].message).toBe(restartConfirmMessage(true));
         expect(restartConfirmMessage(true)).toMatch(/^your unsaved settings changes will be lost\. /);
     });
@@ -382,7 +383,7 @@ describe('ServerTab: restart server', () => {
         const el = buildServerTab(ctx, new StagedSettingsStore());
         const btn = restartButton(el);
         btn.click();
-        await vi.waitFor(() => expect(el.textContent).toContain("couldn't restart the server."));
+        await waitFor(() => expect(el.textContent).toContain("couldn't restart the server."));
         expect(btn.disabled).toBe(false);
         expect(btn.textContent).toBe('restart server');
         expect(document.querySelector('[data-restarting-overlay]')).toBeNull();

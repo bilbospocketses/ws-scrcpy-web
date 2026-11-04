@@ -3,6 +3,7 @@ import { createServer, request as httpRequest, type Server } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { networkInterfaces } from 'node:os';
 import { checkServerIdentity, type PeerCertificate } from 'node:tls';
+import { WAIT_MS } from './timeouts';
 
 /**
  * HTTP below Playwright: requests whose every header is the caller's, raw
@@ -57,7 +58,8 @@ export function raw(opts: {
                 path: opts.path,
                 method: opts.method ?? 'GET',
                 headers,
-                timeout: 60_000,
+                // A hang guard, never a speed check (support/timeouts.ts).
+                timeout: WAIT_MS,
                 // Node checks the name against a Host header when one is set,
                 // so a row that sends `Host: localhost` would be refused by an
                 // IP-only leaf: check the address dialed instead.
@@ -83,7 +85,9 @@ export function raw(opts: {
                 });
             },
         );
-        req.on('timeout', () => req.destroy(new Error(`timeout on ${opts.method ?? 'GET'} ${opts.path}`)));
+        req.on('timeout', () =>
+            req.destroy(new Error(`HUNG: no answer to ${opts.method ?? 'GET'} ${opts.path} in ${WAIT_MS / 1000} s`)),
+        );
         req.on('error', reject);
         if (payload !== undefined) req.write(payload);
         req.end();
@@ -130,7 +134,7 @@ export function wsHandshake(opts: { port: number; path: string; headers: Record<
             port: opts.port,
             path: opts.path,
             method: 'GET',
-            timeout: 15_000,
+            timeout: WAIT_MS,
             headers: {
                 connection: 'Upgrade',
                 upgrade: 'websocket',
@@ -147,7 +151,9 @@ export function wsHandshake(opts: { port: number; path: string; headers: Record<
             res.resume();
             resolve(res.statusCode ?? 0);
         });
-        req.on('timeout', () => req.destroy(new Error('websocket handshake timed out')));
+        req.on('timeout', () =>
+            req.destroy(new Error(`HUNG: no websocket handshake answer on ${opts.path} in ${WAIT_MS / 1000} s`)),
+        );
         req.on('error', reject);
         req.end();
     });

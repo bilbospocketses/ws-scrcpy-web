@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { fetchFromPage, openSettings, openSettingsTab, tokenCookie } from './support/auth';
+import { fetchWatched, localDownloadProgress, noTotalTimeLimit, whileDownloading } from './support/downloadWait';
 import { apiContext, dismissPrivatePrompts, freshPage } from './support/ownedServer';
 import {
     privateServerPaths,
@@ -18,6 +19,7 @@ import {
     withTimeout,
 } from './support/privateServer';
 import { logOffset, logSince, readServerLog } from './support/serverLog';
+import { WAIT_MS } from './support/timeouts';
 
 /** Escape every regex metacharacter, so text becomes a literal pattern. */
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -104,9 +106,10 @@ async function fetchFromNodejsOrg(file: string): Promise<Buffer> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-            if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
-            return Buffer.from(await res.arrayBuffer());
+            // Bounded by no progress, not total time: the archive is ~30 MB.
+            const res = await fetchWatched(url);
+            if (res.status < 200 || res.status > 299) throw new Error(`HTTP ${res.status} from ${url}`);
+            return res.body;
         } catch (err) {
             lastError = err;
         }
@@ -180,7 +183,7 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
         'Linux only: the installed fake node is a shell script, and the update installs the Linux binary',
     );
     test.skip(OFFERED === INSTALLED, `the runner's Node is ${OFFERED}, the same as the installed fake`);
-    test.setTimeout(300_000);
+    noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
 
     const paths = privateServerPaths('ws-scrcpy-web-e2e-deps-restart', SERVER_PORT);
     seedPrivateDataRoot(paths);
@@ -245,12 +248,19 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
             await expect(nodeRow.locator('td.dep-version').nth(1)).toHaveText(OFFERED);
             await expect(nodeRow.locator('.dep-badge')).toHaveText('Update available');
 
+            // The reply comes once the archive is downloaded, verified and
+            // installed. No timeout of its own: the no-progress watch beside it,
+            // on this server's download scratch directory, is its bound.
             const updated = page.waitForResponse(
                 (r) =>
                     r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/dependencies/nodejs/update',
+                { timeout: 0 },
             );
             await nodeRow.locator('button[data-update="nodejs"]').click();
-            const update = await updated;
+            const update = await whileDownloading(updated, {
+                what: 'the Node.js update reply, which comes after the download',
+                progress: localDownloadProgress(paths.baseURL),
+            });
             expect(update.status(), await update.text()).toBe(200);
             expect(await update.json()).toEqual({ success: true, newVersion: OFFERED, requiresRestart: true });
             expect(fixture.hits, 'the archive came from the fixture').toContain(ARCHIVE_PATH);
@@ -284,12 +294,12 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
                 'The server is restarting. This page will reload automatically.',
             );
 
-            const exit = await withTimeout(first.exited, 15_000, () => `waiting for exit 75:\n${first.output()}`);
+            const exit = await withTimeout(first.exited, WAIT_MS, () => `waiting for exit 75:\n${first.output()}`);
             expect(exit.code, first.output()).toBe(75);
             expect(fs.readFileSync(paths.restartMarkerPath, 'utf8')).toMatch(/^restart-requested-\d+$/);
 
             // The launcher's part: the same root, the same port, the same environment.
-            const reloaded = page.waitForEvent('load', { timeout: 60_000 });
+            const reloaded = page.waitForEvent('load', { timeout: WAIT_MS });
             handles.push(spawnServer(paths, { env }));
             await waitForServer(handles[1]!, paths.baseURL);
             await reloaded;
@@ -321,7 +331,7 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
 test('6.8 a tab left open across a restart reloads itself onto the new instance token, and the server logs at most one rejected WS connection for it', async ({
     browser,
 }) => {
-    test.setTimeout(300_000);
+    noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
     const paths = privateServerPaths('ws-scrcpy-web-e2e-deps-restart-stale-tab', 8242);
     seedPrivateDataRoot(paths);
     // Nothing in this row installs a dependency: both boots run from the fast tier's.
@@ -377,7 +387,7 @@ test('6.8 a tab left open across a restart reloads itself onto the new instance 
                 await api.dispose();
             }
             const first = handles[0]!;
-            const exit = await withTimeout(first.exited, 30_000, () => `waiting for exit 75:\n${first.output()}`);
+            const exit = await withTimeout(first.exited, WAIT_MS, () => `waiting for exit 75:\n${first.output()}`);
             expect(exit.code, first.output()).toBe(75);
             expect(fs.readFileSync(paths.restartMarkerPath, 'utf8')).toMatch(/^restart-requested-\d+$/);
 
@@ -386,7 +396,7 @@ test('6.8 a tab left open across a restart reloads itself onto the new instance 
             // reload, once its token probe reads stale (staleTokenReload.ts).
             fs.unlinkSync(paths.restartMarkerPath);
             const offset = logOffset(paths);
-            const reloaded = page.waitForEvent('load', { timeout: 90_000 });
+            const reloaded = page.waitForEvent('load', { timeout: WAIT_MS });
             restarted = true;
             handles.push(spawnServer(paths, { dependenciesPath }));
             await waitForServer(handles[1]!, paths.baseURL);

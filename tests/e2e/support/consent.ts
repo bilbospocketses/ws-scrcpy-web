@@ -53,12 +53,13 @@ export function consentPrompt(page: Page) {
 /**
  * Wait for the prompt to surface.
  *
- * The generous timeout is not padding: the prompt is discovered by a poll rather
- * than pushed, so worst case is a full poll interval after the request lands.
+ * The prompt is discovered by a poll rather than pushed, so worst case is a full
+ * poll interval after the request lands, well inside Playwright's expect timeout
+ * (support/timeouts.ts).
  */
 export async function waitForPrompt(page: Page) {
     const prompt = consentPrompt(page);
-    await expect(prompt).toBeVisible({ timeout: 15_000 });
+    await expect(prompt).toBeVisible();
     return prompt;
 }
 

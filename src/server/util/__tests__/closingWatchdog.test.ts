@@ -3,6 +3,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WS, { WebSocketServer } from 'ws';
+import { WAIT_FOR_TIMEOUT_MS } from '../../../testSupport/waitFor';
 import { watchForStuckClosing } from '../closingWatchdog';
 
 // Item 151. A stream session is released only when its websocket emits 'close',
@@ -87,12 +88,21 @@ describe('watchForStuckClosing (fake timers)', () => {
 // The mechanism itself, on a real `ws` server, with the peer behaviour that
 // produces the unbounded CLOSING: stop reading, then FIN without a close frame.
 // Measured before the fix (scratch repro, 2026-09-25): still CLOSING after 75 s
-// with 12.7 MB buffered. With the watchdog, 'close' must arrive within the grace
-// period plus one poll.
+// with 12.7 MB buffered. With the watchdog, 'close' must arrive once the grace
+// period's polls have run.
+//
+// The watchdog's poll runs on a fake clock (only setInterval is faked; the
+// sockets keep their real timers), so the test drives the polls itself and
+// asserts the events -- stuck in CLOSING, then terminated, then 'close' --
+// rather than how long the real socket took, which a loaded box stretches.
 describe('watchForStuckClosing (real ws socket)', () => {
     let server: http.Server | undefined;
     let wss: WebSocketServer | undefined;
     let client: net.Socket | undefined;
+
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    });
 
     afterEach(async () => {
         client?.destroy();
@@ -102,26 +112,36 @@ describe('watchForStuckClosing (real ws socket)', () => {
         server = undefined;
         wss = undefined;
         client = undefined;
+        vi.useRealTimers();
     });
 
-    it("turns a peer's FIN-without-close-frame into a prompt 'close'", async () => {
+    /** Poll on the real clock (only setInterval is faked) until `ready()`; a hang fails as HUNG, naming `what`. */
+    async function until(what: string, ready: () => boolean): Promise<void> {
+        const deadline = Date.now() + WAIT_FOR_TIMEOUT_MS;
+        while (!ready()) {
+            if (Date.now() > deadline) throw new Error(`HUNG: waited ${WAIT_FOR_TIMEOUT_MS / 1000} s for ${what}`);
+            await new Promise((r) => setTimeout(r, 10));
+        }
+    }
+
+    it("turns a peer's FIN-without-close-frame into a 'close' once the grace period has run", async () => {
         server = http.createServer();
         wss = new WebSocketServer({ server });
         const frame = Buffer.alloc(64 * 1024, 7);
         const onStuck = vi.fn();
-        let flood: NodeJS.Timeout | undefined;
-        let stop: (() => void) | undefined;
+        const graceMs = 300;
+        const pollMs = 50;
+        let serverWs: WS | undefined;
+        let closeCode: number | undefined;
 
-        const closed = new Promise<{ code: number; afterMs: number }>((resolve) => {
+        const closed = new Promise<number>((resolve) => {
             wss?.on('connection', (ws) => {
-                stop = watchForStuckClosing(ws, { graceMs: 300, pollMs: 50, onStuck });
-                flood = setInterval(() => {
-                    if (ws.readyState === ws.OPEN) ws.send(frame);
-                }, 5);
+                serverWs = ws;
+                const stop = watchForStuckClosing(ws, { graceMs, pollMs, onStuck });
                 ws.on('close', (code) => {
-                    clearInterval(flood);
-                    stop?.();
-                    resolve({ code, afterMs: Date.now() - finAt });
+                    stop();
+                    closeCode = code;
+                    resolve(code);
                 });
             });
         });
@@ -136,15 +156,34 @@ describe('watchForStuckClosing (real ws socket)', () => {
                 `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
         );
         await new Promise<void>((r) => client?.once('data', () => r()));
-        await new Promise((r) => setTimeout(r, 300)); // let the flood start
+        await until('the server side of the connection', () => serverWs !== undefined);
+        const ws = serverWs as WS;
         client.pause(); // stop reading: our send buffer can no longer drain
-        await new Promise((r) => setTimeout(r, 500));
-        const finAt = Date.now();
-        client.end(); // FIN, no close frame
 
-        const result = await closed;
-        expect(result.code).toBe(1006);
-        expect(result.afterMs).toBeLessThan(2000);
+        // Send until a real backlog builds: the kernel's buffers are full and
+        // `ws` holds the rest. Yielding between sends lets every write the
+        // kernel can take complete, so the backlog only grows once it cannot.
+        const backlog = 2 * 1024 * 1024;
+        for (let sent = 0; ws.bufferedAmount < backlog; sent++) {
+            if (sent > 4096) throw new Error(`the send buffer never backed up (${ws.bufferedAmount} bytes queued)`);
+            ws.send(frame);
+            await new Promise((r) => setImmediate(r));
+        }
+
+        client.end(); // FIN, no close frame
+        await until('the server socket to enter CLOSING', () => ws.readyState === CLOSING);
+        await new Promise((r) => setImmediate(r));
+        expect(closeCode, 'the socket closes on its own: the stuck CLOSING was not reproduced').toBeUndefined();
+
+        // One poll sees CLOSING first; the grace period runs from there.
+        vi.advanceTimersByTime(pollMs + graceMs - 1);
+        expect(onStuck).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1);
         expect(onStuck).toHaveBeenCalledTimes(1);
-    }, 15_000);
+        expect(onStuck).toHaveBeenCalledWith({ closingForMs: graceMs, bufferedAmount: expect.any(Number) });
+        expect(onStuck.mock.calls[0]?.[0].bufferedAmount).toBeGreaterThan(0);
+
+        await until("the socket's 'close' after terminate()", () => closeCode !== undefined);
+        expect(await closed).toBe(1006);
+    });
 });

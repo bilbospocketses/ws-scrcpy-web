@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { UpdateInfo, UpdateOptions, VelopackAsset } from 'velopack';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitFor } from '../../testSupport/waitFor';
 import { AdbClient } from '../AdbClient';
 import { getAppVersion } from '../appVersion';
 import { Config } from '../Config';
@@ -127,7 +128,7 @@ function fakeUpdateInfo(version = '0.2.0'): UpdateInfo {
  * 'checking' synchronously, and that check now awaits a GitHub lookup first.
  */
 async function settled(svc: UpdateService): Promise<void> {
-    await vi.waitFor(() => expect(['checking', 'downloading']).not.toContain(svc.getStatus().status));
+    await waitFor(() => expect(['checking', 'downloading']).not.toContain(svc.getStatus().status));
 }
 
 /**
@@ -1364,7 +1365,7 @@ describe('UpdateService', () => {
         await settled(svc);
         hold = true;
         const oldCheck = svc.checkForUpdates();
-        await vi.waitFor(() => expect(answerBeta).toBeDefined());
+        await waitFor(() => expect(answerBeta).toBeDefined());
         await svc.reconfigure('stable', 'bilbospocketses');
         expect(svc.getStatus().status).toBe('idle');
 
@@ -1403,7 +1404,7 @@ describe('UpdateService', () => {
         await settled(svc);
         hold = true;
         const oldCheck = svc.checkForUpdates();
-        await vi.waitFor(() => expect(answerBeta).toBeDefined());
+        await waitFor(() => expect(answerBeta).toBeDefined());
         await svc.reconfigure('stable', 'bilbospocketses');
         expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
         const builds = factory.mock.calls.length;
@@ -1437,7 +1438,7 @@ describe('UpdateService', () => {
             ...quietTimers,
         });
         svc.init();
-        await vi.waitFor(() => expect(finishDownload).toBeDefined());
+        await waitFor(() => expect(finishDownload).toBeDefined());
         await svc.reconfigure('stable', 'bilbospocketses');
         expect(svc.getStatus().status).toBe('idle');
 
@@ -1479,14 +1480,14 @@ describe('UpdateService', () => {
             ...quietTimers,
         });
         svc.init();
-        await vi.waitFor(() => expect(finishers).toHaveLength(1));
+        await waitFor(() => expect(finishers).toHaveLength(1));
         const switching = svc.reconfigure('stable', 'bilbospocketses');
-        await vi.waitFor(() => expect(svc.getStatus().availableVersion).toBe('0.3.0'));
+        await waitFor(() => expect(svc.getStatus().availableVersion).toBe('0.3.0'));
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(downloadFn).toHaveBeenCalledTimes(1);
 
         finishers[0]!();
-        await vi.waitFor(() => expect(finishers).toHaveLength(2));
+        await waitFor(() => expect(finishers).toHaveLength(2));
         finishers[1]!();
         await switching;
         expect(maxActive).toBe(1);
@@ -1597,7 +1598,7 @@ describe('UpdateService', () => {
         // in between: v0.3.0 to the first check's v0.2.0.
         held[0]?.answer(releaseOf('0.2.0'));
         held[1]?.answer(releaseOf('0.3.0'));
-        await vi.waitFor(() => expect(heldChecks).toHaveLength(held.length));
+        await waitFor(() => expect(heldChecks).toHaveLength(held.length));
         // The adverse order: the newer check answers first, the older one last.
         for (const check of [...heldChecks].reverse()) {
             check.answer();
@@ -1632,7 +1633,7 @@ describe('UpdateService', () => {
         });
         opts.holdChecks = true;
         svc.init();
-        await vi.waitFor(() => expect(heldChecks).toHaveLength(1));
+        await waitFor(() => expect(heldChecks).toHaveLength(1));
         heldChecks[0]!.answer();
         await settled(svc);
         expect(svc.getStatus()).toMatchObject({ status: 'ready', availableVersion: '0.2.0' });
@@ -1641,7 +1642,7 @@ describe('UpdateService', () => {
         // is still waiting on Velopack when a download of v0.2.0 is asked for.
         newest = releaseOf('0.3.0');
         const check = svc.checkForUpdates();
-        await vi.waitFor(() => expect(heldChecks).toHaveLength(2));
+        await waitFor(() => expect(heldChecks).toHaveLength(2));
         await svc.downloadIfNeeded();
         expect(downloads).toEqual([{ folder: 'v0.2.0', version: '0.2.0' }]);
 
@@ -1753,7 +1754,7 @@ describe('UpdateService', () => {
 
         hang = true;
         const stuck = svc.checkForUpdates();
-        await vi.waitFor(() => expect(svc.getStatus().status).toBe('error'));
+        await waitFor(() => expect(svc.getStatus().status).toBe('error'));
         await stuck;
         expect(svc.getStatus().errorMessage).toBe('update check timed out after 0.05 s');
 
@@ -1800,7 +1801,7 @@ describe('UpdateService', () => {
         checkFn.mockClear();
 
         const applying = svc.applyUpdate();
-        await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+        await waitFor(() => expect(fetchFn).toHaveBeenCalled());
         await svc.checkForUpdates();
         expect(resolve).not.toHaveBeenCalled();
         expect(checkFn).not.toHaveBeenCalled();
@@ -1852,7 +1853,7 @@ describe('UpdateService', () => {
         checkFn.mockClear();
 
         const applying = svc.applyUpdate();
-        await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+        await waitFor(() => expect(fetchFn).toHaveBeenCalled());
         await svc.reconfigure('beta', 'bilbospocketses');
         expect(resolve).not.toHaveBeenCalled();
         expect(checkFn).not.toHaveBeenCalled();
@@ -3305,7 +3306,7 @@ describe('UpdateService', () => {
             expect(order).toEqual([]);
 
             const applying = svc.applyUpdate();
-            await vi.waitFor(() => expect(order).toEqual(['download v0.2.0']));
+            await waitFor(() => expect(order).toEqual(['download v0.2.0']));
             // Held mid-download: progress shows, and nothing has been stopped yet.
             expect(svc.getStatus()).toMatchObject({ status: 'downloading', progress: 40 });
             expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
@@ -3374,7 +3375,7 @@ describe('UpdateService', () => {
                 // The release is looked up afresh and checked again at once, so the
                 // retry does not reuse the pairing whose download just failed.
                 expect(forget).toHaveBeenCalledTimes(1);
-                await vi.waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
+                await waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
                 await settled(svc);
                 // Still on offer, as after a failed Linux download, with the reason
                 // beside it for any page that asks; the check did not wipe it.
@@ -3473,7 +3474,7 @@ describe('UpdateService', () => {
             expect(applyFn).not.toHaveBeenCalled();
             expect(probe.untouched()).toEqual({ streamsClosed: 0, killServer: 0, reaped: 0 });
             // Not wedged: the check after the failure runs instead of being skipped.
-            await vi.waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
+            await waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
             await settled(svc);
             expect(svc.getStatus()).toMatchObject({
                 status: 'ready',
@@ -3579,7 +3580,7 @@ describe('UpdateService', () => {
             checkFn.mockClear();
 
             const applying = svc.applyUpdate();
-            await vi.waitFor(() => expect(downloading).toBe(true));
+            await waitFor(() => expect(downloading).toBe(true));
             await svc.reconfigure('beta', 'bilbospocketses');
             expect(svc.getStatus()).toMatchObject({ status: 'idle', pendingUpdate: undefined });
 
@@ -3593,7 +3594,7 @@ describe('UpdateService', () => {
             expect(liveStreams.isStopping()).toBe(false);
             expect(fs.existsSync(Config.getInstance().applyUpdatePendingMarkerPath)).toBe(false);
             // The new channel is checked as soon as the apply has failed.
-            await vi.waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
+            await waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
             await settled(svc);
             expect(svc.getStatus().status).toBe('ready');
         },

@@ -135,6 +135,12 @@ describe('StreamCongestion (real ws socket)', () => {
         let peak = 0;
         let shed = 0;
 
+        // The flood ends on a COUNT, not a clock: once the gate has shed a run
+        // of packets the backlog has demonstrably hit the mark, however slowly
+        // the box ticks. A broken gate never sheds, so the flood stops at the
+        // packet cap instead and the assertions below fail on what it buffered.
+        const SHED_ENOUGH = 50;
+        const PACKET_CAP = 2000;
         const flooding = new Promise<void>((resolve) => {
             wss?.on('connection', (ws) => {
                 let n = 0;
@@ -144,11 +150,11 @@ describe('StreamCongestion (real ws socket)', () => {
                     if (d.send) ws.send(frame);
                     else shed += 1;
                     peak = Math.max(peak, ws.bufferedAmount);
+                    if (shed >= SHED_ENOUGH || n >= PACKET_CAP) {
+                        clearInterval(iv);
+                        resolve();
+                    }
                 }, 5);
-                setTimeout(() => {
-                    clearInterval(iv);
-                    resolve();
-                }, 3500);
             });
         });
 
@@ -169,5 +175,5 @@ describe('StreamCongestion (real ws socket)', () => {
         expect(shed).toBeGreaterThan(0);
         // One frame past the mark at most: the check runs before each send.
         expect(peak).toBeLessThanOrEqual(HIGH + frame.length + 64);
-    }, 15_000);
+    });
 });

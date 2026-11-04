@@ -3,6 +3,7 @@ import https from 'node:https';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from '@playwright/test';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { SEED_CONFIG } from './support/paths';
 import { holdPort, isListening, releasePort } from './support/ports';
 import {
@@ -20,6 +21,7 @@ import {
 } from './support/privateServer';
 import { json, raw, tokenCookieFor } from './support/rawHttp';
 import { countOccurrences, NOTHING_SERVES, readServerLog } from './support/serverLog';
+import { WAIT_MS } from './support/timeouts';
 import { placeCertificate } from './support/tlsFixtures';
 
 /**
@@ -72,11 +74,13 @@ function configWarnings(paths: PrivateServerPaths, key: string): string[] {
 /** GET / over HTTPS, trusting exactly the throwaway certificate. */
 function httpsStatus(port: number, ca: string): Promise<number> {
     return new Promise((resolve, reject) => {
-        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: 5_000 }, (res) => {
+        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: WAIT_MS }, (res) => {
             res.resume();
             resolve(res.statusCode ?? 0);
         });
-        req.on('timeout', () => req.destroy(new Error('timeout')));
+        req.on('timeout', () =>
+            req.destroy(new Error(`HUNG: no answer to GET https://localhost:${port}/ in ${WAIT_MS / 1000} s`)),
+        );
         req.on('error', reject);
     });
 }
@@ -99,7 +103,6 @@ async function withServer(
 
 test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => {
     test('10.14 frameAncestors: only the http(s) origin is accepted, with one WARN per rejected entry', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-cfg-frame', CONFIG_PORT);
         seedPrivateDataRoot(paths, {
             frameAncestors: ['*', 'http://a.test/x', 'ftp://b.test', 'http://localhost:5159'],
@@ -124,7 +127,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('10.14 httpsPort 70000: a warning and the default port', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-cfg-https-range', CONFIG_PORT);
         seedPrivateDataRoot(paths, { httpsPort: 70000 });
         await withServer(paths, {}, paths.port, async () => {
@@ -138,7 +140,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('10.14 httpsPort equal to webPort: with no certificate nothing to disable and no warning; with one, HTTPS is off for the boot with a warning', async () => {
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-cfg-https-collide', CONFIG_PORT);
 
         // No certificate: there is no HTTPS listener to drop, so nothing is said.
@@ -170,7 +171,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('10.14 a server[] array: /api/tls/state reports config-override', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-cfg-server-array', CONFIG_PORT);
         seedPrivateDataRoot(paths, { server: [{ secure: false, port: CONFIG_PORT }] });
         await withServer(paths, {}, paths.port, async () => {
@@ -179,7 +179,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 scanConcurrency above the file-descriptor budget is clamped to 512 with a WARN', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-scan-clamp', CONFIG_PORT);
         seedPrivateDataRoot(paths, { scanConcurrency: 100000 });
         await withServer(paths, {}, paths.port, async () => {
@@ -190,7 +189,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 a scan* key set in the environment, the store and config.json resolves environment > store > file > default', async () => {
-        test.setTimeout(240_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-scan-precedence', CONFIG_PORT);
         // Every value is above the budget on purpose: the clamp WARN names the
         // value that won BEFORE clamping, which makes the winner observable.
@@ -248,7 +246,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 an update setting saved in Settings beats a config.json that disagrees', async () => {
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-update-setting', CONFIG_PORT);
         seedPrivateDataRoot(paths, { updateCheckIntervalMinutes: 120 });
         await withServer(paths, {}, paths.port, async () => {
@@ -272,7 +269,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 adbPath in config.json is logged with its source; without it the bundled path is', async () => {
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-adb-path', CONFIG_PORT);
         const exe = process.platform === 'win32' ? 'adb.exe' : 'adb';
         const custom = path.join(paths.programData, 'custom-adb', exe);
@@ -288,9 +284,9 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 DEPS_PATH inherited from the shell is honoured over config.json; without it dependencies land in config.json dependenciesPath', async () => {
-        // Two genuine first-run installs (Node, adb, scrcpy-server), each inside
-        // a 240 s wait; the budget must stay comfortably above both.
-        test.setTimeout(600_000);
+        // Two genuine first-run installs (Node, adb, scrcpy-server), each bounded
+        // by no progress only, so the test sets no total time limit.
+        noTotalTimeLimit();
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-deps-path', CONFIG_PORT);
         const exe = process.platform === 'win32' ? 'adb.exe' : 'adb';
         const fromEnv = path.join(paths.programData, 'deps-from-env');
@@ -316,7 +312,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 WS_SCRCPY_CONFIG pointing at another file: that file is read, and the store opens beside it', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-alt-config', CONFIG_PORT);
         seedPrivateDataRoot(paths); // the default config.json: nothing allowed to frame
         const altDir = path.join(paths.programData, 'alt');
@@ -335,7 +330,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 PORT is not read: the server listens on config.json webPort', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-port-env', CONFIG_PORT);
         seedPrivateDataRoot(paths);
         await withServer(paths, { WS_SCRCPY_WEB_PORT: undefined, PORT: String(OTHER_PORT) }, CONFIG_PORT, async () => {
@@ -349,7 +343,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     test('12.9 WS_SCRCPY_WEB_PORT on a free port that differs from config.json: listened on, reported and written as chosen, not shifted', async ({
         browser,
     }) => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-override-free', CONFIG_PORT);
         seedPrivateDataRoot(paths);
         expect(readConfigFile(paths)['webPort']).toBe(CONFIG_PORT);
@@ -373,7 +366,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 WS_SCRCPY_WEB_PORT on a busy port does not walk forward and does not fall back to config.json: the process exits non-zero', async () => {
-        test.setTimeout(150_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-override-busy', CONFIG_PORT);
         seedPrivateDataRoot(paths);
         const blocker = await holdPort(OTHER_PORT);
@@ -386,7 +378,9 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         let watching = true;
         const watcher = (async () => {
             while (watching) {
-                if (await isListening(CONFIG_PORT)) configPortServed = true;
+                // A hang only reads as "not served this tick": the watch asks
+                // again 100 ms later, for the whole life of the process.
+                if (await isListening(CONFIG_PORT).catch(() => false)) configPortServed = true;
                 await new Promise((r) => setTimeout(r, 100));
             }
         })();
@@ -411,7 +405,6 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
     });
 
     test('12.9 WS_SCRCPY_WEB_PORT set to the Local HTTPS port: HTTP takes it and HTTPS is disabled for the boot with the collision warning', async () => {
-        test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-override-https', CONFIG_PORT);
         seedPrivateDataRoot(paths, { httpsPort: OTHER_PORT });
         placeCertificate(paths);

@@ -52,6 +52,7 @@ vi.mock('../Logger', () => {
     return { Logger: { for: () => quiet } };
 });
 
+import { waitFor } from '../../testSupport/waitFor';
 import { liveStreams, SHUTDOWN_CLOSE_CODE, SHUTDOWN_CLOSE_REASON } from '../liveStreams';
 import { ScrcpyConnection, SESSION_FAILED_CLOSE_CODE } from '../ScrcpyConnection';
 import { runGracefulShutdown } from '../shutdownHelpers';
@@ -175,7 +176,7 @@ describe('ScrcpyConnection — failure paths close with a code and a reason', ()
         startSpy.mockReturnValue(Promise.reject(new Error('Timeout waiting for 3 TCP connections (got 2)')));
         open();
 
-        await vi.waitFor(() => expect(ws.close).toHaveBeenCalled());
+        await waitFor(() => expect(ws.close).toHaveBeenCalled());
 
         expect(ws.close).toHaveBeenCalledWith(
             SESSION_FAILED_CLOSE_CODE,

@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { E2E_BASE_URL } from './tests/e2e/support/paths';
+import { TEST_MS, WAIT_MS } from './tests/e2e/support/timeouts';
 
 /**
  * The container suite.
@@ -54,17 +55,21 @@ export default defineConfig({
     retries: process.env['CI'] ? 1 : 0,
 
     /**
-     * Doubled against the fast config on purpose. A container boot has an order
-     * more latency than an in-process spawn, and `expect` waits tight enough for
-     * the fast tier produce flake here that reads as an app fault.
+     * Hang guards, never speed checks (tests/e2e/support/timeouts.ts). The test
+     * budget is doubled against the fast config on purpose: a container boot has
+     * an order more latency than an in-process spawn.
      */
-    timeout: 60_000,
-    expect: { timeout: 15_000 },
+    timeout: 2 * TEST_MS,
+    expect: { timeout: WAIT_MS },
 
     reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : 'list',
 
     use: {
         baseURL: process.env['PLAYWRIGHT_BASE_URL'] || E2E_BASE_URL,
+        // Hang guards for every action and navigation, which otherwise have no
+        // bound of their own: a download-bound test runs with no total limit.
+        actionTimeout: WAIT_MS,
+        navigationTimeout: WAIT_MS,
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         video: 'retain-on-failure',

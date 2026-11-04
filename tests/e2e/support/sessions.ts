@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { type APIRequestContext, type Browser, type BrowserContext, expect, type Page } from '@playwright/test';
 import { type Credentials, loginAs, SESSION_COOKIE } from './auth';
+import { WAIT_MS } from './timeouts';
 
 /**
  * Login sessions on a spec-owned server: signing in, reading and backdating
@@ -69,8 +70,17 @@ export function tokenHash(sid: string): string {
 function withDb<T>(dbPath: string, fn: (db: DatabaseSync) => T): T {
     const db = new DatabaseSync(dbPath);
     try {
-        db.exec('PRAGMA busy_timeout = 5000');
-        return fn(db);
+        // A hang guard, never a speed check (support/timeouts.ts): the server's
+        // own write is a moment's work, however loaded the box.
+        db.exec(`PRAGMA busy_timeout = ${WAIT_MS}`);
+        try {
+            return fn(db);
+        } catch (err) {
+            if (/database is locked|SQLITE_BUSY/i.test(String((err as Error)?.message ?? err))) {
+                throw new Error(`HUNG: ${dbPath} stayed locked for ${WAIT_MS / 1000} s`, { cause: err });
+            }
+            throw err;
+        }
     } finally {
         db.close();
     }
@@ -146,7 +156,7 @@ export async function openLiveSocket(page: Page, key: string, pathAndQuery = '/w
  */
 export async function expectSocketServed(page: Page, key: string): Promise<void> {
     const reply = await page.evaluate(
-        (key) =>
+        ({ key, waitMs }) =>
             new Promise<string>((resolve) => {
                 type Entry = {
                     ws: WebSocket;
@@ -161,10 +171,11 @@ export async function expectSocketServed(page: Page, key: string): Promise<void>
                     resolve(`socket ${key} not open: readyState ${entry.ws.readyState} ${JSON.stringify(entry.close)}`);
                     return;
                 }
+                // A hang guard, never a speed check (support/timeouts.ts).
                 const timer = setTimeout(() => {
                     entry.ws.removeEventListener('message', onMessage);
-                    resolve(`socket ${key}: no reply within 5000 ms`);
-                }, 5_000);
+                    resolve(`HUNG: socket ${key}: no reply in ${waitMs / 1000} s`);
+                }, waitMs);
                 const onMessage = (event: MessageEvent) => {
                     clearTimeout(timer);
                     entry.ws.removeEventListener('message', onMessage);
@@ -173,7 +184,7 @@ export async function expectSocketServed(page: Page, key: string): Promise<void>
                 entry.ws.addEventListener('message', onMessage);
                 entry.ws.send('this is not json');
             }),
-        key,
+        { key, waitMs: WAIT_MS },
     );
     let parsed: unknown;
     try {

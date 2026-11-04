@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { dockerImageInspect, dockerPull } from './support/dockerStack';
+import { noTotalTimeLimit } from './support/downloadWait';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke row 20.8 — the published image: `docker pull bilbospocketses/ws-scrcpy-web:beta`
@@ -33,13 +35,14 @@ function digestOf(tag: HubTag): string | undefined {
 
 test.describe('published image (smoke §20.8)', () => {
     test('@docker @docker-host 20.8 `:beta` pulls from Docker Hub and is the newest beta the release workflow pushed', async () => {
-        test.setTimeout(900_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
 
         // 100 tags is more than the whole beta history to date; ordering by
         // last_updated puts the current channel tag and its target on page one
         // regardless.
         const res = await fetch(
             `https://hub.docker.com/v2/repositories/${REPO}/tags?page_size=100&ordering=last_updated`,
+            { signal: AbortSignal.timeout(WAIT_MS) },
         );
         expect(res.status, `Docker Hub tags API for ${REPO}`).toBe(200);
         const body = (await res.json()) as { results: HubTag[] };
@@ -61,7 +64,7 @@ test.describe('published image (smoke §20.8)', () => {
 
         // The row's own action, then the loop closed: what was pulled is what
         // the Hub says :beta is.
-        dockerPull(`${REPO}:beta`);
+        await dockerPull(`${REPO}:beta`);
         const repoDigests = JSON.parse(dockerImageInspect(`${REPO}:beta`, '{{json .RepoDigests}}')) as string[];
         expect(repoDigests).toContain(`${REPO}@${newest.digest}`);
     });

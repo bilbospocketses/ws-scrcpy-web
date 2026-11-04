@@ -1,6 +1,8 @@
 import { expect, request, test } from '@playwright/test';
 import { mintToken } from './support/auth';
 import { appImage, dockerCli, dockerExecRoot, dockerInspectState, dockerLogs } from './support/dockerStack';
+import { containerDownloadProgress, noTotalTimeLimit, waitForDownloads } from './support/downloadWait';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke row 20.21: the image run as another user (`docker run --user`, compose
@@ -35,10 +37,14 @@ function cleanup(): void {
     }
 }
 
-async function waitForExit(timeoutMs: number): Promise<{ status: string; exitCode: number }> {
-    const deadline = Date.now() + timeoutMs;
+/** The container's state once it has exited; a container still up after WAIT_MS fails as HUNG. */
+async function waitForExit(): Promise<{ status: string; exitCode: number }> {
+    const deadline = Date.now() + WAIT_MS;
     let last = dockerInspectState(NAME);
-    while (last.status !== 'exited' && Date.now() < deadline) {
+    while (last.status !== 'exited') {
+        if (Date.now() > deadline) {
+            throw new Error(`HUNG: ${NAME} still ${last.status} after ${WAIT_MS / 1000} s; waited for it to exit`);
+        }
         await new Promise((r) => setTimeout(r, 500));
         last = dockerInspectState(NAME);
     }
@@ -47,11 +53,10 @@ async function waitForExit(timeoutMs: number): Promise<{ status: string; exitCod
 
 test.describe('the container run as another user (smoke §20.21)', () => {
     test('@docker @docker-host 20.21 `--user` on a volume that uid does not own stops at once and names the fix', async () => {
-        test.setTimeout(180_000);
         cleanup();
         try {
             dockerCli(['run', '-d', '--name', NAME, '--user', UID, '-v', `${VOLUME}:/data`, appImage()]);
-            expect(await waitForExit(60_000), 'container state').toEqual({ status: 'exited', exitCode: 1 });
+            expect(await waitForExit(), 'container state').toEqual({ status: 'exited', exitCode: 1 });
             const logs = dockerLogs(NAME);
             expect(logs).toContain('[entrypoint] /data is not writable by uid 1234:1234.');
             expect(logs).toContain('--entrypoint chown');
@@ -62,7 +67,7 @@ test.describe('the container run as another user (smoke §20.21)', () => {
     });
 
     test('@docker @docker-host 20.21 `--user` on a volume that uid owns: it boots, HOME is on the volume, and adb works', async () => {
-        test.setTimeout(480_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         cleanup();
         const ctx = await request.newContext({ baseURL: BASE });
         try {
@@ -108,20 +113,27 @@ test.describe('the container run as another user (smoke §20.21)', () => {
             // included, and aborts when it cannot. So a real installed version
             // is only possible with a writable HOME; before the fix it stayed
             // null on this exact setup.
+            // Bounded by no progress only (support/downloadWait.ts): the
+            // dependency list and the bytes under the container's /tmp and /data.
             let adbVersion: string | null = null;
-            await expect
-                .poll(
-                    async () => {
-                        const deps = (await (await ctx.get('/api/dependencies')).json()) as {
-                            name: string;
-                            installedVersion: string | null;
-                        }[];
-                        adbVersion = deps.find((d) => d.name === 'adb')?.installedVersion ?? null;
-                        return adbVersion;
-                    },
-                    { timeout: 300_000, message: 'adb installed and answering --version' },
-                )
-                .toMatch(/^\d+\.\d+\.\d+$/);
+            await waitForDownloads({
+                what: 'adb installed and answering --version',
+                progress: containerDownloadProgress(NAME),
+                read: async () => {
+                    const deps = (await (await ctx.get('/api/dependencies')).json()) as {
+                        name: string;
+                        installedVersion: string | null;
+                        status: string;
+                    }[];
+                    const adb = deps.find((d) => d.name === 'adb');
+                    adbVersion = adb?.installedVersion ?? null;
+                    return {
+                        done: /^\d+\.\d+\.\d+$/.test(adbVersion ?? ''),
+                        summary: `adb=${adbVersion ?? adb?.status ?? 'not listed'}`,
+                    };
+                },
+            });
+            expect(adbVersion, 'adb installed and answering --version').toMatch(/^\d+\.\d+\.\d+$/);
 
             expect(dockerExecRoot(NAME, 'stat -c %u /proc/1').trim(), 'PID 1 runs as the requested uid').toBe('1234');
             expect(dockerExecRoot(NAME, 'test -d /data/home/.android && echo present').trim()).toBe('present');

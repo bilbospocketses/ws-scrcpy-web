@@ -372,6 +372,7 @@ A few advanced switches are only available via environment variables:
 | `WS_SCRCPY_MKCERT_URL_BASE` | Read mkcert's latest-release lookup, downloads and attestation lookup from `<base>/releases/latest`, `<base>/releases/download/<tag>/<asset>` and `<base>/attestations/sha256:<digest>` instead of GitHub (a test or mirror seam; the build-provenance check still runs against the fork's own release workflow). |
 | `WS_SCRCPY_NODE_DIST_BASE` | Read Node.js's release index, archive and checksum list from `<base>/index.json`, `<base>/v<version>/<archive>` and `<base>/v<version>/SHASUMS256.txt` instead of `https://nodejs.org/dist` (a test or mirror seam; the SHA-256 check still runs). |
 | `WS_SCRCPY_SKIP_BOOT_LATEST` | Set to `1`, startup skips the latest-version lookup for every dependency that is already installed (a test setting; the end-to-end suite uses it to spare GitHub's rate limit). A missing dependency is still looked up, and "check for updates" and updates are unaffected. |
+| `WS_SCRCPY_CA_ROOT_RATE_WINDOW_MS` | Lengthen the window of the Local HTTPS CA download's rate limit (10 downloads per window) to this many milliseconds (a test setting; the end-to-end suite uses it so its burst cannot outlast the real window). A value that is not a finite number above the default 60000 is ignored, so it can make the limit stricter but never turn it off. |
 
 ### Access control
 

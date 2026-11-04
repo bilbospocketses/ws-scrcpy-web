@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // src/app/client/settings/__tests__/localHttpsPanel.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitFor } from '../../../../testSupport/waitFor';
 import {
     buildLocalHttpsPanel,
     certExpiryNotice,
@@ -1541,7 +1542,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         try {
             const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'] });
             el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
-            await vi.waitFor(() => expect(names).toEqual(['ws-scrcpy-web-local-ca.crt']));
+            await waitFor(() => expect(names).toEqual(['ws-scrcpy-web-local-ca.crt']));
             expect(created).toHaveBeenCalledTimes(1);
             expect(el.querySelector('[data-tls-alert]')!.textContent).toBe('ca certificate downloaded.');
         } finally {

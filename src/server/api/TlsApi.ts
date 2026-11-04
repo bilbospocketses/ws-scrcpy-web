@@ -33,6 +33,20 @@ const CA_ROOT_RATE_LIMIT = 10;
 const CA_ROOT_RATE_WINDOW_MS = 60_000;
 
 /**
+ * A test seam: a window in ms that LENGTHENS the ca-root rate limit's window.
+ * A value that is not above the 60 s default is ignored, so the seam can only
+ * make the limit stricter, never switch it off. The e2e row 21.10 sets it so
+ * that its eleven requests share one window however slowly the box runs them,
+ * rather than racing the real 60 s.
+ */
+export const CA_ROOT_RATE_WINDOW_ENV = 'WS_SCRCPY_CA_ROOT_RATE_WINDOW_MS';
+
+function caRootRateWindowMs(): number {
+    const requested = Number(process.env[CA_ROOT_RATE_WINDOW_ENV]);
+    return Number.isFinite(requested) && requested > CA_ROOT_RATE_WINDOW_MS ? requested : CA_ROOT_RATE_WINDOW_MS;
+}
+
+/**
  * Read the persisted exposure mode for `GET /api/tls/state`'s response.
  *
  * DELIBERATELY MIRRORS `HttpServer.ts`'s own `readHttpExposure()` -- same
@@ -555,13 +569,14 @@ export class TlsApi {
 
     /**
      * Sliding-window burst check: at most `CA_ROOT_RATE_LIMIT` downloads per
-     * `CA_ROOT_RATE_WINDOW_MS`, counted on THIS instance (there is exactly one,
-     * held by the composition root) rather than per-request state, so it
-     * cannot be reset by opening a new connection.
+     * `CA_ROOT_RATE_WINDOW_MS` (or the longer `CA_ROOT_RATE_WINDOW_ENV`),
+     * counted on THIS instance (there is exactly one, held by the composition
+     * root) rather than per-request state, so it cannot be reset by opening a
+     * new connection.
      */
     private isCaRootRateLimited(): boolean {
         const now = Date.now();
-        const cutoff = now - CA_ROOT_RATE_WINDOW_MS;
+        const cutoff = now - caRootRateWindowMs();
         while (this.caRootDownloads.length > 0 && this.caRootDownloads[0]! <= cutoff) {
             this.caRootDownloads.shift();
         }

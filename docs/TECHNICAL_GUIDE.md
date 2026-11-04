@@ -3633,7 +3633,9 @@ The admin-gated `/api/tls/*` routes (`src/server/api/TlsApi.ts`) are the whole s
 `GET /state`, `POST /generate`, `POST /revoke`, `GET /ca-root` (rate-limited to 10 downloads per 60
 seconds, tracked on the one `TlsApi` instance the composition root constructs — handing out a root CA
 is the shape of a malware-delivery step even though this CA is only dangerous to whoever installs
-it), `POST /exposure`, and `POST /https-port` (kept for external callers; Settings stages the port through `POST /api/settings/batch` since after 0.5.3, §27.4). The admin gate runs **before** the route table, so a
+it; the test seam `WS_SCRCPY_CA_ROOT_RATE_WINDOW_MS` lengthens the window and is ignored unless it is a
+finite number above 60000, so it can make the limit stricter but never turn it off — e2e row 21.10 runs
+its spec-owned server with a one-hour window), `POST /exposure`, and `POST /https-port` (kept for external callers; Settings stages the port through `POST /api/settings/batch` since after 0.5.3, §27.4). The admin gate runs **before** the route table, so a
 route added later cannot land ungated.
 
 **Every write also needs proof of operator (since 2026-09-27, item 153), and the reads do not.** The

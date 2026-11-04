@@ -1,4 +1,5 @@
 import net from 'node:net';
+import { WAIT_MS } from './timeouts';
 
 /**
  * Ports held and probed the way another program on the host would.
@@ -33,15 +34,27 @@ export function releasePort(blocker: net.Server | undefined): Promise<void> {
     return new Promise((resolve) => (blocker ? blocker.close(() => resolve()) : resolve()));
 }
 
-/** Does anything accept a TCP connection on `host`:`port` right now? */
+/**
+ * Does anything accept a TCP connection on `host`:`port` right now? A refused
+ * port answers at once. A connect that neither connects nor is refused within
+ * WAIT_MS is no answer at all, so it rejects as HUNG rather than reading as
+ * "not listening", which is a verdict.
+ */
 export function isListening(port: number, host = '127.0.0.1'): Promise<boolean> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const socket = net.connect({ port, host });
         const done = (v: boolean) => {
             socket.destroy();
             resolve(v);
         };
-        socket.setTimeout(2_000, () => done(false));
+        socket.setTimeout(WAIT_MS, () => {
+            socket.destroy();
+            reject(
+                new Error(
+                    `HUNG: a connect to ${host}:${port} neither connected nor was refused in ${WAIT_MS / 1000} s`,
+                ),
+            );
+        });
         socket.once('connect', () => done(true));
         socket.once('error', () => done(false));
     });

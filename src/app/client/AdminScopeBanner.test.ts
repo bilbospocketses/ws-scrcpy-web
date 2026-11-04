@@ -2,26 +2,28 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FirstRunStatus } from '../../common/ConfigEvents';
+import { waitFor } from '../../testSupport/waitFor';
 import { AdminScopeBanner, bannerStateFor } from './AdminScopeBanner';
 import { announceRemoteAdminChanged } from './adminAccess';
 
 /**
- * `vi.waitFor` with a budget that survives a loaded machine (item 140).
+ * A wait whose budget survives a loaded machine (item 140).
  *
  * Every wait in this file is waiting on the same thing: a `dialog` that only
  * exists after the banner dynamically `import()`s the modal. That import pays
  * for an on-demand module transform the FIRST time it runs, inside the wait's
  * own clock -- and `vi.waitFor` has its own short default budget which
- * `vitest.config.ts`'s `testTimeout: 20000` does not extend. On a quiet box
- * the transform finishes in milliseconds and nobody notices; with the CPU
- * saturated it does not, and the wait gives up while the import is still
- * compiling. It fails as `expected null to be truthy`, which reads as "the
+ * `vitest.config.ts`'s testTimeout does not extend. On a quiet box the
+ * transform finishes in milliseconds and nobody notices; with the CPU
+ * saturated it does not, and the wait gave up while the import was still
+ * compiling. It failed as `expected null to be truthy`, which reads as "the
  * modal never opened" rather than "we stopped waiting too early".
  *
  * Measured 2026-09-22: 1 failure in 6 full-suite runs with 24 CPU burners
- * live, always one of these waits, never on an idle machine.
+ * live, always one of these waits, never on an idle machine. The shared
+ * `waitFor` carries the generous bound; this only polls a little faster.
  */
-const waitForModal = (assertion: () => void): Promise<void> => vi.waitFor(assertion, { timeout: 15_000, interval: 25 });
+const waitForModal = (assertion: () => void): Promise<void> => waitFor(assertion, { interval: 25 });
 
 function runtime(over: Partial<FirstRunStatus>): FirstRunStatus {
     return { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000, ...over };
@@ -137,15 +139,15 @@ describe('AdminScopeBanner follows a remote-admin save', () => {
     it('hides when remote admin is turned on, and comes back when it is turned off', async () => {
         const banner = new AdminScopeBanner();
         banner.start();
-        await vi.waitFor(() => expect(shown(banner)).toBe(true));
+        await waitFor(() => expect(shown(banner)).toBe(true));
 
         current = runtime({ adminScope: 'remote', callerIsLocal: true });
         announceRemoteAdminChanged();
-        await vi.waitFor(() => expect(shown(banner)).toBe(false));
+        await waitFor(() => expect(shown(banner)).toBe(false));
 
         current = runtime({ adminScope: 'local', callerIsLocal: true });
         announceRemoteAdminChanged();
-        await vi.waitFor(() => expect(shown(banner)).toBe(true));
+        await waitFor(() => expect(shown(banner)).toBe(true));
         banner.destroy();
     });
 
@@ -155,14 +157,14 @@ describe('AdminScopeBanner follows a remote-admin save', () => {
         banner.start();
         // Wait for the seed and the first read to land, so the events below
         // are judged by a banner that knows it was dismissed.
-        await vi.waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(2));
+        await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(2));
         await new Promise((r) => setTimeout(r, 20));
         current = runtime({ adminScope: 'remote', callerIsLocal: true });
         announceRemoteAdminChanged();
         await new Promise((r) => setTimeout(r, 20));
         current = runtime({ adminScope: 'local', callerIsLocal: true });
         announceRemoteAdminChanged();
-        await vi.waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(4));
+        await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(4));
         await new Promise((r) => setTimeout(r, 20));
         expect(shown(banner)).toBe(false);
         banner.destroy();
@@ -190,10 +192,10 @@ describe('AdminScopeBanner follows a remote-admin save', () => {
         );
         const banner = new AdminScopeBanner();
         banner.start();
-        await vi.waitFor(() => expect(releaseOld).toBeDefined());
+        await waitFor(() => expect(releaseOld).toBeDefined());
         current = runtime({ adminScope: 'remote', callerIsLocal: true });
         announceRemoteAdminChanged();
-        await vi.waitFor(() => expect(configReads).toBe(2));
+        await waitFor(() => expect(configReads).toBe(2));
         await new Promise((r) => setTimeout(r, 20));
         releaseOld?.();
         await new Promise((r) => setTimeout(r, 20));
@@ -204,7 +206,7 @@ describe('AdminScopeBanner follows a remote-admin save', () => {
     it('destroy() stops listening', async () => {
         const banner = new AdminScopeBanner();
         banner.start();
-        await vi.waitFor(() => expect(shown(banner)).toBe(true));
+        await waitFor(() => expect(shown(banner)).toBe(true));
         banner.destroy();
         const calls = (fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
         announceRemoteAdminChanged();

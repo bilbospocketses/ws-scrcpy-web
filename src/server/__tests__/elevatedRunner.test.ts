@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isElevationTimeout, parseResult, pollForResultFile, toSnakeCase } from '../service/elevatedRunner';
 
 describe('toSnakeCase', () => {
@@ -125,6 +125,11 @@ describe('isElevationTimeout', () => {
 describe('pollForResultFile', () => {
     let tmpDir: string;
     let resultPath: string;
+    // A positive poll's deadline is a hang guard, never a race: the file is
+    // already there, or is written on a counted tick, so a slow box only makes
+    // the poll slower. The negative tests keep their short deadlines: they
+    // expect the deadline to pass, which a slow box only makes easier.
+    const LONG_DEADLINE_MS = 120_000;
 
     beforeEach(() => {
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'elev-poll-'));
@@ -147,27 +152,36 @@ describe('pollForResultFile', () => {
     });
 
     it('returns the parsed result once the file is written', async () => {
-        // Write the result file 30ms after the poll starts. The poll
-        // should pick it up on its next tick and return.
-        setTimeout(() => {
-            fs.writeFileSync(resultPath, JSON.stringify({ ok: true, exit_code: 0, stdout: 'done', stderr: '' }));
-        }, 30);
-        const result = await pollForResultFile(resultPath, 1000, 10);
+        // The helper writes the result file between the poll's third and
+        // fourth looks: the poll must pick it up on its next tick. The sleep is
+        // injected, so the ticks are counted rather than timed.
+        let ticks = 0;
+        const sleep = async (): Promise<void> => {
+            if (++ticks === 3) {
+                fs.writeFileSync(resultPath, JSON.stringify({ ok: true, exit_code: 0, stdout: 'done', stderr: '' }));
+            }
+        };
+        const result = await pollForResultFile(resultPath, LONG_DEADLINE_MS, 10, sleep);
         expect(result).not.toBeNull();
         expect(result!.ok).toBe(true);
         expect(result!.stdout).toBe('done');
+        expect(ticks).toBe(3);
     });
 
     it('tolerates a partially-written result file by waiting for the next tick', async () => {
-        // Write partial JSON first, then complete it. Polling should
-        // skip the partial version and return the complete one.
+        // Write partial JSON first, then complete it a few ticks later. Polling
+        // should skip the partial version and return the complete one.
         fs.writeFileSync(resultPath, '{"ok":');
-        setTimeout(() => {
-            fs.writeFileSync(resultPath, JSON.stringify({ ok: true, exit_code: 0, stdout: '', stderr: '' }));
-        }, 30);
-        const result = await pollForResultFile(resultPath, 1000, 10);
+        let ticks = 0;
+        const sleep = async (): Promise<void> => {
+            if (++ticks === 3) {
+                fs.writeFileSync(resultPath, JSON.stringify({ ok: true, exit_code: 0, stdout: '', stderr: '' }));
+            }
+        };
+        const result = await pollForResultFile(resultPath, LONG_DEADLINE_MS, 10, sleep);
         expect(result).not.toBeNull();
         expect(result!.ok).toBe(true);
+        expect(ticks).toBe(3);
     });
 
     it('returns immediately if the file already exists at start of poll', async () => {
@@ -175,14 +189,13 @@ describe('pollForResultFile', () => {
             resultPath,
             JSON.stringify({ ok: false, exit_code: 4, stdout: '', stderr: 'err', error_message: 'boom' }),
         );
-        const start = Date.now();
-        const result = await pollForResultFile(resultPath, 5000, 10);
-        const elapsed = Date.now() - start;
+        const sleep = vi.fn(async () => {});
+        const result = await pollForResultFile(resultPath, LONG_DEADLINE_MS, 10, sleep);
         expect(result).not.toBeNull();
         expect(result!.ok).toBe(false);
         expect(result!.errorMessage).toBe('boom');
-        // Should resolve well under the timeout.
-        expect(elapsed).toBeLessThan(500);
+        // Immediately means on the first look, without a single wait.
+        expect(sleep).not.toHaveBeenCalled();
     });
 
     it('returns the result when its nonce matches the expected per-call nonce (#28)', async () => {
@@ -190,7 +203,7 @@ describe('pollForResultFile', () => {
             resultPath,
             JSON.stringify({ ok: true, exit_code: 0, stdout: 'ok', stderr: '', nonce: 'good-nonce' }),
         );
-        const result = await pollForResultFile(resultPath, 1000, 10, undefined, 'good-nonce');
+        const result = await pollForResultFile(resultPath, LONG_DEADLINE_MS, 10, undefined, 'good-nonce');
         expect(result).not.toBeNull();
         expect(result!.ok).toBe(true);
     });

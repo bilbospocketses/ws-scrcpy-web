@@ -24,6 +24,7 @@ import {
     unlockDevice,
     waitForDeviceRow,
 } from '../support/device';
+import { TEST_MS, WAIT_MS } from '../support/timeouts';
 
 /**
  * Smoke module 8 — the stream itself. Rows 8.1, 8.2, 8.3, 8.4, 8.5, 8.6 and 8.8.
@@ -80,9 +81,12 @@ const LOCKED_NOTICE_TEXT = 'device is locked — unlock it to see the screen';
 /**
  * How long a row waits for a picture. Generous because the emulator's encoders
  * are software (`c2.android.*`) and the runner shares a host with other suites;
- * a first frame is not slow because the app is wrong.
+ * a first frame is not slow because the app is wrong. A hang guard, never a
+ * speed check (support/timeouts.ts).
  */
-const FRAMES_TIMEOUT_MS = 90_000;
+const FRAMES_TIMEOUT_MS = WAIT_MS;
+/** Row 8.8's wait for the locked-device banner: a hang guard, ten times the 60 s the row once asserted. */
+const BANNER_WAIT_MS = 2 * TEST_MS;
 
 /** Shared API context: connect/lock/unlock and the screen-state witness all go through it. */
 let api: APIRequestContext;
@@ -245,7 +249,7 @@ async function waitForConsoleLine(
     from: number,
     re: RegExp,
     message: string,
-    timeoutMs = 90_000,
+    timeoutMs = WAIT_MS,
 ): Promise<RegExpExecArray> {
     let found: RegExpExecArray | undefined;
     await expect
@@ -295,16 +299,14 @@ function configModal(page: Page): Locator {
 }
 
 async function openConfigModal(page: Page, udid: string): Promise<Locator> {
-    const row = await waitForDeviceRow(page, udid, 60_000);
+    const row = await waitForDeviceRow(page, udid);
     await row.locator(`button.action-button[data-command="configure_stream"][data-udid="${udid}"]`).click();
     const modal = configModal(page);
     await expect(modal, 'the config-stream button should open ConfigureScrcpy').toBeVisible();
     // The device probe fills the codec and encoder dropdowns and is what enables
     // the connect button. Asserting on "ready" rather than on the button alone
     // means a probe that fails names itself (status-error, "probe failed: …").
-    await expect(modal.locator('span.status-text'), 'the device probe must reach "ready"').toHaveText('ready', {
-        timeout: 90_000,
-    });
+    await expect(modal.locator('span.status-text'), 'the device probe must reach "ready"').toHaveText('ready');
     await expect(modal.locator('button.connect-btn'), 'connect is enabled only once the probe lands').toBeEnabled();
     return modal;
 }
@@ -331,7 +333,7 @@ async function connectFromConfig(page: Page, modal: Locator): Promise<void> {
 async function closeStream(page: Page): Promise<void> {
     const modal = page.locator('dialog.connect-modal[open]');
     await modal.locator('button.modal-close:not(.theme-toggle)').click();
-    await expect(modal, 'the stream modal should be gone after the ×').toHaveCount(0, { timeout: 15_000 });
+    await expect(modal, 'the stream modal should be gone after the ×').toHaveCount(0);
 }
 
 async function canvasBox(page: Page): Promise<CanvasBox> {
@@ -361,7 +363,7 @@ async function measureAfterResize(page: Page, size: { width: number; height: num
                 previous = clientHeight;
                 return settled;
             },
-            { timeout: 15_000, message: `canvas box should settle after resizing to ${size.width}x${size.height}` },
+            { message: `canvas box should settle after resizing to ${size.width}x${size.height}` },
         )
         .toBe(true);
     return canvasBox(page);
@@ -438,7 +440,7 @@ function currentFocus(): string {
  * stale one naming the launcher would let "Home went back to the launcher" pass
  * while Settings is still in front. Naming what must NOT be there closes that.
  */
-async function expectFocus(re: RegExp, message: string, absent?: RegExp, timeoutMs = 30_000): Promise<void> {
+async function expectFocus(re: RegExp, message: string, absent?: RegExp, timeoutMs = WAIT_MS): Promise<void> {
     await expect.poll(() => currentFocus(), { timeout: timeoutMs, message }).toMatch(re);
     if (absent) {
         // Polled rather than read once: the two dumpsys sources settle at
@@ -446,7 +448,6 @@ async function expectFocus(re: RegExp, message: string, absent?: RegExp, timeout
         // the outgoing activity for a beat after the resumed activity changed.
         await expect
             .poll(() => currentFocus(), {
-                timeout: 10_000,
                 message: `${message} — and ${absent} must no longer be in the foreground`,
             })
             .not.toMatch(absent);
@@ -662,7 +663,8 @@ function lockScreenIsDisabled(): boolean {
  */
 async function lockAndRequireTheAppToSeeIt(udid: string): Promise<void> {
     qaAdb('shell', 'input', 'keyevent', '26');
-    const deadline = Date.now() + 20_000;
+    // A hang guard, never a speed check: past it the expect below names why.
+    const deadline = Date.now() + WAIT_MS;
     let state = await screenState(api, udid);
     while (state.locked !== true && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -768,13 +770,12 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.1 the stream renders live video with no decode errors and rescales with the window at the device aspect ratio', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
         const from = logs.all.length;
 
         await test.step('open the stream from the row', async () => {
-            const row = await waitForDeviceRow(page, udid, 60_000);
+            const row = await waitForDeviceRow(page, udid);
             // The connect link is intercepted by DeviceTracker: it opens
             // ConnectModal in place rather than navigating to a second tab.
             await row.locator('a.link-stream').click();
@@ -828,12 +829,11 @@ test.describe('device streaming (smoke §8)', () => {
     });
 
     test('@device 8.2 the on-screen buttons, canvas touches and keyboard all reach the device', async ({ browser }) => {
-        test.setTimeout(240_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
         const from = logs.all.length;
 
-        const row = await waitForDeviceRow(page, udid, 60_000);
+        const row = await waitForDeviceRow(page, udid);
         await row.locator('a.link-stream').click();
         await expect(page.locator('dialog.connect-modal[open]')).toBeVisible();
         await expectConnected(page, logs, from, 'the session should announce itself before any control');
@@ -904,7 +904,7 @@ test.describe('device streaming (smoke §8)', () => {
                         nodes = uiDump();
                         return nodes.some((n) => /search/i.test(n.id) || /search/i.test(n.desc));
                     },
-                    { timeout: 45_000, message: 'the Settings home screen should show its search affordance' },
+                    { message: 'the Settings home screen should show its search affordance' },
                 )
                 .toBe(true);
             // The witness below is "a text field is focused", so none may be
@@ -924,7 +924,6 @@ test.describe('device streaming (smoke §8)', () => {
 
             await expect
                 .poll(() => uiDump().some(isFocusedTextField), {
-                    timeout: 45_000,
                     message:
                         'the tap must reach the device and focus the search field — a focused text field (EditText ' +
                         'or a subclass such as AutoCompleteTextView) is the out-of-band proof that the canvas touch ' +
@@ -959,7 +958,6 @@ test.describe('device streaming (smoke §8)', () => {
                             return TYPED_KEYCODES_RE.test(dispatcher);
                         },
                         {
-                            timeout: 45_000,
                             message:
                                 'the typed characters must reach the device: its input dispatcher should name ' +
                                 'keyCode 45 (Q) or 29 (A) among the events it recently handled',
@@ -988,7 +986,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.3 audio streams with the selected codec, the codec toggle changes it, and disabling it is honoured', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
 
@@ -1089,7 +1086,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.4 codec, encoder, fps and bitrate apply to the stream and persist per device across a reload and a resize', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
 
@@ -1186,7 +1182,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.5 H.264 decodes and paints a picture (the beta.75 black-screen regression check)', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
 
@@ -1221,7 +1216,6 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.6 every other codec the device and browser both support decodes and paints', async ({
         browser,
     }) => {
-        test.setTimeout(420_000);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
 
@@ -1291,7 +1285,8 @@ test.describe('device streaming (smoke §8)', () => {
     test('@device 8.8 (partial) a locked device is reported rather than shown as a black screen, in both orderings', async ({
         browser,
     }) => {
-        test.setTimeout(420_000);
+        // Two banner waits of up to BANNER_WAIT_MS each, plus the connects around them.
+        test.setTimeout(5 * TEST_MS);
         const udid = await ensureDeviceReady();
         const { page, logs } = await openApp(browser);
         const banner = lockedNotice(page);
@@ -1338,7 +1333,10 @@ test.describe('device streaming (smoke §8)', () => {
                 let firstBlackAt = 0;
                 let bannerAt = 0;
                 let visible = false;
-                while (Date.now() - started < 90_000) {
+                // A hang guard, never a speed check: how long the banner took is
+                // logged below, not asserted. Ten times the minute this row used
+                // to allow, so only a banner that never comes reaches it.
+                while (Date.now() - started < BANNER_WAIT_MS) {
                     // A locked device only feeds the detector while its display
                     // is composing. KEYCODE_WAKEUP turns the screen on WITHOUT
                     // dismissing the keyguard, so frames keep coming and the
@@ -1362,7 +1360,8 @@ test.describe('device streaming (smoke §8)', () => {
                 const framesDelta = (await decodedFrames(page)) - framesAtStart;
                 const state = await screenState(api, udid);
                 console.log(
-                    `[8.8] ${label}: banner ${visible ? 'appeared' : 'did NOT appear'} after ${elapsed} ms; ` +
+                    `[8.8] ${label}: banner ${visible ? 'appeared' : 'did NOT appear'} after ${elapsed} ms` +
+                        `${visible && firstBlackAt !== 0 ? ` (${bannerAt - firstBlackAt} ms after the picture went black)` : ''}; ` +
                         `${nudges} wake nudges; frames while locked: ${framesDelta}; ` +
                         `canvas: ${[...signatures].join(' ') || 'none'}; screen-state: ${JSON.stringify(state)}`,
                 );
@@ -1372,17 +1371,14 @@ test.describe('device streaming (smoke §8)', () => {
                     // The row's real subject. Android refusing to capture the
                     // keyguard is what makes the stream black, and a black
                     // rectangle with no explanation is issue #498.
+                    // How long the banner took after the picture went black is in
+                    // the log line above; it is not asserted, since a loaded box
+                    // stretches it while the app is right.
                     expect(
                         visible,
-                        `${label}: the canvas went black while the device was locked, so the banner must say why. ` +
-                            `Samples: ${[...signatures].join(' ')}.`,
+                        `HUNG: ${label}: no banner in ${BANNER_WAIT_MS / 1000} s, though the canvas went black while the ` +
+                            `device was locked, so the banner must say why. Samples: ${[...signatures].join(' ')}.`,
                     ).toBe(true);
-                    expect(
-                        bannerAt - firstBlackAt,
-                        `${label}: the banner took ${bannerAt - firstBlackAt} ms after the picture went black. The ` +
-                            'detector needs a 30-frame baseline, five degraded frames and one rate-limited ask, ' +
-                            'which is seconds, not a minute.',
-                    ).toBeLessThanOrEqual(60_000);
                     await expect(banner, 'the banner says what is wrong in words').toHaveText(LOCKED_NOTICE_TEXT);
                     return;
                 }
@@ -1426,7 +1422,7 @@ test.describe('device streaming (smoke §8)', () => {
 
             await test.step('(a) lock a live stream', async () => {
                 const from = logs.all.length;
-                const row = await waitForDeviceRow(page, udid, 60_000);
+                const row = await waitForDeviceRow(page, udid);
                 await row.locator('a.link-stream').click();
                 await expect(page.locator('dialog.connect-modal[open]')).toBeVisible();
                 await expectConnected(page, logs, from, 'the session should announce itself before locking');
@@ -1460,9 +1456,7 @@ test.describe('device streaming (smoke §8)', () => {
                 ).toEqual([]);
 
                 await unlockDevice(api);
-                await expect(banner, 'the banner clears on the first frame with a picture in it').toBeHidden({
-                    timeout: 30_000,
-                });
+                await expect(banner, 'the banner clears on the first frame with a picture in it').toBeHidden();
                 await expectPicture(page);
                 await closeStream(page);
             });
@@ -1474,7 +1468,7 @@ test.describe('device streaming (smoke §8)', () => {
                 // (NO_PICTURE_FRAME_BYTES) is what catches this one.
                 await lockAndRequireTheAppToSeeIt(udid);
                 const from = logs.all.length;
-                const row = await waitForDeviceRow(page, udid, 60_000);
+                const row = await waitForDeviceRow(page, udid);
                 await row.locator('a.link-stream').click();
                 await expect(page.locator('dialog.connect-modal[open]')).toBeVisible();
                 await expectConnected(page, logs, from, 'the session should come up even while locked');
@@ -1485,7 +1479,7 @@ test.describe('device streaming (smoke §8)', () => {
                 expect(refreshes, 'connecting onto a locked device must not start a reconnect loop either').toEqual([]);
 
                 await unlockDevice(api);
-                await expect(banner, 'unlocking clears the banner').toBeHidden({ timeout: 30_000 });
+                await expect(banner, 'unlocking clears the banner').toBeHidden();
                 await expectPicture(page);
                 await closeStream(page);
             });

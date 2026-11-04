@@ -32,6 +32,7 @@ import {
     disconnectIfConnected,
     waitForDeviceRow,
 } from '../support/device';
+import { WAIT_MS } from '../support/timeouts';
 
 /**
  * Smoke module 19 — per-user device labels.
@@ -109,14 +110,15 @@ interface ScanWireMessage {
  * has finished is answered with `scan.error: scan already in progress`. Waiting
  * for the terminal message is what lets A's scan and B's scan run back to back.
  */
-async function runScan(page: Page, subnets: string[], timeoutMs = 90_000): Promise<ScanWireMessage[]> {
+async function runScan(page: Page, subnets: string[], stallMs = WAIT_MS): Promise<ScanWireMessage[]> {
     const messages = await page.evaluate(
-        (args: { subnets: string[]; timeoutMs: number }) =>
+        (args: { subnets: string[]; stallMs: number }) =>
             new Promise<unknown[]>((resolve, reject) => {
                 const url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws-scan`;
                 const ws = new WebSocket(url);
                 const seen: unknown[] = [];
                 let settled = false;
+                let timer: ReturnType<typeof setTimeout> | undefined;
                 const finish = (act: () => void): void => {
                     if (settled) return;
                     settled = true;
@@ -126,21 +128,28 @@ async function runScan(page: Page, subnets: string[], timeoutMs = 90_000): Promi
                     } catch {}
                     act();
                 };
-                const timer = setTimeout(
-                    () =>
-                        finish(() =>
-                            reject(
-                                new Error(
-                                    `no terminal scan message within ${args.timeoutMs} ms; saw ${JSON.stringify(seen)}`,
+                // Bounded by NO PROGRESS: every scan message re-arms it, so a
+                // slow scan is only slow, and one that stops fails as HUNG.
+                const arm = (): void => {
+                    clearTimeout(timer);
+                    timer = setTimeout(
+                        () =>
+                            finish(() =>
+                                reject(
+                                    new Error(
+                                        `HUNG: no scan message for ${args.stallMs / 1000} s, and no terminal one; saw ${JSON.stringify(seen)}`,
+                                    ),
                                 ),
                             ),
-                        ),
-                    args.timeoutMs,
-                );
+                        args.stallMs,
+                    );
+                };
+                arm();
                 ws.addEventListener('open', () =>
                     ws.send(JSON.stringify({ type: 'scan.start', subnets: args.subnets })),
                 );
                 ws.addEventListener('message', (event: MessageEvent) => {
+                    arm();
                     const msg = JSON.parse(String(event.data)) as { type?: string };
                     seen.push(msg);
                     if (msg.type === 'scan.complete' || msg.type === 'scan.cancelled' || msg.type === 'scan.error') {
@@ -149,7 +158,7 @@ async function runScan(page: Page, subnets: string[], timeoutMs = 90_000): Promi
                 });
                 ws.addEventListener('close', () => finish(() => resolve(seen)));
             }),
-        { subnets, timeoutMs },
+        { subnets, stallMs },
     );
     return messages as ScanWireMessage[];
 }
@@ -164,7 +173,6 @@ function hitFor(messages: ScanWireMessage[], address: string): ScanWireMessage {
 test('@device 19.1 in open mode a label set on the device row is stored per user and survives a reload', async ({
     page,
 }) => {
-    test.setTimeout(180_000);
     const address = deviceAddress();
     const serial = deviceSerial();
 
@@ -178,7 +186,7 @@ test('@device 19.1 in open mode a label set on the device row is stored per user
         // and inheriting its label would make "the label appeared" unfalsifiable.
         await setLabel(ctx, serial, '');
         await gotoHome(page);
-        const row = await waitForDeviceRow(page, address, 30_000);
+        const row = await waitForDeviceRow(page, address);
         const nameText = row.locator('span.device-name-text');
         await expect(nameText).toHaveText('Unnamed Device');
         await expect(nameText).toHaveClass(/unnamed/);
@@ -192,7 +200,7 @@ test('@device 19.1 in open mode a label set on the device row is stored per user
         );
 
         await gotoHome(page);
-        const reloaded = await waitForDeviceRow(page, address, 30_000);
+        const reloaded = await waitForDeviceRow(page, address);
         await expect(reloaded.locator('span.device-name-text')).toHaveText(OPEN_MODE_LABEL);
         await expect(reloaded.locator('span.device-name-text')).not.toHaveClass(/unnamed/);
     } finally {
@@ -241,7 +249,6 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
     };
 
     test.beforeAll(async ({ browser }) => {
-        test.setTimeout(180_000);
         address = deviceAddress();
         serial = deviceSerial();
 
@@ -297,7 +304,6 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
     });
 
     test.afterAll(async () => {
-        test.setTimeout(180_000);
         const clear = async (ctx: APIRequestContext | undefined): Promise<void> => {
             if (!ctx) return;
             for (const key of writtenKeys) {
@@ -321,11 +327,10 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
     });
 
     test('@device 19.2 device labels are isolated per account: B never sees A-name, and A still does after B renames', async () => {
-        test.setTimeout(180_000);
         const userA = a as Visitor;
         const userB = b as Visitor;
 
-        const rowA = await waitForDeviceRow(userA.page, address, 30_000);
+        const rowA = await waitForDeviceRow(userA.page, address);
         await expect(rowA.locator('span.device-name-text')).toHaveClass(/unnamed/);
         await renameFromRow(userA.page, rowA, serial, A_LABEL);
         expect((await labelsFor(userA.context.request))[serial]).toBe(A_LABEL);
@@ -333,7 +338,7 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
         // The negative this row exists for. Both assertions are kept: the first
         // is the row's own words, the second is the stronger claim that B holds
         // nothing at all for this device.
-        const rowB = await waitForDeviceRow(userB.page, address, 30_000);
+        const rowB = await waitForDeviceRow(userB.page, address);
         const bName = rowB.locator('span.device-name-text');
         await expect(bName, "B must not inherit A's label").not.toHaveText(A_LABEL);
         await expect(bName).toHaveText('Unnamed Device');
@@ -348,14 +353,13 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
         // makes repeated logins a hazard, and two open sessions demonstrate the
         // isolation more directly than one session at a time can.
         await userA.page.goto('/');
-        const rowA2 = await waitForDeviceRow(userA.page, address, 30_000);
+        const rowA2 = await waitForDeviceRow(userA.page, address);
         await expect(rowA2.locator('span.device-name-text')).toHaveText(A_LABEL);
         expect((await labelsFor(userA.context.request))[serial]).toBe(A_LABEL);
         expect((await labelsFor(userB.context.request))[serial]).toBe(B_LABEL);
     });
 
     test('@device 19.3 a live scan hit carries the label of the user watching that scan', async () => {
-        test.setTimeout(300_000);
         const userA = a as Visitor;
         const userB = b as Visitor;
         const idx = address.lastIndexOf(':');
@@ -372,7 +376,7 @@ test.describe('per-user device labels with login enabled (smoke §19.2, §19.3)'
         // device connected as `qa-android:5555` would still be reported as a hit
         // at `ip:5555`. Disconnecting removes that ambiguity from the row.
         await disconnectIfConnected(userA.context.request, address);
-        await expect(deviceRow(userA.page, address)).toHaveCount(0, { timeout: 30_000 });
+        await expect(deviceRow(userA.page, address)).toHaveCount(0);
 
         try {
             // A probe scan first, for the hit's own identity. Which track claims

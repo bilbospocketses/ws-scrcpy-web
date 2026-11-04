@@ -19,9 +19,15 @@ export default defineConfig({
         // The default 5s per-test timeout is too tight for tests that lazily
         // `await import()` a heavy module: under full-suite parallel load the
         // on-demand esbuild transform can momentarily exceed 5s and time the
-        // test out (it passes in <1s in isolation). 20s leaves headroom for the
-        // load spike without masking a genuine hang.
-        testTimeout: 20000,
+        // test out (it passes in <1s in isolation).
+        //
+        // These two timeouts are hang guards, not speed checks: correct code
+        // that only runs slower on a loaded box must never fail a test. So
+        // they sit far past any healthy test (seconds at most), and past
+        // src/testSupport/waitFor.ts's 120 s bound, so a wait that hangs is
+        // reported by waitFor as HUNG, naming its condition, before the test
+        // itself times out.
+        testTimeout: 300_000,
         // Vitest defaults `hookTimeout` to 10s and does NOT follow
         // `testTimeout`, so before/afterEach had half the budget of the tests
         // they exist to set up -- and the heaviest work in this suite is in a
@@ -32,10 +38,10 @@ export default defineConfig({
         //
         // Measured 2026-09-22 (item 140): with the CPU pinned, 7 of 8
         // full-suite runs failed and EVERY failure was `Hook timed out in
-        // 10000ms` -- zero assertion failures, zero EPERM. Matching the test
-        // budget is the smallest honest fix; the hook is legitimately slow
-        // rather than wrong.
-        hookTimeout: 20000,
+        // 10000ms` -- zero assertion failures, zero EPERM. The hook is
+        // legitimately slow rather than wrong, so it gets the same budget as
+        // the tests.
+        hookTimeout: 300_000,
         globalSetup: ['./vitest.globalSetup.ts'],
         // Per-worker guard: neutralise stray process.exit so a leaked install/update
         // hand-off timer can't abort an unrelated test under worker reuse. See file.
