@@ -1197,6 +1197,28 @@ test.describe('auth / opt-in login (smoke §18)', () => {
         }
     });
 
+    test('18.23 a stream link survives sign-in: the login page returns to the same link once signed in', async () => {
+        // #995: `/#!action=stream&udid=<serial>` opens that device's stream. In
+        // locked mode the login page is served at that URL; the stream can open
+        // only if signing in lands back on the link rather than on a bare `/`.
+        // No device is attached on this tier, so the link stays pending and its
+        // hash stays in the address bar: that hash is what this row asserts.
+        // The device-tier half (the stream actually opening) is 8.33.
+        const hash = '#!action=stream&udid=e2e-no-such-device%3A5555&player=webcodecs';
+        const visitor = await newVisitorContext(await browserOf());
+        try {
+            await visitor.page.goto(`/${hash}`);
+            await expectLoginPage(visitor.page);
+            const login = await submitLoginPage(visitor.page, ADMIN.username, ADMIN.password);
+            expect(login.status).toBe(200);
+            await expectAppShell(visitor.page);
+            expect(new URL(visitor.page.url()).hash, 'sign-in must keep the stream link').toBe(hash);
+            expect((await me(visitor.context.request)).user).toEqual({ username: ADMIN.username, role: 'admin' });
+        } finally {
+            await visitor.context.close();
+        }
+    });
+
     test('18.10 live WebSockets close 4401 without a session and are served with one, in the same context', async () => {
         const own = await newVisitorContext(await browserOf());
         try {

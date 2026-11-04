@@ -16,6 +16,7 @@ import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
 import { bindDeviceSettings } from './deviceSettingsBinding';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
+import { pageStreamDeepLink } from './streamDeepLink';
 
 // ---------- capability gating ----------
 
@@ -398,62 +399,85 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         const connectLinks = overlaySection.querySelectorAll('a.link-stream') as NodeListOf<HTMLAnchorElement>;
         connectLinks.forEach((link) => {
             link.removeAttribute('target');
-            link.addEventListener('click', async (e) => {
+            link.addEventListener('click', (e) => {
+                // #995: a ctrl/cmd/shift-click keeps the browser's own meaning,
+                // a new tab or window, and that page opens this stream from the
+                // link (streamDeepLink). A plain click opens it here.
+                if (e.ctrlKey || e.metaKey || e.shiftKey) return;
                 e.preventDefault();
-                const href = link.getAttribute('href');
-                if (!href) return;
-
-                // Parse stream params from the URL hash
-                const url = new URL(href, location.origin);
-                const hash = url.hash.startsWith('#!') ? url.hash.slice(2) : url.hash.slice(1);
-                const query = new URLSearchParams(hash);
-                const params: ParamsStreamScrcpy = {
-                    ...StreamClientScrcpy.parseParameters(query),
-                    hostname: this.params.hostname,
-                    port: this.params.port,
-                    secure: this.params.secure,
-                    pathname: this.params.pathname,
-                };
-
-                // Hydrate the per-device cache before reading audio prefs.
-                // hydrateDevice covers both audio and video scopes so Task 4c's
-                // video reads (line ~455) also benefit from this single call.
-                // Keyed by the device's serial through the binding above (M11).
-                await settingsService.hydrateDevice(device.udid);
-
-                // Apply audio prefs: saved-from-ConfigureScrcpy if present,
-                // otherwise SDK-aware defaults so the connect-button respects
-                // device capability (playback+dup on Android 13+, output below).
-                const sdkInt = Number.parseInt(device['ro.build.version.sdk'], 10);
-                const saved = AudioSettingsStore.load(device.udid);
-                if (saved) {
-                    params.audioEnabled = saved.enabled;
-                    params.audioSource = saved.source;
-                    params.audioCodec = saved.codec;
-                } else {
-                    params.audioEnabled = audioCaptureSupported(sdkInt) && audioEnabledDefault(device.deviceKind);
-                    params.audioSource = defaultAudioSourceForSdk(sdkInt);
-                    // audioCodec left unset → server uses scrcpy's opus default
-                }
-
-                // Get device label from the card
-                const nameEl = link.closest('.device')?.querySelector('.device-name-text');
-                const label = nameEl?.textContent || device['ro.product.model'] || device.udid;
-
-                // Create player and open ConnectModal with auto-detected settings
-                const playerClass = StreamClientScrcpy.getPlayers()[0];
-                if (!playerClass) return;
-                const player = StreamClientScrcpy.createPlayer(playerClass.playerFullName, device.udid);
-                if (!player) return;
-
-                const videoSettings = player.getVideoSettings();
-                const fitToScreen = playerClass.getFitToScreenStatus(device.udid);
-                player.setVideoSettings(videoSettings, fitToScreen, false);
-
-                const { ConnectModal } = await import('./ConnectModal');
-                new ConnectModal(params, player, fitToScreen, videoSettings, label, device.deviceKind);
+                void this.openConnectModal(device, link);
             });
         });
+
+        // #995: a page loaded from a stream link (`#!action=stream&udid=...`)
+        // opens this device's stream as soon as its connect button exists.
+        const deepLink = pageStreamDeepLink();
+        const connectLink = connectLinks[0];
+        if (connectLink) {
+            deepLink.offer(device.udid, () => {
+                if (!connectLink.isConnected) return false;
+                void this.openConnectModal(device, connectLink);
+                return true;
+            });
+        } else {
+            deepLink.withdraw(device.udid);
+        }
+    }
+
+    /** What the connect button does: open ConnectModal for this device. */
+    private async openConnectModal(device: GoogDeviceDescriptor, link: HTMLAnchorElement): Promise<void> {
+        const href = link.getAttribute('href');
+        if (!href) return;
+
+        // Parse stream params from the URL hash
+        const url = new URL(href, location.origin);
+        const hash = url.hash.startsWith('#!') ? url.hash.slice(2) : url.hash.slice(1);
+        const query = new URLSearchParams(hash);
+        const params: ParamsStreamScrcpy = {
+            ...StreamClientScrcpy.parseParameters(query),
+            hostname: this.params.hostname,
+            port: this.params.port,
+            secure: this.params.secure,
+            pathname: this.params.pathname,
+        };
+
+        // Hydrate the per-device cache before reading audio prefs.
+        // hydrateDevice covers both audio and video scopes so Task 4c's
+        // video reads below also benefit from this single call.
+        // Keyed by the device's serial through the binding in buildDeviceRow (M11).
+        await settingsService.hydrateDevice(device.udid);
+
+        // Apply audio prefs: saved-from-ConfigureScrcpy if present,
+        // otherwise SDK-aware defaults so the connect-button respects
+        // device capability (playback+dup on Android 13+, output below).
+        const sdkInt = Number.parseInt(device['ro.build.version.sdk'], 10);
+        const saved = AudioSettingsStore.load(device.udid);
+        if (saved) {
+            params.audioEnabled = saved.enabled;
+            params.audioSource = saved.source;
+            params.audioCodec = saved.codec;
+        } else {
+            params.audioEnabled = audioCaptureSupported(sdkInt) && audioEnabledDefault(device.deviceKind);
+            params.audioSource = defaultAudioSourceForSdk(sdkInt);
+            // audioCodec left unset → server uses scrcpy's opus default
+        }
+
+        // Get device label from the card
+        const nameEl = link.closest('.device')?.querySelector('.device-name-text');
+        const label = nameEl?.textContent || device['ro.product.model'] || device.udid;
+
+        // Create player and open ConnectModal with auto-detected settings
+        const playerClass = StreamClientScrcpy.getPlayers()[0];
+        if (!playerClass) return;
+        const player = StreamClientScrcpy.createPlayer(playerClass.playerFullName, device.udid);
+        if (!player) return;
+
+        const videoSettings = player.getVideoSettings();
+        const fitToScreen = playerClass.getFitToScreenStatus(device.udid);
+        player.setVideoSettings(videoSettings, fitToScreen, false);
+
+        const { ConnectModal } = await import('./ConnectModal');
+        new ConnectModal(params, player, fitToScreen, videoSettings, label, device.deviceKind);
     }
 
     /**

@@ -8,6 +8,9 @@ import { SessionStore } from './session';
 // mode. It references NO external bundle/assets (the gated app shell), only an inline script that
 // POSTs JSON to /api/auth/login and reloads on success — so it cannot leak the SPA shell and has
 // no build dependency. Task 11 (client) may later replace this with a richer page.
+// The reload keeps the URL's hash, so a stream link (#995, `/#!action=stream&udid=...`) still opens
+// its device after sign-in. At `/` it is a reload: assigning `/#...` from `/#...` would be a
+// fragment-only navigation that never leaves this page.
 const LOGIN_PAGE_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in</title>
 <style>body{font-family:system-ui,Segoe UI,sans-serif;background:#1e1e1e;color:#eee;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}form{background:#2a2a2a;padding:2rem;border-radius:8px;width:280px;box-shadow:0 2px 16px #0008}h1{font-size:1.2rem;margin:0 0 1rem}input{display:block;width:100%;box-sizing:border-box;margin:.4rem 0;padding:.55rem;background:#1e1e1e;border:1px solid #444;color:#eee;border-radius:4px}button{width:100%;margin-top:.8rem;padding:.6rem;background:#0078d4;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:1rem}.err{color:#f66;font-size:.85rem;min-height:1.1rem}</style>
@@ -19,7 +22,7 @@ const LOGIN_PAGE_HTML = `<!doctype html>
 const f=document.getElementById('f'),e=document.getElementById('e');
 f.addEventListener('submit',async (ev)=>{ev.preventDefault();e.textContent='';
 try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:document.getElementById('u').value,password:document.getElementById('p').value})});
-if(r.ok){location.href='/';}else{e.textContent='Invalid credentials or the account is temporarily locked.';}}catch{e.textContent='Network error — please retry.';}});
+if(r.ok){if(location.pathname==='/'){location.reload();}else{location.href='/'+location.hash;}}else{e.textContent='Invalid credentials or the account is temporarily locked.';}}catch{e.textContent='Network error — please retry.';}});
 </script></body></html>`;
 
 function serveLoginPage(res: ServerResponse): void {

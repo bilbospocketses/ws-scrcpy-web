@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A link opens one device's stream (#995).** The connect button's link, `…/#!action=stream&udid=<serial>&player=webcodecs`, now opens that device's stream when the page loads from it: paste it into a tab, bookmark it, or ctrl+click (cmd+click) or middle-click **connect** to stream in a new tab, several devices side by side. The page used to ignore its own hash, so the link showed the home page. The stream opens through the device's own connect button, with its saved settings; only the serial comes from the link. A device that is listed but offline opens once it connects, and with login on the login page now returns to the same link after sign-in instead of a bare `/`. Smoke rows 8.33 and 18.23.
 - **A test seam lengthens the ca-root rate window: `WS_SCRCPY_CA_ROOT_RATE_WINDOW_MS`.** e2e row 21.10 expects the eleventh `GET /api/tls/ca-root` to be 429, which only holds while all eleven fit in the limiter's real 60 s sliding window. Its spec-owned server now runs a one-hour window. A value that is not a finite number above the 60 s default is ignored, so the seam can make the limit stricter but never turn it off; production behavior is unchanged (`src/server/api/TlsApi.ts`; documented in the README's environment-variable table and the technical guide's Local HTTPS section).
 
 ### Changed
