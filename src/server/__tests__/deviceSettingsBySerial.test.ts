@@ -13,6 +13,7 @@ vi.mock('dns/promises', () => ({
     }),
 }));
 
+import { waitFor } from '../../testSupport/waitFor';
 import { AdbClient } from '../AdbClient';
 import { _resetPendingLabelsForTest, serialReadOn } from '../api/pendingLabels';
 import { SERIAL_RETRY_AFTER_S, SettingsApi } from '../api/SettingsApi';
@@ -69,7 +70,7 @@ async function sight(udid: string): Promise<Device> {
         .spyOn(AdbClient.prototype, 'getProperties')
         .mockResolvedValue({ 'ro.serialno': SERIAL, 'ro.product.model': 'Pixel 7' });
     const device = new Device(udid, 'device');
-    await vi.waitFor(() => expect(props).toHaveBeenCalledWith(udid));
+    await waitFor(() => expect(props).toHaveBeenCalledWith(udid));
     await new Promise((r) => setImmediate(r));
     return device;
 }
@@ -181,7 +182,7 @@ describe('a live transport whose serial is not read yet is never used as the set
         setup();
         const { props, release } = slowGetprop();
         trackerHolds(new Device(WIFI, 'device'));
-        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+        await waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
 
         const { r, done } = request('PATCH', WIFI, { video: { fit: true } });
         release();
@@ -198,7 +199,7 @@ describe('a live transport whose serial is not read yet is never used as the set
         Config.getInstance().db.devices.setDeviceSetting(IMPLICIT_ADMIN_ID, SERIAL, 'video', { fit: true });
         const { props, release } = slowGetprop();
         trackerHolds(new Device(WIFI, 'device'));
-        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+        await waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
 
         const { r, done } = request('GET', WIFI);
         release();
@@ -212,7 +213,7 @@ describe('a live transport whose serial is not read yet is never used as the set
         setup();
         const { props } = slowGetprop();
         trackerHolds(new Device(WIFI, 'device'));
-        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+        await waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
 
         const { r, done } = request('PATCH', WIFI, { video: { fit: true } }, 20);
         await done;
@@ -257,7 +258,7 @@ describe('a placeholder serial keys nothing (M11 fix 1, m4)', () => {
                 .spyOn(AdbClient.prototype, 'getProperties')
                 .mockResolvedValue({ 'ro.serialno': placeholder, 'ro.product.model': 'TV Box' });
             const device = new Device(WIFI, 'device');
-            await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+            await waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
             await new Promise((r) => setImmediate(r));
             vi.spyOn(ControlCenter, 'hasInstance').mockReturnValue(true);
             vi.spyOn(ControlCenter, 'getInstance').mockReturnValue({
@@ -291,7 +292,7 @@ describe('a reused transport forgets the previous device (M11 fix 1, m5)', () =>
             .spyOn(AdbClient.prototype, 'getProperties')
             .mockResolvedValue({ 'ro.serialno': 'OTHER0SERIAL', 'ro.product.model': 'Pixel 8' });
         device.setState('device');
-        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+        await waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
         await new Promise((r) => setImmediate(r));
 
         expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL');
@@ -307,7 +308,7 @@ describe('a property read that finishes after the transport changed state is dis
         setup();
         const { props, release } = slowGetprop();
         const device = new Device(WIFI, 'device');
-        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+        await waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
 
         device.setState('offline');
         release();
@@ -326,12 +327,12 @@ describe('a property read that finishes after the transport changed state is dis
         setup();
         const { props, release } = slowGetprop();
         const device = new Device(WIFI, 'device');
-        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
+        await waitFor(() => expect(props).toHaveBeenCalledWith(WIFI));
 
         device.setState('offline');
         props.mockResolvedValue({ 'ro.serialno': 'OTHER0SERIAL', 'ro.product.model': 'Pixel 8' });
         device.setState('device');
-        await vi.waitFor(() => expect(props).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(props).toHaveBeenCalledTimes(2));
         await settle();
         expect(device.descriptor['ro.serialno']).toBe('OTHER0SERIAL');
 
@@ -361,7 +362,7 @@ describe('a property read that finishes after the transport changed state is dis
             return { 'ro.serialno': SERIAL, 'ro.product.model': 'Pixel 7' };
         });
         const device = new Device(WIFI, 'device');
-        await vi.waitFor(() => expect(props).toHaveBeenCalled());
+        await waitFor(() => expect(props).toHaveBeenCalled());
 
         device.setState('offline');
         release();

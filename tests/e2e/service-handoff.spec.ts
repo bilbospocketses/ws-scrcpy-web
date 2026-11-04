@@ -2,6 +2,7 @@ import type net from 'node:net';
 import type { APIResponse, BrowserContext, Locator, Page, Request, Response } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import { ADMIN, loginAs, openSettings, openSettingsTab, REGULAR } from './support/auth';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { apiContext, lockDown } from './support/ownedServer';
 import { holdPort, releasePort } from './support/ports';
 import {
@@ -20,6 +21,7 @@ import {
     withoutInheritedOverrides,
 } from './support/privateServer';
 import { blockServiceActions } from './support/serviceStubs';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Item 24, step 3: the service install hand-off with two real app processes on
@@ -98,7 +100,7 @@ async function stubServiceManager(context: BrowserContext): Promise<{ manager: S
     await context.route('**/api/service/status', async (route) => {
         let real: APIResponse;
         try {
-            real = await route.fetch({ timeout: 5_000 });
+            real = await route.fetch({ timeout: WAIT_MS });
         } catch {
             manager.unreachable += 1;
             await route.abort('connectionrefused').catch(() => {});
@@ -343,7 +345,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     test('4.7 / 4.3 / 13.11 (install) / 13.10 / 5.5 the configured port held: local on +1, the service walks to +2 and persists it, the page follows on 127.0.0.1 and reads installed; uninstalled, it ends on the relaunched local app', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const configured = 8200;
         const local = 8201;
         const service = 8202;
@@ -392,7 +394,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         // it has bound or persisted anything, so a tick can read "running" with
         // the disk still naming +1: the page's own port, which must not
         // navigate (installHandoffPoll.ts:84).
-        const landed = page.waitForURL(`${at(service)}/`, { timeout: 90_000 });
+        const landed = page.waitForURL(`${at(service)}/`, { timeout: WAIT_MS });
         const b = spawnService(paths);
         manager.state = 'running';
         await waitForServer(b, at(service));
@@ -450,7 +452,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         // that loop or the device tracker (staleTokenReload.ts), and the
         // tracker usually wins. The wait is armed before anything moves, so
         // neither can slip past it; the annotation says which one it was.
-        const reloaded = page.waitForEvent('load', { timeout: 90_000 });
+        const reloaded = page.waitForEvent('load', { timeout: WAIT_MS });
         const reportCause = recordReloadCause(page);
         await stopServer(b);
         manager.state = 'not-installed';
@@ -486,7 +488,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     test('4.3 the local app gone before the service is up: the service takes the same port and the page ends on it, reading installed', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const port = 8203;
         const paths = await seed('same-port', port);
         const a = spawnLocal(paths);
@@ -520,9 +522,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         // rather than walking past it. The world where that answer comes from
         // someone else is made up by installHandoffPoll.test.ts:155.
         await stopServer(a);
-        await expect
-            .poll(() => manager.unreachable, { message: 'a status read met the dead port', timeout: 30_000 })
-            .toBeGreaterThan(0);
+        await expect.poll(() => manager.unreachable, { message: 'a status read met the dead port' }).toBeGreaterThan(0);
 
         // The service then takes the port A left: config.json names it and it
         // is free, so there is nothing to walk past, and nothing to persist.
@@ -536,7 +536,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
         // reloaded by whichever stale-token reader asks B first, the poll or
         // the device tracker (staleTokenReload.ts), so the poll may never get
         // to act on its own; the annotation says which one it was.
-        const reloaded = page.waitForEvent('load', { timeout: 90_000 });
+        const reloaded = page.waitForEvent('load', { timeout: WAIT_MS });
         const reportCause = recordReloadCause(page);
         const b = spawnService(paths);
         await waitForServer(b, at(port));
@@ -558,7 +558,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     test('1.11 (c) "yes, install service" on a first run shares the Settings poll: the welcome modal follows the service to its shifted port, where no welcome modal opens', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const configured = 8204;
         const local = 8205;
         const service = 8206;
@@ -587,7 +587,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
 
         // Running from the moment the process starts, as in the Settings leg:
         // a tick may read "running" while the disk still names this page's port.
-        const landed = page.waitForURL(`${at(service)}/`, { timeout: 90_000 });
+        const landed = page.waitForURL(`${at(service)}/`, { timeout: WAIT_MS });
         const b = spawnService(paths);
         manager.state = 'running';
         await waitForServer(b, at(service));
@@ -603,7 +603,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     });
 
     test('3.7 (b) a second instance that finds the configured port held by a sibling binds the next port and does not persist it', async () => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const configured = 8207;
         const next = 8208;
         const paths = await seed('sibling', configured);
@@ -629,7 +629,7 @@ test.describe('service install hand-off: two instances on one data root (item 24
     });
 
     test('3.7 (b) with users configured, the second instance still finds the sibling and does not persist its port', async () => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const configured = 8208;
         const next = 8209;
         const paths = await seed('sibling-locked', configured);

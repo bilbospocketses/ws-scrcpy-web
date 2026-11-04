@@ -69,7 +69,6 @@ test.describe('10.15 embed consent: the trust edges', () => {
     });
 
     test('10.15 in locked mode the consent endpoints answer JSON, a non-admin decision is 403, and the admin decision lands', async () => {
-        test.setTimeout(180_000);
         // Its own adb daemon (8184), so neither its device poll nor its shutdown
         // ever reaches the machine's daemon on 5037, which the shared server uses.
         const server = await startLockedPrivateServer('ws-scrcpy-web-e2e-164d-embed-locked', 8181, {

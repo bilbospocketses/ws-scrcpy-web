@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
     order: [] as string[],
     errors: [] as string[],
     infos: [] as string[],
+    /** Runs on every info line, so a test can act at the moment start() reaches a step. */
+    onInfo: undefined as ((line: string) => void) | undefined,
     shell: vi.fn<(serial: string, cmd: string) => Promise<string>>(),
     reverse: vi.fn<(serial: string, remote: string, local: string) => Promise<void>>(),
     forward: vi.fn<(serial: string, local: string, remote: string) => Promise<void>>(),
@@ -56,7 +58,11 @@ vi.mock('../scrcpyServerVersion', () => ({ getInstalledScrcpyServerVersion: () =
 vi.mock('../Logger', () => {
     const text = (args: unknown[]) => args.map(String).join(' ');
     const logger = {
-        info: (...args: unknown[]) => h.infos.push(text(args)),
+        info: (...args: unknown[]) => {
+            const line = text(args);
+            h.infos.push(line);
+            h.onInfo?.(line);
+        },
         warn() {},
         error: (...args: unknown[]) => h.errors.push(text(args)),
         debug() {},
@@ -64,6 +70,7 @@ vi.mock('../Logger', () => {
     return { Logger: { for: () => logger } };
 });
 
+import { waitFor } from '../../testSupport/waitFor';
 import { liveStreams } from '../liveStreams';
 import { ScrcpyConnection, SESSION_FAILED_CLOSE_CODE } from '../ScrcpyConnection';
 
@@ -138,7 +145,7 @@ function browserLeaves(): void {
 
 /** start() reached the abandon path and said so at info level. */
 async function abandoned(): Promise<void> {
-    await vi.waitFor(() => expect(h.infos.some((line) => line.startsWith('Start abandoned for device-1'))).toBe(true));
+    await waitFor(() => expect(h.infos.some((line) => line.startsWith('Start abandoned for device-1'))).toBe(true));
 }
 
 function expectNoFailureReported(): void {
@@ -159,6 +166,7 @@ beforeEach(() => {
     h.order.length = 0;
     h.errors.length = 0;
     h.infos.length = 0;
+    h.onInfo = undefined;
     ws = new FakeWs();
     deviceSdk(34);
     h.reverse.mockResolvedValue(undefined);
@@ -203,7 +211,7 @@ describe('ScrcpyConnection — released before scrcpy-server is launched', () =>
         const sdk = deferred<string>();
         deviceSdk(sdk.promise);
         open();
-        await vi.waitFor(() => expect(h.shell).toHaveBeenCalled());
+        await waitFor(() => expect(h.shell).toHaveBeenCalled());
 
         browserLeaves();
         sdk.resolve('34');
@@ -220,7 +228,7 @@ describe('ScrcpyConnection — released before scrcpy-server is launched', () =>
         h.push.mockReturnValue(push.promise);
         const listen = vi.spyOn(steps, 'createTcpServer');
         open();
-        await vi.waitFor(() => expect(h.push).toHaveBeenCalled());
+        await waitFor(() => expect(h.push).toHaveBeenCalled());
 
         liveStreams.closeAllForShutdown();
         push.resolve();
@@ -237,7 +245,7 @@ describe('ScrcpyConnection — released before scrcpy-server is launched', () =>
         vi.spyOn(steps, 'createTcpServer').mockReturnValue(listening.promise);
         const server = Object.assign(new EventEmitter(), { close: vi.fn() }) as unknown as net.Server;
         open();
-        await vi.waitFor(() => expect(steps.createTcpServer).toHaveBeenCalled());
+        await waitFor(() => expect(steps.createTcpServer).toHaveBeenCalled());
 
         browserLeaves();
         listening.resolve({ server, port: 50001 });
@@ -256,7 +264,7 @@ describe('ScrcpyConnection — released before scrcpy-server is launched', () =>
             h.order.push('reverse made');
         });
         open();
-        await vi.waitFor(() => expect(h.reverse).toHaveBeenCalled());
+        await waitFor(() => expect(h.reverse).toHaveBeenCalled());
 
         liveStreams.closeAllForShutdown();
         reverse.resolve();
@@ -276,7 +284,7 @@ describe('ScrcpyConnection — released before scrcpy-server is launched', () =>
         const port = deferred<number>();
         vi.spyOn(steps, 'reserveLocalPort').mockReturnValue(port.promise);
         open();
-        await vi.waitFor(() => expect(steps.reserveLocalPort).toHaveBeenCalled());
+        await waitFor(() => expect(steps.reserveLocalPort).toHaveBeenCalled());
 
         browserLeaves();
         port.resolve(50002);
@@ -295,7 +303,7 @@ describe('ScrcpyConnection — released before scrcpy-server is launched', () =>
             h.order.push('forward made');
         });
         open();
-        await vi.waitFor(() => expect(h.forward).toHaveBeenCalled());
+        await waitFor(() => expect(h.forward).toHaveBeenCalled());
 
         browserLeaves();
         forward.resolve();
@@ -312,7 +320,7 @@ describe('ScrcpyConnection — released after scrcpy-server is launched', () => 
         deviceSdk(25);
         const connect = vi.spyOn(steps, 'connectLocal').mockRejectedValue(new Error('ECONNREFUSED'));
         open();
-        await vi.waitFor(() => expect(connect.mock.calls.length).toBeGreaterThanOrEqual(2));
+        await waitFor(() => expect(connect.mock.calls.length).toBeGreaterThanOrEqual(2));
 
         liveStreams.closeAllForShutdown();
         await abandoned();
@@ -331,7 +339,7 @@ describe('ScrcpyConnection — released after scrcpy-server is launched', () => 
         const connect = vi.spyOn(steps, 'connectLocal');
         const video = new FakeSocket();
         open();
-        await vi.waitFor(() => expect(steps.connectAndAwaitDummy).toHaveBeenCalled());
+        await waitFor(() => expect(steps.connectAndAwaitDummy).toHaveBeenCalled());
 
         browserLeaves();
         handshake.resolve(video as unknown as net.Socket);
@@ -347,11 +355,15 @@ describe('ScrcpyConnection — released after scrcpy-server is launched', () => 
     it('released during the pause after the handshake: no further socket is opened', async () => {
         deviceSdk(25);
         const video = new FakeSocket();
-        vi.spyOn(steps, 'connectAndAwaitDummy').mockImplementation(async () => {
-            // Lands inside the 100 ms pause that follows the handshake.
-            setTimeout(() => browserLeaves(), 10);
-            return video as unknown as net.Socket;
-        });
+        vi.spyOn(steps, 'connectAndAwaitDummy').mockResolvedValue(video as unknown as net.Socket);
+        // The release is gated on the pause being entered, not on a timer that
+        // must land inside it: start() logs this line after the handshake's own
+        // release check and then, in the same synchronous run, starts the pause.
+        // A microtask from here runs after the pause has begun and before it can
+        // end, however slowly the box runs.
+        h.onInfo = (line) => {
+            if (line.includes('opening remaining sockets')) queueMicrotask(browserLeaves);
+        };
         const connect = vi.spyOn(steps, 'connectLocal');
         open();
         await abandoned();
@@ -371,7 +383,7 @@ describe('ScrcpyConnection — released after scrcpy-server is launched', () => 
         const connect = vi.spyOn(steps, 'connectLocal').mockReturnValue(controlConnect.promise);
         const parse = vi.spyOn(steps, 'parseMetadata');
         open();
-        await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
 
         browserLeaves();
         controlConnect.resolve(control as unknown as net.Socket);
@@ -390,7 +402,7 @@ describe('ScrcpyConnection — released after scrcpy-server is launched', () => 
         const parse = vi.spyOn(steps, 'parseMetadata');
         const sockets = [new FakeSocket(), new FakeSocket(), new FakeSocket()];
         open();
-        await vi.waitFor(() => expect(steps.acceptSockets).toHaveBeenCalled());
+        await waitFor(() => expect(steps.acceptSockets).toHaveBeenCalled());
 
         liveStreams.closeAllForShutdown();
         accepted.resolve(sockets as unknown as net.Socket[]);
@@ -422,7 +434,7 @@ describe('ScrcpyConnection — released after scrcpy-server is launched', () => 
         vi.spyOn(steps, 'parseMetadata').mockReturnValue(metadata.promise);
         const forwarding = vi.spyOn(steps, 'startForwarding');
         open();
-        await vi.waitFor(() => expect(steps.parseMetadata).toHaveBeenCalled());
+        await waitFor(() => expect(steps.parseMetadata).toHaveBeenCalled());
 
         browserLeaves();
         metadata.resolve({ deviceName: 'd', videoCodec: 'h264', screenWidth: 1, screenHeight: 1, audioCodec: 'opus' });
@@ -439,7 +451,7 @@ describe('ScrcpyConnection — a start that really fails is still reported', () 
         h.reverse.mockRejectedValue(new Error('adb: device offline'));
         open();
 
-        await vi.waitFor(() => expect(ws.close).toHaveBeenCalled());
+        await waitFor(() => expect(ws.close).toHaveBeenCalled());
 
         expect(ws.close).toHaveBeenCalledWith(SESSION_FAILED_CLOSE_CODE, 'adb: device offline');
         expect(h.errors.some((line) => line.includes('Failed to start session for device-1'))).toBe(true);

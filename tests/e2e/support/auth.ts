@@ -11,6 +11,7 @@ import {
     request,
 } from '@playwright/test';
 import { E2E_BASE_URL, E2E_DB_PATH } from './paths';
+import { WAIT_MS } from './timeouts';
 
 /**
  * Helpers for the auth specs (smoke §18).
@@ -668,7 +669,7 @@ export async function probeWs(
                     try {
                         ws.close();
                     } catch {}
-                    reject(new Error(`no close or matching message from ${url} within ${timeoutMs} ms`));
+                    reject(new Error(`HUNG: no close or matching message from ${url} in ${timeoutMs / 1000} s`));
                 }, timeoutMs);
                 const done = (result: WsProbeResult) => {
                     if (settled) return;
@@ -701,7 +702,7 @@ export async function probeWs(
             path: pathAndQuery,
             sendOnOpen: opts?.sendOnOpen,
             matchType: opts?.matchType,
-            timeoutMs: opts?.timeoutMs ?? 10_000,
+            timeoutMs: opts?.timeoutMs ?? WAIT_MS,
         },
     );
 }

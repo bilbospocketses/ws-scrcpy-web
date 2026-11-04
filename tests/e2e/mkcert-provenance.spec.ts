@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { type APIRequestContext, expect, test } from '@playwright/test';
 import { openSettings, openSettingsTab } from './support/auth';
+import { localDownloadProgress, whileDownloading } from './support/downloadWait';
 import { apiContext, dismissPrivatePrompts, freshPage, OwnedServer, REMOTE_ADMIN_ENV } from './support/ownedServer';
 
 /**
@@ -124,8 +125,20 @@ async function checkAll(api: APIRequestContext): Promise<DependencyInfo> {
     return mkcertInfo(api);
 }
 
+/**
+ * The reply comes once the update's downloads are done, so the request has no
+ * timeout of its own: the no-progress watch on this server's download scratch
+ * directory, beside it, is its bound.
+ */
 async function updateMkcert(api: APIRequestContext): Promise<{ status: number; result: UpdateResult }> {
-    const res = await api.post('/api/dependencies/mkcert/update');
+    const res = await whileDownloading(api.post('/api/dependencies/mkcert/update', { timeout: 0 }), {
+        what: 'the mkcert update reply, which comes after its downloads',
+        progress: localDownloadProgress(`http://127.0.0.1:${SERVER_PORT}`),
+        status: async () => {
+            const mkcert = await mkcertInfo(api);
+            return `mkcert=${mkcert.installedVersion ?? mkcert.status}`;
+        },
+    });
     return { status: res.status(), result: (await res.json()) as UpdateResult };
 }
 
@@ -136,7 +149,6 @@ test.describe('21.12 mkcert provenance: the refusals (a fixture release server)'
     let mkcertDir = '';
 
     test.beforeAll(async () => {
-        test.setTimeout(150_000);
         await fixture.start();
         server = await OwnedServer.start('21-12', SERVER_PORT, {
             [REMOTE_ADMIN_ENV]: undefined,

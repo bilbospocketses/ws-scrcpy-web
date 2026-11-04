@@ -11,9 +11,9 @@ import {
 } from './support/ownedServer';
 import { holdPort, releasePort } from './support/ports';
 import {
+    cleanUpPrivateRoot,
     privateServerPaths,
     readConfigFile,
-    removePrivateRoot,
     type ServerHandle,
     seedPrivateDataRoot,
     spawnServer,
@@ -81,7 +81,6 @@ test.describe('first run: the welcome modal (smoke 1.11)', () => {
     let context: BrowserContext | undefined;
 
     test.beforeAll(async () => {
-        test.setTimeout(150_000);
         server = await startPrivateServer('welcome-111', 8176, { firstRunComplete: false });
         api = await apiContext(server.paths.baseURL);
     });
@@ -206,7 +205,6 @@ test.describe('first run: the welcome modal with the port shifted (smoke 1.11 / 
     test('1.11 with the configured port taken, the modal shows the port the server actually bound and no separate note', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
         // Configured for 8177, which another program holds: the server walks to
         // 8178. No WS_SCRCPY_WEB_PORT — that override is exact and never walks.
         const paths = privateServerPaths(`${PRIVATE_ROOT_PREFIX}welcome-shift`, 8177);
@@ -242,7 +240,7 @@ test.describe('first run: the welcome modal with the port shifted (smoke 1.11 / 
             await context?.close();
             if (handle) await stopServer(handle);
             await releasePort(blocker);
-            removePrivateRoot(paths);
+            cleanUpPrivateRoot(paths, '1.11');
         }
     });
 });
@@ -253,7 +251,6 @@ test.describe('reminder cards: dismiss for now, and the service card (smoke 13.1
     let context: BrowserContext | undefined;
 
     test.beforeAll(async () => {
-        test.setTimeout(150_000);
         server = await startPrivateServer('reminders-1310', 8179);
         api = await apiContext(server.paths.baseURL);
     });

@@ -82,6 +82,7 @@ import {
     withTimeout,
 } from './support/privateServer';
 import { removeTree } from './support/rootProcesses';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke module 18 — the opt-in login subsystem (rows 18.1–18.12).
@@ -107,7 +108,7 @@ import { removeTree } from './support/rootProcesses';
  * re-arms the lock, and unlocking needs the admin session you would no longer
  * have. No row here types a wrong ADMIN password, and no helper retries a login.
  */
-test.describe.configure({ mode: 'serial', retries: 0, timeout: 90_000 });
+test.describe.configure({ mode: 'serial', retries: 0 });
 
 test.describe('auth / opt-in login (smoke §18)', () => {
     let admin: BrowserContext;
@@ -542,7 +543,9 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await expect(attacker.page.locator(LOGIN_PAGE.error)).toHaveText(GENERIC_LOGIN_ERROR);
 
             // Failures 2..5 — the fifth locks silently: the response is still 'invalid'.
+            let lockingAttemptAt = 0;
             for (let i = 2; i <= MAX_FAILS; i++) {
+                if (i === MAX_FAILS) lockingAttemptAt = Date.now();
                 const r = await submitLoginFresh(attacker.page, REGULAR.username, WRONG_PASSWORD);
                 expect(r.status, `wrong password #${i}`).toBe(401);
                 expect(r.body, `wrong password #${i}`).toEqual({ ok: false, reason: 'invalid' });
@@ -553,9 +556,13 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             const lockedRow = await userByName(adminPage.request, REGULAR.username);
             expect(typeof lockedRow.lockedUntil).toBe('number');
             const lockedUntil1 = lockedRow.lockedUntil ?? 0;
-            const delta = lockedUntil1 - Date.now();
-            expect(delta).toBeGreaterThan(LOCK_MS - 30_000);
-            expect(delta).toBeLessThanOrEqual(LOCK_MS);
+            // The deadline is LOCK_MS past the server's own moment of the fifth
+            // failure, which lies between sending it and reading the row back:
+            // bracketed by the two, not compared with "now" minus a slack that a
+            // slow box can use up.
+            const readBackAt = Date.now();
+            expect(lockedUntil1).toBeGreaterThanOrEqual(lockingAttemptAt + LOCK_MS);
+            expect(lockedUntil1).toBeLessThanOrEqual(readBackAt + LOCK_MS);
             expect((await listUsers(adminPage.request)).find((u) => u.id === 1)?.lockedUntil).toBeNull();
 
             // The correct password, refused while locked — same generic text.
@@ -1367,7 +1374,6 @@ test.describe('auth / opt-in login (smoke §18)', () => {
     });
 
     test('18.12 sessions survive a server restart (spec-owned server on 8124)', async () => {
-        test.setTimeout(240_000);
         // Never the shared server: the fast tier's webServer has no supervisor,
         // and POST /api/dependencies/restart exits the process with code 75.
         const paths = privateServerPaths('ws-scrcpy-web-e2e-restart', 8124);
@@ -1440,7 +1446,7 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             expect(await restart.json()).toEqual({ message: 'Restarting...' });
             const exit = await withTimeout(
                 (handles[0] as ServerHandle).exited,
-                30_000,
+                WAIT_MS,
                 () => `waiting for process #1 to exit:\n${(handles[0] as ServerHandle).output()}`,
             );
             expect(exit.code).toBe(75);

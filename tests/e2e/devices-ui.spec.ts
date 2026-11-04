@@ -9,6 +9,7 @@ import {
 } from '@playwright/test';
 import { type Credentials, dismissPromptsFor, expectAppShell, loginAs } from './support/auth';
 import { gotoHome } from './support/consent';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { countFetches, fetchCount } from './support/fetchCounter';
 import {
     isolatedAdb,
@@ -245,9 +246,7 @@ test.describe('7.14 pairing edges, shared server', () => {
         expect(good.status()).toBe(200);
         const { sessionId } = (await good.json()) as { sessionId: string };
         expect(sessionId).toEqual(expect.any(String));
-        await expect
-            .poll(async () => (await pairStatus(api, sessionId)).body, { timeout: 30_000 })
-            .toMatchObject({ state: 'failed' });
+        await expect.poll(async () => (await pairStatus(api, sessionId)).body).toMatchObject({ state: 'failed' });
         expect((await pairStatus(api, sessionId)).status).toBe(200);
     });
 });
@@ -287,7 +286,6 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
     const contexts: BrowserContext[] = [];
 
     test.beforeAll(async () => {
-        test.setTimeout(180_000);
         server = await startLockedPrivateServer('ws-scrcpy-web-e2e-164d-devices', 8182, { isolatedAdbPort: 8183 });
     });
 
@@ -307,7 +305,7 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
     test('7.13 with no device connected the list says No devices connected and shows no device card', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const srv = live();
         const admin = await signedIn(browser, srv.paths.baseURL, PRIVATE_ADMIN);
         contexts.push(admin.context);
@@ -333,7 +331,7 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
     test('7.10 quick scan with nothing advertising shows the mDNS line, then the no-devices message', async ({
         browser,
     }) => {
-        test.setTimeout(180_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const srv = live();
 
         // A pass-through to the REAL server that holds its replies until the
@@ -370,7 +368,7 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
         await discoveryPanel(page).getByRole('button', { name: 'quick scan', exact: true }).click();
         await expect(info).toHaveText(MDNS_SCANNING);
 
-        await expect.poll(() => fromServer.map((m) => m.type), { timeout: 60_000 }).toContain('scan.complete');
+        await expect.poll(() => fromServer.map((m) => m.type)).toContain('scan.complete');
         expect(toServer).toEqual([{ type: 'scan.start', subnets: [], mdnsOnly: true }]);
         expect(fromServer.map((m) => m.type)).toEqual(['scan.started', 'scan.complete']);
         expect(fromServer[1]).toEqual({ type: 'scan.complete', found: 0 });

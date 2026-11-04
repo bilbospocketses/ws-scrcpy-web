@@ -12,6 +12,7 @@ import {
     SEED_CONFIG,
     wipeE2EDatabase,
 } from './tests/e2e/support/paths';
+import { TEST_MS, WAIT_MS } from './tests/e2e/support/timeouts';
 
 /**
  * End-to-end suite.
@@ -108,12 +109,17 @@ export default defineConfig({
 
     forbidOnly: !!process.env['CI'],
     retries: process.env['CI'] ? 1 : 0,
-    timeout: 30_000,
-    expect: { timeout: 10_000 },
+    // Hang guards, never speed checks: tests/e2e/support/timeouts.ts.
+    timeout: TEST_MS,
+    expect: { timeout: WAIT_MS },
     reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : 'list',
 
     use: {
         baseURL: process.env['PLAYWRIGHT_BASE_URL'] || E2E_BASE_URL,
+        // Hang guards for every action and navigation, which otherwise have no
+        // bound of their own: a download-bound test runs with no total limit.
+        actionTimeout: WAIT_MS,
+        navigationTimeout: WAIT_MS,
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
     },

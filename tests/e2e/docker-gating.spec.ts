@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 import { dismissPromptsFor, openSettingsTab, settingsRow } from './support/auth';
 import { dockerCli } from './support/dockerStack';
+import { composeServiceDownloadProgress, noTotalTimeLimit, waitForDownloads } from './support/downloadWait';
 import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * The suite container's log, for a failure message. The config starts it with
@@ -12,7 +14,7 @@ import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 function composeServiceLog(): string {
     if (process.env['QA_EXTERNAL_STACK'] === '1') return '(external stack: read its log where it runs)';
     try {
-        return dockerCli(['compose', 'logs', '--no-color', '--tail', '300', 'ws-scrcpy-web'], 30_000);
+        return dockerCli(['compose', 'logs', '--no-color', '--tail', '300', 'ws-scrcpy-web'], WAIT_MS);
     } catch (err) {
         return `(docker compose logs failed: ${(err as Error).message})`;
     }
@@ -201,7 +203,7 @@ test.describe('container mode', () => {
         // step-down kept HOME=/root, adb aborted creating /root/.android on
         // every invocation, and the server's version probe reported it as not
         // installed on every boot (fixed in docker/entrypoint.sh, 2026-09-03).
-        test.setTimeout(240_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         // A document GET mints the instance token that /api/dependencies needs.
         expect((await request.get('/')).status()).toBe(200);
         const deps = async () =>
@@ -212,18 +214,22 @@ test.describe('container mode', () => {
                 errorMessage?: string;
                 deferInstall?: boolean;
             }[];
-        await expect
-            .poll(
-                async () =>
-                    (await deps())
-                        .filter((d) => (CONTAINER_BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
-                        .every((d) => d.installedVersion !== null),
-                {
-                    timeout: 180_000,
-                    message: 'every boot-installed dependency present on the fresh volume',
-                },
-            )
-            .toBe(true);
+        // Bounded by no progress only (support/downloadWait.ts): the dependency
+        // list and the bytes under the container's /tmp and /data, or the list
+        // alone under an external stack, which this runner cannot look inside.
+        await waitForDownloads({
+            what: 'every boot-installed dependency present on the fresh volume',
+            progress: composeServiceDownloadProgress(),
+            read: async () => {
+                const boot = (await deps()).filter((d) =>
+                    (CONTAINER_BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name),
+                );
+                return {
+                    done: boot.every((d) => d.installedVersion !== null),
+                    summary: boot.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', '),
+                };
+            },
+        });
         const final = await deps();
         // Exactly the two the container hydrates. No nodejs: the image runs its
         // own Node (2026-09-30). No mkcert: it only issues the Local HTTPS

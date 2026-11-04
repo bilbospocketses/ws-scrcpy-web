@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitFor } from '../../../testSupport/waitFor';
 import { CONTAINER_SCAN_NOTE, ScanNetworkModal } from '../ScanNetworkModal';
 
 // ---------------------------------------------------------------------------
@@ -208,9 +209,13 @@ describe('ScanNetworkModal — its child dialogs follow it', () => {
         });
     });
 
-    /** Let the base Modal's 250 ms removal fallback run (jsdom fires no transitionend). */
-    async function waitForRemoval(): Promise<void> {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+    /**
+     * Wait for the base Modal's removal fallback (jsdom fires no transitionend)
+     * to take the child dialog out of the document. A child that outlives its
+     * parent never leaves, and the wait fails as HUNG with `why`.
+     */
+    async function waitForRemoval(selector: string, why: string): Promise<void> {
+        await waitFor(() => expect(document.querySelector(selector), why).toBeNull());
     }
 
     function button(dialog: Element | null, label: string): HTMLButtonElement {
@@ -230,9 +235,8 @@ describe('ScanNetworkModal — its child dialogs follow it', () => {
         expect(document.querySelector('dialog.add-subnet-modal')?.hasAttribute('open')).toBe(true);
 
         modal.close();
-        await waitForRemoval();
+        await waitForRemoval('dialog.add-subnet-modal', 'the child must not outlive its parent');
 
-        expect(document.querySelector('dialog.add-subnet-modal'), 'the child must not outlive its parent').toBeNull();
         expect(modal['rows']).toHaveLength(0);
         expect(patchGlobalCalls).toHaveLength(0);
         expect(closeSpy).toHaveBeenCalledTimes(1);
@@ -247,12 +251,8 @@ describe('ScanNetworkModal — its child dialogs follow it', () => {
         expect(document.querySelector('dialog.large-subnet-warning-modal')?.hasAttribute('open')).toBe(true);
 
         modal.close();
-        await waitForRemoval();
+        await waitForRemoval('dialog.large-subnet-warning-modal', 'the warning must not outlive it');
 
-        expect(
-            document.querySelector('dialog.large-subnet-warning-modal'),
-            'the warning must not outlive it',
-        ).toBeNull();
         expect(onStartScan).not.toHaveBeenCalled();
         expect(closeSpy).toHaveBeenCalledTimes(1);
     });
@@ -268,10 +268,9 @@ describe('ScanNetworkModal — its child dialogs follow it', () => {
         input.dispatchEvent(new Event('input'));
         button(child, 'add').click();
         await flush();
-        await waitForRemoval();
+        await waitForRemoval('dialog.add-subnet-modal', '"add" closes the child');
 
         expect(modal['rows'].map((r: { raw: string }) => r.raw)).toEqual(['192.168.5.0/24']);
-        expect(document.querySelector('dialog.add-subnet-modal')).toBeNull();
         expect(modal['dialog'].hasAttribute('open')).toBe(true);
         modal.close();
     });
@@ -286,13 +285,12 @@ describe('ScanNetworkModal — its child dialogs follow it', () => {
         button(modal['dialog'], 'start scan').click();
 
         button(document.querySelector('dialog.large-subnet-warning-modal'), 'continue scan').click();
-        await waitForRemoval();
+        await waitForRemoval('dialog.large-subnet-warning-modal', '"continue scan" closes the warning');
 
         expect(onStartScan).toHaveBeenCalledTimes(1);
         expect(onStartScan).toHaveBeenCalledWith(['10.0.0.0/20']);
         expect(closeSpy).toHaveBeenCalledTimes(1);
         expect(childClose).toHaveBeenCalledTimes(1);
-        expect(document.querySelector('dialog.large-subnet-warning-modal')).toBeNull();
     });
 
     it('"cancel" in "Large Scan" keeps the scan modal open and starts nothing', async () => {
@@ -302,10 +300,9 @@ describe('ScanNetworkModal — its child dialogs follow it', () => {
         button(modal['dialog'], 'start scan').click();
 
         button(document.querySelector('dialog.large-subnet-warning-modal'), 'cancel').click();
-        await waitForRemoval();
+        await waitForRemoval('dialog.large-subnet-warning-modal', '"cancel" closes the warning');
 
         expect(onStartScan).not.toHaveBeenCalled();
-        expect(document.querySelector('dialog.large-subnet-warning-modal')).toBeNull();
         expect(modal['dialog'].hasAttribute('open')).toBe(true);
         modal.close();
     });

@@ -62,7 +62,6 @@ function probePorts(): { http: string; https: string } {
 
 test.describe('Local HTTPS in a container (smoke §20.22)', () => {
     test('@docker @docker-host 20.22 a certificate on the volume binds no HTTPS listener, and the log says why', async () => {
-        test.setTimeout(600_000);
         composeUpFresh(FILE);
         try {
             // Where Config.buildServers looks on Linux: <dataRoot>/tls/{cert,key}.pem,

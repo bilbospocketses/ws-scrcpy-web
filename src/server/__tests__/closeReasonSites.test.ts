@@ -29,6 +29,7 @@ vi.mock('../Logger', () => {
     return { Logger: { for: () => quiet } };
 });
 
+import { waitFor } from '../../testSupport/waitFor';
 import { DeviceProbe } from '../DeviceProbe';
 import { WebsocketMultiplexer } from '../mw/WebsocketMultiplexer';
 
@@ -91,7 +92,7 @@ describe('DeviceProbe — a failed probe closes cleanly whatever the error says'
             });
             expect(probe).toBeDefined();
 
-            await vi.waitFor(() => expect(ws.close).toHaveBeenCalled());
+            await waitFor(() => expect(ws.close).toHaveBeenCalled());
 
             expect(ws.close.mock.calls[0]?.[0]).toBe(4005);
             expectValidReason(ws.close.mock.calls[0]?.[1], message.slice(0, 10));
@@ -112,7 +113,7 @@ describe('DeviceProbe — a failed probe closes cleanly whatever the error says'
             request: {} as never,
         });
 
-        await vi.waitFor(() => expect(ws.close).toHaveBeenCalled());
+        await waitFor(() => expect(ws.close).toHaveBeenCalled());
         expect(ws.close).toHaveBeenCalledWith(4005, 'device offline');
     });
 });
@@ -128,7 +129,7 @@ describe('WebsocketMultiplexer — a failed start closes cleanly whatever the er
 
             WebsocketMultiplexer.createMultiplexer(ws as never);
 
-            await vi.waitFor(() => expect(ws.close).toHaveBeenCalled());
+            await waitFor(() => expect(ws.close).toHaveBeenCalled());
 
             expect(ws.close.mock.calls[0]?.[0]).toBe(4005);
             expectValidReason(ws.close.mock.calls[0]?.[1], prefix);
@@ -142,7 +143,7 @@ describe('WebsocketMultiplexer — a failed start closes cleanly whatever the er
 
         WebsocketMultiplexer.createMultiplexer(ws as never);
 
-        await vi.waitFor(() => expect(ws.close).toHaveBeenCalled());
+        await waitFor(() => expect(ws.close).toHaveBeenCalled());
         expect(ws.close).toHaveBeenCalledWith(4005, `${prefix}boom`);
     });
 });

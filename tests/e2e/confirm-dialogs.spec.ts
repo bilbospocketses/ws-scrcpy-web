@@ -3,6 +3,7 @@ import { openSettings, openSettingsTab } from './support/auth';
 import { askToEmbed, gotoHome, readServerConfig, revokeAllOrigins, waitForPrompt } from './support/consent';
 import { blockServiceActions } from './support/serviceStubs';
 import { recordApiWrites } from './support/settingsUi';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke row 4.5 — confirm-dialog button style (item 35): the cancel/confirm
@@ -76,18 +77,23 @@ async function expectSharedStyle(
 
 /**
  * Whether `button` is enabled once its section has stopped re-rendering: two
- * readings 750 ms apart that agree, or the last one after ~5 s. A detached
- * element (mid re-render) reads as not enabled and is sampled again.
+ * readings 750 ms apart that agree. A detached element (mid re-render) reads as
+ * not enabled and is sampled again. Polled until it settles, bounded only
+ * against a hang (support/timeouts.ts): it never gives up early and answers
+ * with a reading that was still moving.
  */
 async function settledEnabled(button: Locator): Promise<boolean> {
+    const deadline = Date.now() + WAIT_MS;
     let last = await button.isEnabled().catch(() => false);
-    for (let i = 0; i < 6; i++) {
+    for (;;) {
         await new Promise((r) => setTimeout(r, 750));
         const now = await button.isEnabled().catch(() => false);
         if (now === last) return now;
+        if (Date.now() > deadline) {
+            throw new Error(`HUNG: the button's enabled state never settled in ${WAIT_MS / 1000} s`);
+        }
         last = now;
     }
-    return last;
 }
 
 async function approveOrigin(page: Page, request: Parameters<typeof askToEmbed>[0]): Promise<void> {
@@ -158,7 +164,10 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         // would quietly annotate itself "install not offered" on every host —
         // recording a skip it never actually established.
         const service = await openSettingsTab(settings, 'Service');
-        await expect(service.getByText('loading…')).toHaveCount(0);
+        // The Service tab's own placeholder (ServiceTab.ts), shown until its
+        // status read answers. A bare 'loading…' matched nothing here, so this
+        // wait used to pass at once, before the tab had rendered anything.
+        await expect(service.getByText('loading install/uninstall status…')).toHaveCount(0);
         const install = service.getByRole('button', { name: /install/i }).first();
         // The section renders the install ENABLED for an instant and then
         // re-renders it disabled once its second probe answers (measured on
@@ -178,7 +187,7 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         }
         let adminStyles: [ButtonStyle, ButtonStyle] | null = null;
         if (offersInstall) {
-            await install.click({ timeout: 5_000 });
+            await install.click({ timeout: WAIT_MS });
             const admin = page.locator('dialog.admin-confirm-modal[open]');
             adminStyles = await expectSharedStyle(
                 admin,

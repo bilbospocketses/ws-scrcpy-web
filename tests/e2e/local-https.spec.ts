@@ -4,7 +4,7 @@ import tls from 'node:tls';
 import { chromium, expect, request, test } from '@playwright/test';
 import { dismissPromptsFor, expectSpaHtml, mintToken, openSettings, openSettingsTab } from './support/auth';
 import {
-    removePrivateRoot,
+    cleanUpPrivateRoot,
     type ServerHandle,
     seedPrivateDataRoot,
     spawnServer,
@@ -13,6 +13,7 @@ import {
     waitForServer,
 } from './support/privateServer';
 import { probeSecureContext } from './support/secureContext';
+import { WAIT_MS } from './support/timeouts';
 import { tlsServerPaths } from './support/tlsFixtures';
 
 /**
@@ -352,12 +353,14 @@ const REAL_MKCERT = process.env['QA_MKCERT_EXE'];
 /** A handshake that trusts only `ca`; resolves the leaf's SAN, rejects on any verification failure. */
 function verifiedHandshake(port: number, servername: string, ca: string): Promise<string> {
     return new Promise((resolve, reject) => {
-        const socket = tls.connect({ host: '127.0.0.1', port, servername, ca, timeout: 5_000 }, () => {
+        const socket = tls.connect({ host: '127.0.0.1', port, servername, ca, timeout: WAIT_MS }, () => {
             const san = socket.getPeerCertificate().subjectaltname ?? '';
             socket.end();
             resolve(san);
         });
-        socket.on('timeout', () => socket.destroy(new Error('timeout')));
+        socket.on('timeout', () =>
+            socket.destroy(new Error(`HUNG: no TLS handshake on 127.0.0.1:${port} in ${WAIT_MS / 1000} s`)),
+        );
         socket.on('error', reject);
     });
 }
@@ -366,7 +369,6 @@ test.describe('local https: a one-word hostname certificate from real mkcert', (
     test.skip(!REAL_MKCERT, 'QA_MKCERT_EXE not set -- see the doc comment above for what it needs.');
 
     test('mkcert mints e2enas, a client trusting only its CA accepts it under that name, and the app loads at https://e2enas', async () => {
-        test.setTimeout(180_000);
         // http 8197, https 8198: next to local-https-fast.spec.ts's 8191-8196.
         const P = tlsServerPaths('ws-scrcpy-web-e2e-real-mkcert', 8197);
         const HTTPS_PORT = 8198;
@@ -407,7 +409,7 @@ test.describe('local https: a one-word hostname certificate from real mkcert', (
             await waitForServer(handle, P.baseURL);
             const ca = readFileSync(P.caPemFile, 'utf8');
             await expect
-                .poll(() => verifiedHandshake(HTTPS_PORT, NAME, ca).catch((e: Error) => e.message), { timeout: 30_000 })
+                .poll(() => verifiedHandshake(HTTPS_PORT, NAME, ca).catch((e: Error) => e.message))
                 .toBe(`DNS:${NAME}`);
             // The check can fail: the same leaf, asked for under another name, is refused.
             await expect(verifiedHandshake(HTTPS_PORT, 'e2eother', ca)).rejects.toThrow(/e2eother|altnames/i);
@@ -426,7 +428,7 @@ test.describe('local https: a one-word hostname certificate from real mkcert', (
             }
         } finally {
             await stopQuietly(handle, 'real-mkcert server');
-            removePrivateRoot(P);
+            cleanUpPrivateRoot(P, 'real-mkcert server');
         }
     });
 });

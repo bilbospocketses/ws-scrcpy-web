@@ -27,6 +27,7 @@ import {
     type UpdatesState,
     unsavedDialog,
 } from './support/settingsUi';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Item 164, batch C: the Settings dialog's staged save (smoke 13.4-13.9), the
@@ -91,7 +92,6 @@ test.describe('settings dialog: the staged save (smoke 13.4-13.6, 13.9)', () => 
     let context: BrowserContext | undefined;
 
     test.beforeAll(async () => {
-        test.setTimeout(150_000);
         server = await startPrivateServer('staged-save', 8171);
         await dismissPrivatePrompts(server.paths.baseURL);
         api = await apiContext(server.paths.baseURL);
@@ -558,7 +558,6 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
     test('13.8 the batch is journalled, the web port applies last, an unfinished batch is abandoned at boot, and bad ids and values are refused', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
         const name = 'batch-1308';
         let server: PrivateServer | undefined;
         let context: BrowserContext | undefined;
@@ -585,7 +584,7 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
 
             const batch = nextBatchResponse(page);
             const redirect = page.waitForRequest((r) => r.isNavigationRequest() && new URL(r.url()).port === '8173', {
-                timeout: 20_000,
+                timeout: WAIT_MS,
             });
             await footerSave(settings).click();
             const review = reviewDialog(page);
@@ -612,7 +611,7 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
             await expect(settingsTabLine(serverTab)).toHaveText('restarting → redirecting…');
             await expect(settings.locator('.modal-footer [data-settings-alert], .settings-save-status')).toHaveCount(0);
             // Exit 75 is the supervisor's restart signal; the browser follows.
-            const exit1 = await withTimeout(server.handle.exited, 15_000, () => server!.handle.output());
+            const exit1 = await withTimeout(server.handle.exited, WAIT_MS, () => server!.handle.output());
             expect(exit1.code).toBe(75);
             expect(new URL((await redirect).url()).hostname).toBe('localhost');
             expect(readConfigFile(server.paths)['webPort']).toBe(8173);
@@ -647,7 +646,7 @@ test.describe('settings dialog: the batch on the server (smoke 13.8)', () => {
                 redirectPort: 8172,
             });
             await api.dispose();
-            expect((await withTimeout(server.handle.exited, 15_000, () => server!.handle.output())).code).toBe(75);
+            expect((await withTimeout(server.handle.exited, WAIT_MS, () => server!.handle.output())).code).toBe(75);
 
             // --- A batch left pending (what a kill mid-apply leaves) is NOT re-applied ---
             const planted = plantPendingBatch(server.paths.dbPath, [
@@ -727,7 +726,6 @@ test.describe('settings dialog: the port hand-off keeps the host (smoke 13.11)',
     test('13.11 from 127.0.0.1 a web-port save lands on 127.0.0.1, the reminder cards name 127.0.0.1, and PATCH /api/config returns redirectPort', async ({
         browser,
     }) => {
-        test.setTimeout(300_000);
         const name = 'handoff-1311';
         let server: PrivateServer | undefined;
         let context: BrowserContext | undefined;
@@ -760,7 +758,7 @@ test.describe('settings dialog: the port hand-off keeps the host (smoke 13.11)',
             await typeAndLeave(portInput, '8175');
             const batch = nextBatchResponse(page);
             const redirect = page.waitForRequest((r) => r.isNavigationRequest() && new URL(r.url()).port === '8175', {
-                timeout: 20_000,
+                timeout: WAIT_MS,
             });
             await footerSave(settings).click();
             const review = reviewDialog(page);
@@ -776,7 +774,7 @@ test.describe('settings dialog: the port hand-off keeps the host (smoke 13.11)',
             expect(target.hostname).toBe('127.0.0.1');
             expect(target.port).toBe('8175');
             expect(target.protocol).toBe('http:');
-            expect((await withTimeout(server.handle.exited, 15_000, () => server!.handle.output())).code).toBe(75);
+            expect((await withTimeout(server.handle.exited, WAIT_MS, () => server!.handle.output())).code).toBe(75);
 
             // The supervisor's part, then the page on the new port.
             server = await restartOnPort(name, 8175);
@@ -814,7 +812,7 @@ test.describe('settings dialog: the port hand-off keeps the host (smoke 13.11)',
             expect(patchBody.restartRequired).toBe(true);
             expect(patchBody.redirectPort).toBe(8174);
             expect(JSON.stringify(patchBody)).not.toContain('localhost');
-            expect((await withTimeout(server.handle.exited, 15_000, () => server!.handle.output())).code).toBe(75);
+            expect((await withTimeout(server.handle.exited, WAIT_MS, () => server!.handle.output())).code).toBe(75);
             expect(readConfigFile(server.paths)['webPort']).toBe(8174);
         } finally {
             await context?.close();

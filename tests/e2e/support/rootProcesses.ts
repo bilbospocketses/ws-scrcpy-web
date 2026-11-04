@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { type Dirent, existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from 'node:fs';
 import path from 'node:path';
+import { WAIT_MS } from './timeouts';
 
 /**
  * Stop whatever is still running FROM a spec's data root, so the root can be
@@ -21,8 +22,11 @@ import path from 'node:path';
  * The current process is never stopped.
  */
 
-/** How long to wait for a stopped process to be gone before giving up quietly. */
-const EXIT_WAIT_MS = 5_000;
+/**
+ * How long to wait for a stopped process to be gone before giving up quietly. A
+ * hang guard, never a speed check: the wait ends the moment the processes are gone.
+ */
+const EXIT_WAIT_MS = WAIT_MS;
 
 /** Windows PowerShell 5.1 ships with every Windows; pwsh may not be installed. */
 const POWERSHELL = 'powershell.exe';
@@ -100,7 +104,7 @@ function stopUnderWindows(prefix: string, root: string): { stopped: string[]; pi
         const encoded = Buffer.from(WINDOWS_SCRIPT, 'utf16le').toString('base64');
         out = execFileSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
             encoding: 'utf8',
-            timeout: 30_000,
+            timeout: WAIT_MS,
             windowsHide: true,
             // stderr captured, not inherited: PowerShell writes progress records
             // there as CLIXML, which would land in the test output as noise.
@@ -211,9 +215,11 @@ function sleepSync(ms: number): void {
 }
 
 /**
- * Force-stop every process whose executable lives inside `root`, then wait (at
- * most EXIT_WAIT_MS) until they are gone. Returns `"<pid> <executable>"` for
- * each one stopped. A root that does not exist has nothing running from it.
+ * Force-stop every process whose executable lives inside `root`, then wait until
+ * they are gone. Returns `"<pid> <executable>"` for each one stopped. A root that
+ * does not exist has nothing running from it. A process still alive EXIT_WAIT_MS
+ * after its stop fails as HUNG, naming it, rather than leaving the removal that
+ * follows to fail with an EPERM that names nothing.
  */
 export function stopProcessesUnder(root: string): string[] {
     if (!existsSync(root)) return [];
@@ -224,16 +230,27 @@ export function stopProcessesUnder(root: string): string[] {
         process.platform === 'win32' ? stopUnderWindows(prefix, canonical) : stopUnderProc(prefix);
     const deadline = Date.now() + EXIT_WAIT_MS;
     while (pids.some(isAlive) && Date.now() < deadline) sleepSync(50);
+    const alive = pids.filter(isAlive);
+    if (alive.length > 0) {
+        throw new Error(
+            `HUNG: stopped processes still running from ${root} after ${EXIT_WAIT_MS / 1000} s: ` +
+                stopped.filter((s) => alive.includes(Number(s.split(' ')[0]))).join(', '),
+        );
+    }
     return stopped;
 }
 
-/** Retries for `removeTree`: linear backoff, 200 ms longer each time, about 11 s in all. */
-const RM_RETRIES = 10;
+/**
+ * Retries for `removeTree`: linear backoff, 200 ms longer each time, about 2 minutes in
+ * all. A hang guard, never a speed check: a healthy hold lifts in ~10 ms, and the loop
+ * ends at the first removal that succeeds.
+ */
+const RM_RETRIES = 35;
 const RM_RETRY_DELAY_MS = 200;
 
 /**
  * `rmSync(dir, { recursive: true, force: true })`, retried on EPERM / EBUSY /
- * ENOTEMPTY with a linear backoff, then throwing the last error.
+ * ENOTEMPTY with a linear backoff, then failing as HUNG with the last error.
  *
  * The retry is done here because `rmSync`'s own `maxRetries` does not do it:
  * measured on Node 24.19 (Windows), `rmSync` with `maxRetries: 5, retryDelay:
@@ -249,7 +266,13 @@ export function removeTree(dir: string): void {
         } catch (err) {
             const code = (err as NodeJS.ErrnoException).code;
             const transient = code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY';
-            if (!transient || attempt > RM_RETRIES) throw err;
+            if (!transient) throw err;
+            if (attempt > RM_RETRIES) {
+                const waitedS = Math.round((RM_RETRY_DELAY_MS * RM_RETRIES * (RM_RETRIES + 1)) / 2 / 1000);
+                throw new Error(`HUNG: ${dir} still held after ${RM_RETRIES} retries over ~${waitedS} s: ${code}`, {
+                    cause: err,
+                });
+            }
             sleepSync(RM_RETRY_DELAY_MS * attempt);
         }
     }

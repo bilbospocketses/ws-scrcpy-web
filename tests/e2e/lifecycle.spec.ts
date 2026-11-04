@@ -13,6 +13,7 @@ import {
     settingsRow,
     tokenCookie,
 } from './support/auth';
+import { noTotalTimeLimit } from './support/downloadWait';
 import { E2E_PORT } from './support/paths';
 import { holdPort, releasePort } from './support/ports';
 import {
@@ -31,6 +32,7 @@ import { json, lanAddress, raw } from './support/rawHttp';
 import { selfSignedCert } from './support/selfSignedCert';
 import { countOccurrences, LOG_REL, logOffset, logSince, NOTHING_SERVES, readServerLog } from './support/serverLog';
 import { typeAndLeave } from './support/settingsUi';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke module 12 — lifecycle (rows 12.1, 12.4, 12.6, 12.10's double signal on
@@ -66,11 +68,13 @@ const RESTART_LOGGED = 'restart requested via /api/server/restart';
 /** GET / over HTTPS, trusting exactly the throwaway certificate: verification stays ON. */
 function httpsStatus(port: number, ca: string): Promise<number> {
     return new Promise((resolve, reject) => {
-        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: 2_000 }, (res) => {
+        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: WAIT_MS }, (res) => {
             res.resume();
             resolve(res.statusCode ?? 0);
         });
-        req.on('timeout', () => req.destroy(new Error('timeout')));
+        req.on('timeout', () =>
+            req.destroy(new Error(`HUNG: no answer to GET https://localhost:${port}/ in ${WAIT_MS / 1000} s`)),
+        );
         req.on('error', reject);
     });
 }
@@ -82,7 +86,6 @@ test.describe('lifecycle (smoke §12)', () => {
     });
 
     test('12.1 "stop server & exit": confirm, the page blanks to the stopped notice, the process exits 0 with the adb teardown logged, and no restart is requested', async () => {
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-stop-exit', 8128);
         seedPrivateDataRoot(paths);
         const handle = spawnServer(paths);
@@ -140,7 +143,7 @@ test.describe('lifecycle (smoke §12)', () => {
             const closed = new Promise<'closed'>((resolve) => visitor.page.once('close', () => resolve('closed')));
             const notice = visitor.page
                 .getByText('app stopped — you can close this tab.')
-                .waitFor({ timeout: 15_000 })
+                .waitFor({ timeout: WAIT_MS })
                 .then(() => 'notice' as const)
                 .catch(() => 'neither' as const);
             const outcome = await Promise.race([closed, notice]);
@@ -154,7 +157,7 @@ test.describe('lifecycle (smoke §12)', () => {
             // The process tree exits clean: exit 0, not the restart sentinel.
             const exit = await withTimeout(
                 handle.exited,
-                60_000,
+                WAIT_MS,
                 () => `waiting for a clean exit:\n${handle.output()}`,
             );
             expect(exit.code).toBe(0);
@@ -184,7 +187,6 @@ test.describe('lifecycle (smoke §12)', () => {
     });
 
     test('12.4 the data-root override is honoured: config, database, dependencies and logs all land under it', async () => {
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-data-root', 8129);
         seedPrivateDataRoot(paths);
         const handle = spawnServer(paths);
@@ -202,9 +204,7 @@ test.describe('lifecycle (smoke §12)', () => {
             // the suite's own root, which proves the override was read rather than
             // the default reached for.
             for (const rel of ['config.json', 'wsscrcpy.db', 'dependencies', LOG_REL]) {
-                await expect
-                    .poll(() => existsSync(path.join(paths.dataRoot, rel)), { message: rel, timeout: 30_000 })
-                    .toBe(true);
+                await expect.poll(() => existsSync(path.join(paths.dataRoot, rel)), { message: rel }).toBe(true);
             }
             const log = readFileSync(path.join(paths.dataRoot, LOG_REL), 'utf8');
             expect(log.length).toBeGreaterThan(0);
@@ -239,7 +239,6 @@ test.describe('lifecycle (smoke §12)', () => {
     // asks for both orders because #718's bug existed in one order only.
 
     test('12.6 HTTP only: with its port held by another program the server exits 1 and says why', async () => {
-        test.setTimeout(150_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-no-listener-http', 8133);
         seedPrivateDataRoot(paths);
         const blocker = await holdPort(paths.port);
@@ -262,7 +261,6 @@ test.describe('lifecycle (smoke §12)', () => {
 
     for (const order of ['http-first', 'https-first'] as const) {
         test(`12.6 both listeners refused (${order}): the server exits 1, and both failures are named in that order`, async () => {
-            test.setTimeout(150_000);
             const [plainPort, securePort] = order === 'http-first' ? [8134, 8135] : [8137, 8136];
             const tls = selfSignedCert();
             const plain = { secure: false, port: plainPort };
@@ -302,7 +300,6 @@ test.describe('lifecycle (smoke §12)', () => {
     }
 
     test('12.6 one listener still binds: HTTP refused, HTTPS serves, and the server stays up', async () => {
-        test.setTimeout(150_000);
         const [plainPort, securePort] = [8138, 8139];
         const tls = selfSignedCert();
         const paths = privateServerPaths('ws-scrcpy-web-e2e-no-listener-degrade', plainPort);
@@ -319,7 +316,6 @@ test.describe('lifecycle (smoke §12)', () => {
             await expect
                 .poll(() => httpsStatus(securePort, tls.cert).catch(() => 0), {
                     message: `HTTPS on ${securePort} never served:\n${handle.output()}`,
-                    timeout: 90_000,
                 })
                 .toBe(200);
             const logPath = path.join(paths.dataRoot, LOG_REL);
@@ -330,7 +326,6 @@ test.describe('lifecycle (smoke §12)', () => {
                         readFileSync(logPath, 'utf8').includes(`HTTP listener on port ${plainPort} failed to bind`),
                     {
                         message: 'the refused HTTP listener is logged by name',
-                        timeout: 30_000,
                     },
                 )
                 .toBe(true);
@@ -352,7 +347,6 @@ test.describe('lifecycle (smoke §12)', () => {
     // POSIX signals: on Windows the harness can only TerminateProcess the child.
     test('12.10 one Ctrl+C is two signals (SIGINT, then the launcher SIGTERM): the repeat is ignored, the stop finishes and writes the backup, exit 0', async () => {
         test.skip(process.platform === 'win32', 'Windows has no SIGINT/SIGTERM to deliver to a child process');
-        test.setTimeout(180_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-double-signal', 8142);
         seedPrivateDataRoot(paths);
         const handle = spawnServer(paths);
@@ -361,15 +355,19 @@ test.describe('lifecycle (smoke §12)', () => {
             await waitForServer(handle, paths.baseURL);
             const offset = logOffset(paths);
             const pid = handle.child.pid as number;
-            const signalledAt = Date.now();
+            // Whether this stop wrote the backup, judged against the file as it
+            // was before it, never against this process's clock.
+            const bakBefore = existsSync(bak) ? statSync(bak).mtimeMs : null;
             // What a terminal Ctrl+C under the launcher delivers: the terminal's
             // SIGINT to the process group, and the launcher's SIGTERM
-            // (launcher/src/supervisor.rs wait_with_signal) a moment later.
+            // (launcher/src/supervisor.rs wait_with_signal) a moment later. Sent
+            // back to back, with no timer between them: a timer a loaded box
+            // stretches past the server's 2 s repeat window would turn the
+            // repeat into a forced exit.
             process.kill(pid, 'SIGINT');
-            await new Promise((r) => setTimeout(r, 50));
             process.kill(pid, 'SIGTERM');
 
-            const exit = await withTimeout(handle.exited, 60_000, () => `waiting for the exit:\n${handle.output()}`);
+            const exit = await withTimeout(handle.exited, WAIT_MS, () => `waiting for the exit:\n${handle.output()}`);
             expect(exit, handle.output()).toEqual({ code: 0, signal: null });
 
             const log = logSince(paths, offset);
@@ -380,9 +378,9 @@ test.describe('lifecycle (smoke §12)', () => {
             expect(log).toContain('Stopping adb daemon (kill-server)');
             // The backup is the teardown's LAST step, so a fresh one proves the stop ran to the end.
             expect(existsSync(bak), 'the graceful stop writes wsscrcpy.db.bak').toBe(true);
-            expect(statSync(bak).mtimeMs, 'wsscrcpy.db.bak was written by this stop').toBeGreaterThanOrEqual(
-                signalledAt - 2_000,
-            );
+            if (bakBefore !== null) {
+                expect(statSync(bak).mtimeMs, 'wsscrcpy.db.bak was written by this stop').toBeGreaterThan(bakBefore);
+            }
         } finally {
             try {
                 await stopServer(handle);
@@ -393,7 +391,7 @@ test.describe('lifecycle (smoke §12)', () => {
     });
 
     test('12.13 restart server: the first Application row; cancel sends nothing; confirm exits 75 with the .restart marker, shows the overlay, and the page reloads onto a new instance token on the same port', async () => {
-        test.setTimeout(300_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const paths = privateServerPaths('ws-scrcpy-web-e2e-restart-server', 8243);
         seedPrivateDataRoot(paths);
         // Nothing in this row installs a dependency: both boots run from the fast tier's.
@@ -496,7 +494,7 @@ test.describe('lifecycle (smoke §12)', () => {
 
             // Exit 75 and the marker: the restart signal every supervisor reads.
             const first = handles[0]!;
-            const exit = await withTimeout(first.exited, 30_000, () => `waiting for exit 75:\n${first.output()}`);
+            const exit = await withTimeout(first.exited, WAIT_MS, () => `waiting for exit 75:\n${first.output()}`);
             expect(exit.code, first.output()).toBe(75);
             expect(readFileSync(paths.restartMarkerPath, 'utf8')).toMatch(/^restart-requested-\d+$/);
             // Neither cancel sent anything: the one request is the confirmed POST,
@@ -511,7 +509,7 @@ test.describe('lifecycle (smoke §12)', () => {
             // below can only be ServerTab's reload, which waits for the NEW process
             // to refuse the page's old token (waitForServerRestart).
             unlinkSync(paths.restartMarkerPath);
-            const reloaded = page.waitForEvent('load', { timeout: 90_000 });
+            const reloaded = page.waitForEvent('load', { timeout: WAIT_MS });
             handles.push(spawnServer(paths, spawnOptions));
             await waitForServer(handles[1]!, paths.baseURL);
             await reloaded;
@@ -544,7 +542,7 @@ test.describe('lifecycle (smoke §12)', () => {
     test('12.13 off-box with remote admin off: the Application card is hidden with the note in its place, and POST /api/server/restart answers 403', async () => {
         const lan = lanAddress() ?? '';
         test.skip(!lan, 'no non-loopback IPv4 interface on this host to call from');
-        test.setTimeout(270_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const paths = privateServerPaths('ws-scrcpy-web-e2e-restart-server-offbox', 8244);
         seedPrivateDataRoot(paths);
         // withoutInheritedOverrides removes WS_SCRCPY_ALLOW_REMOTE_ADMIN: a runner

@@ -14,6 +14,12 @@ import {
 } from './support/auth';
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
+import {
+    containerDownloadProgress,
+    noTotalTimeLimit,
+    waitForDownloads,
+    whileDownloading,
+} from './support/downloadWait';
 import { isExcusableNullLatest, type LatestLookupRecord } from './support/githubRefusal';
 import {
     BOOT_INSTALLED_DEPENDENCIES,
@@ -22,8 +28,10 @@ import {
     seedPrivateDataRoot,
     spawnServer,
     stopServer,
+    waitForDependencies,
     waitForServer,
 } from './support/privateServer';
+import { WAIT_MS } from './support/timeouts';
 
 /**
  * Smoke rows 9.4, 9.5 and 1.9 — the dependencies panel, the shell-unavailable
@@ -61,7 +69,7 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
     });
 
     test('9.4 Settings → Dependencies lists every dependency with its installed version, check-for-updates fills Latest, and the whole surface is admin-only', async () => {
-        test.setTimeout(240_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
 
         // --- open mode, shared server: the table loads and the check populates Latest.
         const visitor = await newVisitorContext(sharedBrowser);
@@ -75,16 +83,9 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             // server that never generates a certificate its installedVersion
             // stays null forever and "every dependency installed" can never
             // become true. Imported from the support module rather than spelled
-            // again here, so there is one list to keep right.
-            await expect
-                .poll(
-                    async () =>
-                        ((await (await api.get('/api/dependencies')).json()) as DependencyInfo[])
-                            .filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
-                            .every((d) => d.installedVersion !== null),
-                    { timeout: 120_000, message: 'first-run install to finish on the shared server' },
-                )
-                .toBe(true);
+            // again here, so there is one list to keep right. Bounded by no
+            // progress only (support/downloadWait.ts).
+            await waitForDependencies(api, WAIT_MS, BOOT_INSTALLED_DEPENDENCIES);
             const deps = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
             // node-pty is not a managed dependency (it rides on nodejs as `pairedWith`).
             // mkcert IS one, and is listed here even though it installs on first
@@ -327,7 +328,6 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
     });
 
     test('@docker @docker-host 9.5 a host without the node-pty prebuilt reports shell:false with a reason, where the full image reports shell:true', async () => {
-        test.setTimeout(600_000);
         const FILE = 'compose.no-node-pty.yml';
         const BASE = 'http://127.0.0.1:8125';
         composeUpFresh(FILE, { build: true });
@@ -367,7 +367,7 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
     });
 
     test('@docker @docker-host 1.9 a failed first-run download shows the setup-incomplete banner, and Retry clears it once the network is back', async () => {
-        test.setTimeout(600_000);
+        noTotalTimeLimit(); // download-bound: the no-progress watch is its only bound
         const FILE = 'compose.offline.yml';
         const CONTAINER = 'wssw-offline';
         const BASE = 'http://127.0.0.1:8124';
@@ -424,12 +424,23 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             // container runs the app as uid 1000.
             dockerExecRoot(CONTAINER, "printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf");
 
+            // The server answers only once checkAll() and autoInstallMissing() are
+            // done, so after the downloads (DependencyApi.ts retry-install). No
+            // timeout of its own: the no-progress watch beside it is its bound.
             const retried = visitor.page.waitForResponse(
                 (r) =>
                     r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/dependencies/retry-install',
+                { timeout: 0 },
             );
             await retry.click();
-            const res = await retried;
+            const res = await whileDownloading(retried, {
+                what: 'the retry-install reply, which comes after the downloads',
+                progress: containerDownloadProgress(CONTAINER),
+                status: async () =>
+                    ((await (await api.get('/api/dependencies')).json()) as DependencyInfo[])
+                        .map((d) => `${d.name}=${d.installedVersion ?? d.status}`)
+                        .join(', '),
+            });
             expect(res.status()).toBe(200);
             const body = (await res.json()) as {
                 success: boolean;
@@ -444,20 +455,25 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             expect(body.errors, 'retry errors').toEqual({});
             expect(body.installed.length + body.stillMissing.length).toBeGreaterThan(0);
 
-            // Then everything lands, and the banner clears on its own poll.
-            await expect
-                .poll(
-                    async () => {
-                        const deps = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
-                        // Boot-installed only, the same filter the host rows use.
-                        return deps
-                            .filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
-                            .every((d) => d.installedVersion !== null && d.status !== 'error');
-                    },
-                    { timeout: 180_000, message: 'every dependency installed after Retry' },
-                )
-                .toBe(true);
-            await expect(banner).toBeHidden({ timeout: 30_000 });
+            // Then everything lands, and the banner clears on its own poll. The
+            // wait is bounded by no progress only: the dependency list and the
+            // bytes under the container's /tmp and /data.
+            await waitForDownloads({
+                what: 'every dependency installed after Retry',
+                progress: containerDownloadProgress(CONTAINER),
+                read: async () => {
+                    const deps = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
+                    // Boot-installed only, the same filter the host rows use.
+                    const boot = deps.filter((d) =>
+                        (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name),
+                    );
+                    return {
+                        done: boot.every((d) => d.installedVersion !== null && d.status !== 'error'),
+                        summary: boot.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', '),
+                    };
+                },
+            });
+            await expect(banner).toBeHidden();
         } catch (err) {
             console.warn(`1.9 container log:\n${dockerLogs(CONTAINER).slice(-3000)}`);
             throw err;
