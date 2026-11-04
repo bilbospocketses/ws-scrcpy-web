@@ -61,12 +61,42 @@ function addTree(dir: string, total: { files: number; bytes: number }): void {
     }
 }
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+/**
+ * Whether the server behind `baseURL` (or, with none given, the server a wait
+ * is about) is one this run spawned on this machine, so its download scratch
+ * directories are visible here. Not under an external stack, not in the docker
+ * tier (its loopback server is a container), and not for a remote URL.
+ */
+export function serverIsLocal(baseURL?: string): boolean {
+    if (process.env['QA_EXTERNAL_STACK'] === '1') return false;
+    let configFile = '';
+    try {
+        configFile = test.info().config.configFile ?? '';
+    } catch {
+        // Outside a test: no tier to read, so the URL alone decides.
+    }
+    if (path.basename(configFile) === 'playwright.docker.config.ts') return false;
+    if (baseURL === undefined) return true;
+    try {
+        return LOOPBACK_HOSTS.has(new URL(baseURL).hostname);
+    } catch {
+        return false;
+    }
+}
+
 /**
  * The bytes in every local server's download scratch directories. Every server
  * this suite spawns, the shared one included, has E2E_TEMP_ROOT as its
  * `os.tmpdir()` (paths.ts), which is where those directories are made.
+ *
+ * None where the server is not local (`serverIsLocal`): the directories seen
+ * here would be some other server's, so the wait falls back to watching the
+ * status alone, with the long status-only window, and says so.
  */
-export function localDownloadProgress(): ProgressProbe {
+export function localDownloadProgress(baseURL?: string): ProgressProbe {
+    if (!serverIsLocal(baseURL)) return () => null;
     return () => {
         let entries: Dirent[];
         try {
@@ -188,4 +218,47 @@ export async function waitForDownloads(wait: DownloadWait): Promise<void> {
         }
         await new Promise((r) => setTimeout(r, 1_000));
     }
+}
+
+export interface ReplyWait {
+    /** What is being waited for, for the HUNG text. */
+    what: string;
+    progress: ProgressProbe;
+    /** A summary of the server's dependency status, watched as progress too. */
+    status?: () => Promise<string>;
+    stallMs?: number;
+}
+
+/**
+ * Await `reply`, the answer to a request the server sends only once a download
+ * has finished (the request itself is made with `timeout: 0`), while the
+ * no-progress watch runs beside it. The reply wins as soon as it arrives; the
+ * wait fails as HUNG only when neither the bytes on disk nor the status change
+ * for the stall window.
+ */
+export async function whileDownloading<T>(reply: Promise<T>, wait: ReplyWait): Promise<T> {
+    let settled = false;
+    const tracked = reply.finally(() => {
+        settled = true;
+    });
+    // If the watch fails first the reply is abandoned; its later rejection
+    // (the page closing under it) must not surface as an unhandled one.
+    tracked.catch(() => {});
+    const watch = waitForDownloads({
+        what: wait.what,
+        progress: wait.progress,
+        ...(wait.stallMs === undefined ? {} : { stallMs: wait.stallMs }),
+        read: async () => {
+            if (settled) return { done: true, summary: '' };
+            if (!wait.status) return { done: false, summary: 'waiting for the reply' };
+            try {
+                return { done: false, summary: await wait.status() };
+            } catch (err) {
+                // An unreadable status is not progress; the reply still decides.
+                return { done: false, summary: `status unreadable: ${(err as Error)?.message ?? String(err)}` };
+            }
+        },
+    });
+    const [answer] = await Promise.all([tracked, watch]);
+    return answer;
 }

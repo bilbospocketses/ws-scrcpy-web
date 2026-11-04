@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { fetchFromPage, openSettings, openSettingsTab, tokenCookie } from './support/auth';
-import { fetchWatched, noTotalTimeLimit } from './support/downloadWait';
+import { fetchWatched, localDownloadProgress, noTotalTimeLimit, whileDownloading } from './support/downloadWait';
 import { apiContext, dismissPrivatePrompts, freshPage } from './support/ownedServer';
 import {
     privateServerPaths,
@@ -248,12 +248,19 @@ test('9.12 Settings → Dependencies: a Node update offers Restart Now, which sh
             await expect(nodeRow.locator('td.dep-version').nth(1)).toHaveText(OFFERED);
             await expect(nodeRow.locator('.dep-badge')).toHaveText('Update available');
 
+            // The reply comes once the archive is downloaded, verified and
+            // installed. No timeout of its own: the no-progress watch beside it,
+            // on this server's download scratch directory, is its bound.
             const updated = page.waitForResponse(
                 (r) =>
                     r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/dependencies/nodejs/update',
+                { timeout: 0 },
             );
             await nodeRow.locator('button[data-update="nodejs"]').click();
-            const update = await updated;
+            const update = await whileDownloading(updated, {
+                what: 'the Node.js update reply, which comes after the download',
+                progress: localDownloadProgress(paths.baseURL),
+            });
             expect(update.status(), await update.text()).toBe(200);
             expect(await update.json()).toEqual({ success: true, newVersion: OFFERED, requiresRestart: true });
             expect(fixture.hits, 'the archive came from the fixture').toContain(ARCHIVE_PATH);

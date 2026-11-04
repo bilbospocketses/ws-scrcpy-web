@@ -14,7 +14,12 @@ import {
 } from './support/auth';
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
-import { containerDownloadProgress, noTotalTimeLimit, waitForDownloads } from './support/downloadWait';
+import {
+    containerDownloadProgress,
+    noTotalTimeLimit,
+    waitForDownloads,
+    whileDownloading,
+} from './support/downloadWait';
 import { isExcusableNullLatest, type LatestLookupRecord } from './support/githubRefusal';
 import {
     BOOT_INSTALLED_DEPENDENCIES,
@@ -419,12 +424,23 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             // container runs the app as uid 1000.
             dockerExecRoot(CONTAINER, "printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf");
 
+            // The server answers only once checkAll() and autoInstallMissing() are
+            // done, so after the downloads (DependencyApi.ts retry-install). No
+            // timeout of its own: the no-progress watch beside it is its bound.
             const retried = visitor.page.waitForResponse(
                 (r) =>
                     r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/dependencies/retry-install',
+                { timeout: 0 },
             );
             await retry.click();
-            const res = await retried;
+            const res = await whileDownloading(retried, {
+                what: 'the retry-install reply, which comes after the downloads',
+                progress: containerDownloadProgress(CONTAINER),
+                status: async () =>
+                    ((await (await api.get('/api/dependencies')).json()) as DependencyInfo[])
+                        .map((d) => `${d.name}=${d.installedVersion ?? d.status}`)
+                        .join(', '),
+            });
             expect(res.status()).toBe(200);
             const body = (await res.json()) as {
                 success: boolean;
