@@ -93,6 +93,8 @@ dist/public/embed.js          embed page entry script
 
 Tests use **Vitest** and live alongside the code (`*.test.ts`). Tests of the e2e suite's own support code live in `tests/unit/`, which `npm test` runs and `npm run test:e2e:types` type-checks. Prefer unit tests for protocol layers (control messages, binary readers/writers, codec configs, device labels). Stream lifecycle is manually smoke-tested — WebCodecs + WebSocket + ADB timing doesn't mock cleanly.
 
+A slow machine must make a test slower, never red. In a unit test, wait with `waitFor` from `src/testSupport/waitFor.ts`, never `vi.waitFor` with its own short budget: it polls for up to 120 s, a bound that only ends a genuine hang, and fails with `HUNG` and the condition that never held. e2e waits follow the "Waits are hang guards, never speed checks" section of [`tests/e2e/README.md`](tests/e2e/README.md).
+
 Any PR that changes protocol code or control-message encoding MUST include or update a test.
 
 ## Specs and Plans

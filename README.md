@@ -41,6 +41,7 @@ Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/To
 - **Redesigned toolbar** -- compact controls with quick stats (FPS, resolution, codec), stream refresh button, and consistent alignment
 - **Quality stats overlay** -- real-time FPS, bitrate, resolution, codec, and encoder info
 - **Stream modal** -- native `<dialog>` overlay for the full mirroring experience (video, toolbar, audio, UHID input). Home page stays visible behind the backdrop — close the stream and you're right back at the device list
+- **Stream links** -- the connect button's link, `#!action=stream&udid=<id>&player=webcodecs`, opens that device's stream when a page loads from it, so it can be bookmarked or put on a dashboard page; ctrl/cmd+click or middle-click **connect** to stream in a new tab
 - **Viewport scaling** -- video scales to fill available space with correct aspect ratio
 - **Remote ADB shell** -- native `<dialog>` terminal modal with xterm.js, close confirmation for active sessions, Escape/backdrop blocked (terminal needs both)
 - **File browser** -- native `<dialog>` modal with breadcrumb navigation, sortable columns (sticky header so size/date stay aligned when scrolling), SVG file type icons (6 types), configurable icon sizes, hover action icons sized to match, reserved actions column so columns never shift on hover, selection with bulk operations, drag-and-drop upload, download with progress, delete with confirmation, client-side filter
@@ -318,7 +319,7 @@ AppImage signing is currently under evaluation; releases ship **unsigned** for n
 
 #### glibc requirement
 
-The bundled `node-pty` native binary is built against glibc. Musl-based distros (Alpine and similar) are not supported. Run on glibc-based distros: Ubuntu, Debian, Fedora, Arch, openSUSE, etc. — anything that ships glibc 2.31+ should work.
+The bundled `node-pty` native binary is built against glibc. Musl-based distros (Alpine and similar) are not supported. Run on glibc-based distros: Ubuntu, Debian, Fedora, Arch, openSUSE, etc. — anything that ships glibc 2.34 or newer (RHEL 9, Ubuntu 22.04 and Debian 12 or newer). Older ones, such as Ubuntu 20.04 and Debian 11, cannot load the prebuilt terminal binary.
 
 #### libfuse2 — not required
 

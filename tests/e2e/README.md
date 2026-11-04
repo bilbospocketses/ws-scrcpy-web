@@ -321,6 +321,26 @@ Both resolve `docker` from the shell, as `playwright.docker.config.ts`'s
 `docker compose up --wait` already does: the daemon is the tier's execution
 environment, not an app dependency.
 
+## Waits are hang guards, never speed checks
+
+A row must never fail correct code because the box is busy. Since #996 every bound
+in the suite only ends a genuine hang:
+
+- **One wait** (an `expect`, `expect.poll`, a navigation, an event, one probe attempt)
+  uses `WAIT_MS` (120 s) from `support/timeouts.ts`; Playwright's `expect.timeout`
+  is already that, so an `expect` sets no timeout of its own unless it needs more.
+  A test with no budget of its own gets `TEST_MS` (300 s). A wait that gives up says
+  `HUNG` and names what it waited on.
+- **A download or anything else that only gets slower** is bounded by no progress,
+  not by total time: `waitForDownloads`, `whileDownloading` and `fetchWatched` in
+  `support/downloadWait.ts` fail only when nothing has changed for the stall window,
+  and a test that waits on one calls `noTotalTimeLimit()` so the no-progress watch is
+  its only bound.
+- **Timing that IS the behavior under test** (how fast the UI responds) is not bounded
+  with these; such a row says so where it stands and only means anything on a quiet box.
+
+Do not add a shorter `timeout:` to make a row fail sooner.
+
 ## A known product bug is `test.fail`, never a weakened assertion
 
 When a row finds that the product is wrong, the row keeps asserting what the smoke
