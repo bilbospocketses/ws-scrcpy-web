@@ -4,7 +4,7 @@ import tls from 'node:tls';
 import { chromium, expect, request, test } from '@playwright/test';
 import { dismissPromptsFor, expectSpaHtml, mintToken, openSettings, openSettingsTab } from './support/auth';
 import {
-    removePrivateRoot,
+    cleanUpPrivateRoot,
     type ServerHandle,
     seedPrivateDataRoot,
     spawnServer,
@@ -428,7 +428,7 @@ test.describe('local https: a one-word hostname certificate from real mkcert', (
             }
         } finally {
             await stopQuietly(handle, 'real-mkcert server');
-            removePrivateRoot(P);
+            cleanUpPrivateRoot(P, 'real-mkcert server');
         }
     });
 });

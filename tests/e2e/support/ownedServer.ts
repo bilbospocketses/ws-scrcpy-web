@@ -8,6 +8,7 @@ import {
 } from '@playwright/test';
 import { type Credentials, dismissPromptsFor, lockdown, me, mintToken } from './auth';
 import {
+    cleanUpPrivateRoot,
     type PrivateServerPaths,
     privateServerPaths,
     removePrivateRoot,
@@ -204,5 +205,5 @@ export async function restartOnPort(name: string, port: number): Promise<Private
 export async function disposePrivateServer(server: PrivateServer | undefined): Promise<void> {
     if (!server) return;
     await stopServer(server.handle);
-    removePrivateRoot(server.paths);
+    cleanUpPrivateRoot(server.paths, 'private server');
 }

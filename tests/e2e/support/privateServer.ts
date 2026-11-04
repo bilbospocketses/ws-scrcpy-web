@@ -338,7 +338,7 @@ export async function waitForDependencies(
         if (owned) expect((await owned.get('/')).status(), 'document GET (mints the token)').toBe(200);
         await waitForDownloads({
             what: `waiting for ${names.join(', ')} to install`,
-            progress: localDownloadProgress(),
+            progress: localDownloadProgress(typeof target === 'string' ? target : undefined),
             stallMs,
             read: async () => {
                 const res = await ctx.get('/api/dependencies');
@@ -444,6 +444,22 @@ export async function stopQuietly(handle: ServerHandle | undefined, label: strin
 export function removePrivateRoot(paths: PrivateServerPaths): void {
     stopProcessesUnder(paths.programData);
     removeTree(paths.programData);
+}
+
+/**
+ * `removePrivateRoot` for a teardown (a `finally`, an `afterAll`, a dispose):
+ * it never throws. A thrown cleanup error inside a `finally` would REPLACE the
+ * test's own failure, so it is reported as a soft failure instead -- beside a
+ * test that already failed, and failing one that passed. The HUNG for a process
+ * still running from the root, or a removal still failing after removeTree's
+ * retries, reads in the report under `label`.
+ */
+export function cleanUpPrivateRoot(paths: PrivateServerPaths, label: string): void {
+    try {
+        removePrivateRoot(paths);
+    } catch (err) {
+        expect.soft(String((err as Error)?.message ?? err), `${label}: cleaning up ${paths.programData}`).toBe('');
+    }
 }
 
 /** config.json as the server left it on disk. */

@@ -11,9 +11,9 @@ import {
 } from './support/ownedServer';
 import { holdPort, releasePort } from './support/ports';
 import {
+    cleanUpPrivateRoot,
     privateServerPaths,
     readConfigFile,
-    removePrivateRoot,
     type ServerHandle,
     seedPrivateDataRoot,
     spawnServer,
@@ -240,7 +240,7 @@ test.describe('first run: the welcome modal with the port shifted (smoke 1.11 / 
             await context?.close();
             if (handle) await stopServer(handle);
             await releasePort(blocker);
-            removePrivateRoot(paths);
+            cleanUpPrivateRoot(paths, '1.11');
         }
     });
 });

@@ -378,7 +378,9 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         let watching = true;
         const watcher = (async () => {
             while (watching) {
-                if (await isListening(CONFIG_PORT)) configPortServed = true;
+                // A hang only reads as "not served this tick": the watch asks
+                // again 100 ms later, for the whole life of the process.
+                if (await isListening(CONFIG_PORT).catch(() => false)) configPortServed = true;
                 await new Promise((r) => setTimeout(r, 100));
             }
         })();

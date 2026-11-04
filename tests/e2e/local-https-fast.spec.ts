@@ -5,7 +5,7 @@ import { type APIRequestContext, type Browser, expect, type Locator, type Page, 
 import { dismissPromptsFor, mintToken, openSettings, openSettingsTab, settingsRow } from './support/auth';
 import { isListening } from './support/ports';
 import {
-    removePrivateRoot,
+    cleanUpPrivateRoot,
     type ServerHandle,
     type SpawnOptions,
     seedPrivateDataRoot,
@@ -866,7 +866,7 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
                 console.warn(`21.x cleanup: ${String(err)}`);
             }
         }
-        removePrivateRoot(A);
+        cleanUpPrivateRoot(A, '21.x');
     });
 
     test('21.8 against the real server, no certificate: the panel gates https only and redirect behind "generate a certificate first"', async ({
@@ -1264,7 +1264,7 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
         } catch (err) {
             console.warn(`21.9 cleanup: ${String(err)}`);
         }
-        removePrivateRoot(B);
+        cleanUpPrivateRoot(B, '21.9');
     }
 });
 
@@ -1380,7 +1380,7 @@ test.describe('local https fast tier: a certificate through restart, off-box use
     test.afterAll(async () => {
         await api?.dispose();
         await stopQuietly(handle, 'item 24 tls');
-        removePrivateRoot(C);
+        cleanUpPrivateRoot(C, 'item 24 tls');
     });
 
     test('21.1 a certificate that appears on disk is not served until the restart: the https port refuses and the state asks for a restart; after it the listener is bound and serves that leaf', async () => {
