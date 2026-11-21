@@ -175,11 +175,11 @@ export function dockerPull(ref: string): Promise<void> {
             if (stalled) {
                 reject(
                     new Error(
-                        `HUNG: \`docker pull ${ref}\` printed nothing for ${DOCKER_PULL_STALL_MS / 1000} s:\n${output}`,
+                        `HUNG: \`docker pull ${ref}\` printed nothing for ${DOCKER_PULL_STALL_MS / 1000} s:\n${output}`, // docker-keep: ignore
                     ),
                 );
             } else if (code !== 0) {
-                reject(new Error(`\`docker pull ${ref}\` exited ${code}:\n${output}`));
+                reject(new Error(`\`docker pull ${ref}\` exited ${code}:\n${output}`)); // docker-keep: ignore
             } else {
                 resolve();
             }
