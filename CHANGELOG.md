@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CI now fails a pull request whose code names a Docker image `docker-images.json` does not declare.** `build-and-test` runs the shared checker from [bilbospocketses/docker-keeps](https://github.com/bilbospocketses/docker-keeps), pinned to v1.0.0 by commit SHA, right after the spelling gate. It reads the commit under test and fails on an image the code names that the keep file does not list, or a listed one nothing names any more. The new root `docker-images.json` declares the `node` base pin, the three images this repo builds (`ws-scrcpy-web:local`, `:ci` and `:no-node-pty`) and the published `bilbospocketses/ws-scrcpy-web:beta` that smoke row 20.8 pulls, each with its purpose. Two error messages in `tests/e2e/support/dockerStack.ts` that quote `docker pull` take a `docker-keep: ignore` marker, and the checker's checkout is removed before the image build (`.github/workflows/ci.yml`).
+
 ### Changed
 - **docs(smoke): the stream-link sign-in row is 18.24, not 18.23.** 0.5.12 numbered it 18.23, an id the register already gives a finding (in open mode a logout closes that browser's sockets), which future rows must skip. Row, register entries and the `auth.spec.ts` title move to 18.24; the finding keeps 18.23.
 - **docs: the technical guide says the device list leaves a service install's stale-token reload to the hand-off.** Its per-instance token paragraph said a stale-token 403 always stops the retry loop and reloads the page; since 0.5.11 (#983) the loop keeps retrying while an install hand-off is in progress (`isInstallHandoffInProgress`), and §19.4's install bullet now says the hand-off owns that reload.

@@ -64,7 +64,7 @@ test.describe('published image (smoke §20.8)', () => {
 
         // The row's own action, then the loop closed: what was pulled is what
         // the Hub says :beta is.
-        await dockerPull(`${REPO}:beta`);
+        await dockerPull(`${REPO}:beta`); // docker-keep: bilbospocketses/ws-scrcpy-web:beta
         const repoDigests = JSON.parse(dockerImageInspect(`${REPO}:beta`, '{{json .RepoDigests}}')) as string[];
         expect(repoDigests).toContain(`${REPO}@${newest.digest}`);
     });
