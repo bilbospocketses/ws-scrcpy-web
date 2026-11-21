@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "images": [
+    {
+      "ref": "node:24-trixie-slim@sha256:50c3b2f6988dfc307b86e5301d69611af31f4789bdf232863b07d3b02fe55ae0",
+      "kind": "pin",
+      "purpose": "base of the app image: Dockerfile ARG NODE_IMAGE, the build and runtime stages"
+    },
+    {
+      "ref": "ws-scrcpy-web:local",
+      "kind": "build",
+      "purpose": "the app image a plain docker compose up builds (docker-compose.yml default), and the base of the no-node-pty test image",
+      "dockerfile": "Dockerfile"
+    },
+    {
+      "ref": "ws-scrcpy-web:ci",
+      "kind": "build",
+      "purpose": "the app image CI builds on every PR and runs the container e2e suite against",
+      "dockerfile": "Dockerfile"
+    },
+    {
+      "ref": "ws-scrcpy-web:no-node-pty",
+      "kind": "build",
+      "purpose": "smoke row 9.5's test image: the app image with the node-pty prebuilt removed",
+      "dockerfile": "tests/docker/Dockerfile.no-node-pty"
+    },
+    {
+      "ref": "bilbospocketses/ws-scrcpy-web:beta",
+      "kind": "pin",
+      "purpose": "smoke row 20.8 pulls the published beta channel tag from Docker Hub"
+    }
+  ]
+}

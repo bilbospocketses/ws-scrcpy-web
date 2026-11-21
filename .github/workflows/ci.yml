@@ -60,6 +60,25 @@ jobs:
         # Keeps it out of the `docker buildx build .` context further down.
         run: rm -rf .american-spelling
 
+      # Docker images. The cross-repo checker from bilbospocketses/docker-keeps
+      # reads the commit under test and fails on an image the code names that
+      # docker-images.json does not declare, or a declared one nothing names any
+      # more. Steps inside build-and-test for the same reason as the spelling
+      # gate above.
+      - name: Check out the docker-keeps checker
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bilbospocketses/docker-keeps
+          ref: 034462d0b093b2e916984cdec88a6e3653807944 # v1.0.0
+          path: .docker-keeps
+          persist-credentials: false
+      - name: Check the Docker images this repo keeps
+        # The runner's own Python 3; the checker is stdlib-only.
+        run: python3 .docker-keeps/docker_keeps.py check --repo . --ref HEAD --name ws-scrcpy-web
+      - name: Remove the checker checkout
+        # Keeps it out of the `docker buildx build .` context further down.
+        run: rm -rf .docker-keeps
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.x
