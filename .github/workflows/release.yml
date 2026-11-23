@@ -63,7 +63,7 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 10.x
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -195,7 +195,7 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 10.x
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -310,7 +310,7 @@ jobs:
           node scripts/extract-changelog.mjs ${{ github.ref_name }} $UNSIGNED_FLAG > release-notes.md
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           # v0.1.23 (item 8 of §1e): no prerelease flag for beta tags. Velopack
           # does NOT query /releases/latest (an earlier version of this comment
